@@ -11,10 +11,10 @@ import {
   type Item, type Menu, type Originals,
 } from '../src/menu.ts';
 import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, staleKeys, storeKey, type Book, type Exchange, type Stored } from '../src/memory.ts';
-import { Logger, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
+import { Logger, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { INHERIT, expandHome, logPath, resolveEffort, resolveModel, resolveOptions, type Effort, type Options } from '../src/options.ts';
 import {
-  QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, stillThinking, turnPrompt, turnSystem, type Turn, type TurnSummary, type TurnWants,
+  QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, stillThinking, turnForkPrompt, turnPrompt, turnSystem, type Turn, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion } from '../src/suggest.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
@@ -92,7 +92,7 @@ type State = {
   pendingPrompt: string;
   /** Questions asked while the main turn ran, each waiting to fork: the main thread's next turn.complete, of any reason, lets them go. */
   turnWaiters: (() => void)[];
-  /** The main chat's last TURN_WINDOW answered turns, oldest first, read by the end-of-turn call and a question's completion. */
+  /** The main chat's last contextTurns answered turns, oldest first, read by the end-of-turn call and a question's completion. */
   turns: Turn[];
   /** The options' warnings were said: once, in the first greeting's bubble. */
   warned: boolean;
@@ -503,7 +503,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
     // Every answered turn of the main loop, tools or none; never an aborted one, nor a subagent's.
     const answered = e.reason === 'answer' && !e.isAborted && e.agentId === undefined;
     if (answered) {
-      st.turns = pushTurn(st.turns, { prompt: st.pendingPrompt, answer: e.answer });
+      st.turns = pushTurn(st.turns, { prompt: st.pendingPrompt, answer: e.answer }, st.options.contextTurns);
       st.pendingPrompt = '';
     }
     const { turn, lineDue } = endTurn(st.b, st.options.quips && !st.hidden && answered, st.options.quipCooldownSec);
@@ -514,7 +514,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
         st.harnessSuggestion = null;
         st.suggestGaveUp = false;
       }
-      lg($, 'info', 'turn.call', { line: wants.line, next: wants.next, tools: turn.tools.length });
+      lg($, 'info', 'turn.call', { mode: st.options.turnMode, line: wants.line, next: wants.next, tools: turn.tools.length });
       turnCall(st, $, turn, gen, wants).catch((error) => log($, 'the end-of-turn call', error));
     } else {
       const why = !answered ? 'not an answered turn' : st.hidden ? 'hidden' : !st.options.quips && !st.options.suggestions ? 'quips and suggestions off' : 'cooldown';
@@ -558,9 +558,13 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
 }
 
 /**
- * One quipModel call at a turn's end, on the main chat's recent turns, writes the buddy's line and the
- * next-prompt suggestion, those wanted; a timeout, a refusal or a throw fails
- * the line as a quip fails and gives the suggestion up. Never throws.
+ * One call at a turn's end writes the buddy's line and the next-prompt
+ * suggestion, those wanted: in turnMode `complete` a quipModel completion on
+ * the main chat's recent turns; in `fork` a fork of the main chat (its model,
+ * effort and prompt cache), which the turn that just ended leaves free to fork.
+ * A timeout, a refusal, an empty reply or a throw fails the line as a quip
+ * fails and gives the suggestion up; a late suggestion is stale by `gen`.
+ * Never throws.
  */
 async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: number, wants: TurnWants): Promise<void> {
   const b = st.b;
@@ -569,16 +573,27 @@ async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: numb
   const turns = st.turns;
   let reply: { line: string | null; next: string | null } | null = null;
   let reason = '';
+  let usage: Record<string, number> = {};
   try {
     const memory = await recollect(st, $, b.character);
-    const prompt = turnPrompt(t, turns, memory);
-    lg($, 'debug', 'turn.prompt', { length: prompt.length });
-    const settings = await callSettings(st, $, 'turn.settings');
-    const r = await within(
-      $,
-      $.model.complete({ ...settings, system: turnSystem(b.character.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }),
-      TURN_DEADLINE_MS,
-    );
+    const mode = st.options.turnMode;
+    let r: ModelForkResult | 'timeout';
+    if (mode === 'fork') {
+      const prompt = turnForkPrompt(b.character.persona, wants, memory);
+      lg($, 'debug', 'turn.prompt', { mode, length: prompt.length });
+      r = await within($, $.model.fork({ prompt }), FORK_DEADLINE_MS);
+    } else {
+      const prompt = turnPrompt(t, turns, memory);
+      lg($, 'debug', 'turn.prompt', { mode, length: prompt.length });
+      const settings = await callSettings(st, $, 'turn.settings');
+      r = await within(
+        $,
+        $.model.complete({ ...settings, system: turnSystem(b.character.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }),
+        TURN_DEADLINE_MS,
+      );
+    }
+    // What the call cost and how much it read from the prompt cache, logged on the line's outcome.
+    usage = r !== 'timeout' && 'usage' in r ? usageFields(r.usage) : {};
     if (r === 'timeout') reason = 'timeout';
     else if (!r.isAnswered) reason = r.reason;
     else {
@@ -589,7 +604,7 @@ async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: numb
     log($, 'the end-of-turn call', error);
     reason = message(error);
   }
-  if (wants.line) sayTurnLine(st, $, t, reply?.line ?? null, reason || 'no line in the reply');
+  if (wants.line) sayTurnLine(st, $, t, reply?.line ?? null, reason || 'no line in the reply', usage);
   if (wants.next) {
     try {
       await proposeTurnNext(st, $, gen, reply?.next ?? null, reason, b.character.id);
@@ -600,8 +615,8 @@ async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: numb
   }
 }
 
-/** The end-of-turn line in the bubble, or the failure why there is none; a held /buddy answer keeps the bubble. */
-function sayTurnLine(st: State, $: EngineInterface, t: TurnSummary, text: string | null, reason: string): void {
+/** The end-of-turn line in the bubble, or the failure why there is none; a held /buddy answer keeps the bubble. `usage`: the call's usageFields, logged on the outcome. */
+function sayTurnLine(st: State, $: EngineInterface, t: TurnSummary, text: string | null, reason: string, usage: Record<string, number>): void {
   const b = st.b;
   if (!b) return;
   const c = b.character;
@@ -612,12 +627,12 @@ function sayTurnLine(st: State, $: EngineInterface, t: TurnSummary, text: string
       const held = !st.hidden && holdsAnswer(b);
       const shown = !st.hidden && !held && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id);
       if (shown) keep(st, $, c.id, { kind: 'quip', text });
-      lg($, 'info', 'quip.outcome', { outcome: shown ? 'answered' : st.hidden ? 'hidden' : held ? 'held' : 'dropped' });
+      lg($, 'info', 'quip.outcome', { outcome: shown ? 'answered' : st.hidden ? 'hidden' : held ? 'held' : 'dropped', ...usage });
     } else {
       $.ui.log(`buddy: a quip got no answer: ${reason}`);
-      if (holdsAnswer(b)) lg($, 'info', 'quip.outcome', { outcome: 'held', reason });
+      if (holdsAnswer(b)) lg($, 'info', 'quip.outcome', { outcome: 'held', reason, ...usage });
       else {
-        lg($, 'info', 'quip.outcome', { outcome: 'failed', reason });
+        lg($, 'info', 'quip.outcome', { outcome: 'failed', reason, ...usage });
         failAnswer(b, reason, c.id);
       }
     }
@@ -970,7 +985,7 @@ function shape(r: ModelForkResult | 'timeout'): LogFields {
  * else: a fork replays the main thread's last request, so one asked while the
  * main turn runs would continue that turn, and the question waits for the
  * turn to end first. In `complete` mode the quip model answers from persona,
- * memory, the main chat's last TURN_WINDOW turns (`recentTurns`) and question.
+ * memory, the main chat's last contextTurns turns (`recentTurns`) and question.
  * `memory`: what the buddy remembered before this question; it goes before the question.
  * `busy`: whether the main turn ran when the question was asked, decided once at ask.start.
  */
@@ -985,6 +1000,7 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
   let said = '';
   const via = st.options.questionMode === 'fork' ? 'fork' : 'complete';
   let reason = '';
+  let usage: Record<string, number> = {};
   // The answer belongs to the one asked: a character switched in meanwhile never says it.
   let shown = true;
   try {
@@ -1015,6 +1031,8 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
       r = await within($, $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: deadline }), deadline);
     }
     lg($, 'debug', 'ask.result', { via, ...shape(r) });
+    // What the call cost and how much it read from the prompt cache: a fork's reuse of the chat's cache shows here.
+    usage = r !== 'timeout' && 'usage' in r ? usageFields(r.usage) : {};
     const text = r !== 'timeout' && r.isAnswered ? oneLine(r.text) : '';
     if (text) {
       said = text;
@@ -1035,7 +1053,7 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
   }
   const hidden = !shown && st.hidden;
   if (!shown && !hidden) warn($, 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
-  lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', via, ...(reason ? { reason } : {}), ms: Date.now() - started });
+  lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', via, ...(reason ? { reason } : {}), ms: Date.now() - started, ...usage });
   // One exchange: the question with its answer as shown, or the question alone.
   keep(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question });
   refresh(st, $);

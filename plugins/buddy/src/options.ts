@@ -4,6 +4,7 @@
 import { configDir, type ConfigEnv } from './config-source.ts';
 import { LOG_LEVELS, type LogLevel } from './log.ts';
 import { MEMORY_DEFAULT, MEMORY_MAX } from './memory.ts';
+import { TURN_WINDOW, TURN_WINDOW_MAX } from './prompts.ts';
 
 export type QuestionMode = 'fork' | 'complete' | 'off';
 /** How hard the buddy's model thinks: the engine's ModelEffort values. */
@@ -16,6 +17,9 @@ export const INHERIT_FALLBACK_MODEL = 'opus';
 export type AmbiguousWidth = 'narrow' | 'wide';
 export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
 export const QUESTION_MODES: readonly QuestionMode[] = ['fork', 'complete', 'off'];
+/** How the end-of-turn call runs: a completion on quipModel, or a fork of the main chat. */
+export type TurnMode = 'complete' | 'fork';
+export const TURN_MODES: readonly TurnMode[] = ['complete', 'fork'];
 
 export type Options = {
   character: string;
@@ -34,6 +38,10 @@ export type Options = {
   suggestions: boolean;
   /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
   memory: number;
+  /** How the end-of-turn call runs: complete = a quipModel completion on the last contextTurns turns; fork = a fork of the main chat (its model, effort and prompt cache). */
+  turnMode: TurnMode;
+  /** How many of the main chat's latest answered turns a completion reads, 1 to TURN_WINDOW_MAX: questions and the end-of-turn call that do not fork. */
+  contextTurns: number;
   /** The plugin log's level: error, info or debug. */
   logLevel: LogLevel;
   /** The plugin log's file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = no log file (errors still go to the debug log). */
@@ -54,6 +62,8 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   quipCooldownSec: 0,
   suggestions: true,
   memory: MEMORY_DEFAULT,
+  turnMode: 'complete',
+  contextTurns: TURN_WINDOW,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
   ambiguousWidth: 'narrow',
@@ -69,7 +79,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, characterDir, motion, questionMode, quips, quipModel, effort, quipCooldownSec, suggestions, memory, logLevel, logFile, ambiguousWidth } = raw;
+  const { character, characterDir, motion, questionMode, quips, quipModel, effort, quipCooldownSec, suggestions, memory, turnMode, contextTurns, logLevel, logFile, ambiguousWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -120,6 +130,16 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
       o.memory = MEMORY_MAX;
       o.errors.push(`option memory capped: ${n} is above ${MEMORY_MAX}; remembering ${MEMORY_MAX}`);
     } else o.memory = n;
+  }
+  if (turnMode !== undefined && turnMode !== '') {
+    const m = typeof turnMode === 'string' ? turnMode.trim().toLowerCase() : '';
+    if ((TURN_MODES as readonly string[]).includes(m)) o.turnMode = m as TurnMode;
+    else bad('turnMode', `${JSON.stringify(turnMode)} is not complete or fork`);
+  }
+  if (contextTurns !== undefined && contextTurns !== '') {
+    const n = typeof contextTurns === 'number' ? contextTurns : typeof contextTurns === 'string' ? Number(contextTurns) : NaN;
+    if (Number.isInteger(n) && n >= 1 && n <= TURN_WINDOW_MAX) o.contextTurns = n;
+    else bad('contextTurns', `${JSON.stringify(contextTurns)} is not a whole number from 1 to ${TURN_WINDOW_MAX}; reading ${TURN_WINDOW}`);
   }
   if (logLevel !== undefined && logLevel !== '') {
     const l = typeof logLevel === 'string' ? logLevel.trim().toLowerCase() : '';

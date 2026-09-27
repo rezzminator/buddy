@@ -1,16 +1,18 @@
-// The words sent to a model: a fork of the chat for /buddy questions, a fresh
-// completion for fresh-session answers and for the end-of-turn call, which
-// writes the buddy's line and the prompt suggestion together. Each demands
+// The words sent to a model: a fork of the chat or a fresh completion, for
+// /buddy questions and for the end-of-turn call, which writes the buddy's line
+// and the prompt suggestion together. Each demands
 // short lines; a fork measured 813 output tokens for one line when it did not.
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
 export const QUESTION_MAX_TOKENS = 100;
 /** The end-of-turn call's budget: a LINE and a NEXT, short. */
 export const TURN_MAX_TOKENS = 120;
-/** How long the end-of-turn call may take before its line and suggestion are given up. */
+/** How long the end-of-turn completion may take before its line and suggestion are given up; a fork has FORK_DEADLINE_MS. */
 export const TURN_DEADLINE_MS = 30_000;
-/** How many of the main chat's latest turns a completion reads. */
+/** How many of the main chat's latest turns a completion reads by default: the contextTurns option's default. */
 export const TURN_WINDOW = 3;
+/** The most of the main chat's latest turns a completion may read: the contextTurns option's ceiling. */
+export const TURN_WINDOW_MAX = 10;
 /** How much of each of those prompts a completion reads: its end. */
 const TURN_PROMPT_CAP = 1500;
 /** How much of each of those answers a completion reads: its end. */
@@ -96,12 +98,22 @@ export function turnSystem(persona: string, wants: TurnWants): string {
   return `${persona}\n\n${rule}A turn of the user's work with Claude just ended. Reply with exactly these lines and nothing else:\n${lines.join('\n')}\nDo not use tools. Do not think out loud.`;
 }
 
+/**
+ * The end-of-turn fork's one user message: the step out of the assistant's
+ * voice, then what `turnSystem` tells a completion, then the buddy's memory.
+ * The fork sees the whole chat itself, so no recent turns and no tally.
+ */
+export function turnForkPrompt(persona: string, wants: TurnWants, memory = ''): string {
+  const recall = recalled(memory).trimEnd();
+  return `${FORK_ROLE}\n\n${turnSystem(persona, wants)}${recall ? `\n\n${recall}` : ''}`;
+}
+
 /** One main-thread turn: what the user asked Claude and what Claude answered. */
 export type Turn = { prompt: string; answer: string };
 
-/** The window with `turn` added last, the oldest dropped past TURN_WINDOW; `turns` itself unchanged. */
-export function pushTurn(turns: readonly Turn[], turn: Turn): Turn[] {
-  return [...turns, turn].slice(-TURN_WINDOW);
+/** The window with `turn` added last, the oldest dropped past `size` turns (the contextTurns option); `turns` itself unchanged. */
+export function pushTurn(turns: readonly Turn[], turn: Turn, size = TURN_WINDOW): Turn[] {
+  return [...turns, turn].slice(-size);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  CHARACTER_RULE, FORK_ROLE, ONE_LINE_RULE, SUGGESTION_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, TURN_WINDOW, forkPrompt, lostThread, pushTurn, recentTurns, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestionText, turnPrompt, turnSystem,
+  CHARACTER_RULE, FORK_ROLE, ONE_LINE_RULE, SUGGESTION_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, TURN_WINDOW, TURN_WINDOW_MAX, forkPrompt, lostThread, pushTurn, recentTurns, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestionText, turnForkPrompt, turnPrompt, turnSystem,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
@@ -80,6 +80,29 @@ describe('memory in the prompts', () => {
     turns = pushTurn(turns, t(4));
     expect(turns).toEqual([t(2), t(3), t(4)]);
     expect(before).toEqual([t(1), t(2), t(3)]);
+  });
+  test('the turn window honours a size N from 1 to TURN_WINDOW_MAX (10): the last N turns, oldest first', () => {
+    expect(TURN_WINDOW_MAX).toBe(10);
+    const t = (n: number) => ({ prompt: `p${n}`, answer: `a${n}` });
+    let one: ReturnType<typeof t>[] = [];
+    let ten: ReturnType<typeof t>[] = [];
+    for (let n = 1; n <= 12; n++) {
+      one = pushTurn(one, t(n), 1);
+      ten = pushTurn(ten, t(n), 10);
+    }
+    expect(one).toEqual([t(12)]);
+    expect(ten).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(t));
+    expect(pushTurn(ten, t(13), 5)).toEqual([9, 10, 11, 12, 13].map(t));
+  });
+  test('the end-of-turn fork prompt: the step out of the assistant voice, then the end-of-turn system prompt, then the memory', () => {
+    const both = { line: true, next: true };
+    expect(turnForkPrompt('You are X.', both)).toBe(`${FORK_ROLE}\n\n${turnSystem('You are X.', both)}`);
+    expect(turnForkPrompt('You are X.', both, '')).toBe(turnForkPrompt('You are X.', both));
+    const next = { line: false, next: true };
+    const p = turnForkPrompt('You are X.', next, 'Fixy: Still here.');
+    expect(p).toBe(`${FORK_ROLE}\n\n${turnSystem('You are X.', next)}\n\nFixy: Still here.\nThat is what you and the user said to each other lately; you may refer back to it.`);
+    expect(p).toContain('NEXT:');
+    expect(p).not.toContain('LINE:');
   });
   test('no memory: the prompts as before', () => {
     expect(questionPrompt('hi', '')).toBe('The user asks you directly: hi');

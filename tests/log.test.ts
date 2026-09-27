@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, type LogIO } from '../plugins/buddy/src/log.ts';
+import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
 
 function disk(refuse = false) {
   const files: Record<string, string> = {};
@@ -159,5 +159,16 @@ describe('Logger', () => {
   test('errorFields: message and stack of an Error; a string of anything else', () => {
     expect(errorFields('x')).toEqual({ message: 'x' });
     expect(errorFields(new Error('y')).message).toBe('y');
+  });
+});
+
+describe('usageFields', () => {
+  test('a model call\'s token counts as short log fields; the share read from the prompt cache as a percent', () => {
+    expect(usageFields({ input_tokens: 10, output_tokens: 40, cache_read_input_tokens: 90, cache_creation_input_tokens: 0 })).toEqual({ inTok: 10, cacheRead: 90, cacheWrite: 0, outTok: 40, cachePct: 90 });
+    expect(usageFields({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })).toEqual({ inTok: 0, cacheRead: 0, cacheWrite: 0, outTok: 0, cachePct: 0 });
+  });
+  test('no usage, or not an object: no fields', () => {
+    expect(usageFields(undefined)).toEqual({});
+    expect(usageFields('x')).toEqual({});
   });
 });

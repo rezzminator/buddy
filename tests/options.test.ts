@@ -4,7 +4,7 @@ import { DEFAULTS, expandHome, logPath, resolveEffort, resolveModel, resolveOpti
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'complete', quips: true, quipModel: 'opus', effort: 'low', quipCooldownSec: 0, suggestions: true, memory: 6, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'complete', quips: true, quipModel: 'opus', effort: 'low', quipCooldownSec: 0, suggestions: true, memory: 6, turnMode: 'complete', contextTurns: 3, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
   });
   test('good values', () => {
     const o = resolveOptions({ character: ' Cat ', characterDir: '~/chars', motion: false, questionMode: 'FORK', quips: 'false', quipModel: 'sonnet', effort: ' HIGH ', quipCooldownSec: '10' });
@@ -88,6 +88,36 @@ describe('the suggestions option', () => {
   test('quips and suggestions turn off independently', () => {
     expect(resolveOptions({ quips: false })).toMatchObject({ quips: false, suggestions: true, errors: [] });
     expect(resolveOptions({ suggestions: 'false' })).toMatchObject({ quips: true, suggestions: false, errors: [] });
+  });
+});
+
+describe('the turnMode option', () => {
+  test('complete by default; complete or fork, any case; anything else is ignored by name', () => {
+    expect(resolveOptions({}).turnMode).toBe('complete');
+    expect(resolveOptions({ turnMode: ' FORK ' })).toMatchObject({ turnMode: 'fork', errors: [] });
+    expect(resolveOptions({ turnMode: 'complete' })).toMatchObject({ turnMode: 'complete', errors: [] });
+    expect(resolveOptions({ turnMode: '' })).toMatchObject({ turnMode: 'complete', errors: [] });
+    for (const v of ['off', 7]) {
+      const o = resolveOptions({ turnMode: v });
+      expect(o.turnMode).toBe('complete');
+      expect(o.errors).toEqual([`option turnMode ignored: ${JSON.stringify(v)} is not complete or fork`]);
+    }
+  });
+});
+
+describe('the contextTurns option', () => {
+  test('3 by default; a whole number from 1 to 10, as a number or its string', () => {
+    expect(resolveOptions({}).contextTurns).toBe(3);
+    expect(resolveOptions({ contextTurns: 1 })).toMatchObject({ contextTurns: 1, errors: [] });
+    expect(resolveOptions({ contextTurns: '10' })).toMatchObject({ contextTurns: 10, errors: [] });
+    expect(resolveOptions({ contextTurns: '' })).toMatchObject({ contextTurns: 3, errors: [] });
+  });
+  test('0, above 10, fractional or not a number: 3, and the error says why', () => {
+    for (const v of [0, 11, 2.5, 'lots', true]) {
+      const o = resolveOptions({ contextTurns: v });
+      expect(o.contextTurns).toBe(3);
+      expect(o.errors).toEqual([`option contextTurns ignored: ${JSON.stringify(v)} is not a whole number from 1 to 10; reading 3`]);
+    }
   });
 });
 

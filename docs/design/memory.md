@@ -45,8 +45,9 @@ That is what you and the user said to each other lately; you may refer back to i
 | Call | Where the block goes |
 | --- | --- |
 | a question, forked | the fork's one user message, between the persona and the question (`forkPrompt`) |
-| a question, completed (the default) | the prompt, before the chat's last 3 turns and the question (`questionPrompt`) |
-| the end-of-turn call | the prompt, before the chat's last 3 turns and the turn's summary (`turnPrompt`) |
+| a question, completed (the default) | the prompt, before the chat's last `contextTurns` turns (3 by default) and the question (`questionPrompt`) |
+| the end-of-turn call, completed (the default) | the prompt, before the chat's last `contextTurns` turns and the turn's summary (`turnPrompt`) |
+| the end-of-turn call, forked (`turnMode: fork`) | the fork's one user message, after the persona and the LINE/NEXT instructions (`turnForkPrompt`) |
 
 The block is read once, when the question is asked, so it holds what came before the question; the question joins the ring with its answer.
 No call is added: the memory rides on calls buddy makes anyway, and the one-line rule and token caps of [Voice](./voice.md) apply unchanged.

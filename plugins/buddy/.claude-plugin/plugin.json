@@ -31,14 +31,14 @@
     },
     "questionMode": {
       "type": "string",
-      "title": "/buddy questions: complete (fast, sees the last 3 turns), fork (sees the whole chat), or off",
-      "description": "complete: a fast call on quipModel at the effort option's level, seeing the chat's last 3 turns (your prompts and Claude's answers), answered at once even while the main turn runs. fork: answers only from a fork of this chat (its model and context, served from its prompt cache), never quipModel; asked while the main turn runs, it waits for that turn to end; before the chat's first reply it says there is nothing to fork yet; in a long chat an answer can take a minute. off: no model call.",
+      "title": "/buddy questions: complete (fast, sees the last contextTurns turns), fork (sees the whole chat), or off",
+      "description": "complete: a fast call on quipModel at the effort option's level, seeing the chat's last contextTurns turns (your prompts and Claude's answers), answered at once even while the main turn runs. fork: answers only from a fork of this chat (its model and context, served from its prompt cache), never quipModel; asked while the main turn runs, it waits for that turn to end; before the chat's first reply it says there is nothing to fork yet; in a long chat an answer can take a minute. off: no model call.",
       "default": "complete"
     },
     "quips": {
       "type": "boolean",
       "title": "The buddy says a line at the end of every answered turn (spends tokens)",
-      "description": "One short quipModel call at the end of every answered turn writes the buddy's in-character line and, with suggestions on, the prompt suggestion too. Set false to keep the buddy quiet.",
+      "description": "One short call at the end of every answered turn (see turnMode) writes the buddy's in-character line and, with suggestions on, the prompt suggestion too. Set false to keep the buddy quiet.",
       "default": true
     },
     "quipModel": {
@@ -62,7 +62,7 @@
     "suggestions": {
       "type": "boolean",
       "title": "The buddy writes the prompt suggestion (spends tokens)",
-      "description": "The same short quipModel call at the end of every answered turn proposes your next prompt, in your words. Claude Code's own suggestion is held back and shown only when the buddy has none. Set false to keep Claude Code's own.",
+      "description": "The same short call at the end of every answered turn (see turnMode) proposes your next prompt, in your words. Claude Code's own suggestion is held back and shown only when the buddy has none. Set false to keep Claude Code's own.",
       "default": true
     },
     "memory": {
@@ -70,6 +70,18 @@
       "title": "How many recent exchanges the buddy remembers (0 = off)",
       "description": "Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), or one line the buddy said. They go into its next answer or quip, kept per session and per character; at most 30.",
       "default": 6
+    },
+    "turnMode": {
+      "type": "string",
+      "title": "End-of-turn line and suggestion: complete (fast, last contextTurns turns) or fork (the whole chat)",
+      "description": "complete: one short call on quipModel at the effort option's level, seeing the chat's last contextTurns turns and the buddy's own small prompt; about 3 seconds. fork: a fork of this chat on the main chat's own model, effort and prompt cache, seeing the whole chat; in a long chat it can take about a minute, and a suggestion that arrives after your next prompt is dropped.",
+      "default": "complete"
+    },
+    "contextTurns": {
+      "type": "number",
+      "title": "How many recent turns the buddy reads (1 to 10)",
+      "description": "How many of the chat's latest answered turns (your prompt and Claude's answer each) a call that does not fork reads: complete questions and the complete end-of-turn call. More turns, more tokens per call.",
+      "default": 3
     },
     "logLevel": {
       "type": "string",

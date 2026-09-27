@@ -155,3 +155,15 @@ export class Logger {
     return ((await io.read(`${file}.1`)) ?? '').includes(text);
   }
 }
+
+/** A model call's usage as short log fields, with the share of its input read from the prompt cache; {} when there is none. */
+export function usageFields(usage: unknown): Record<string, number> {
+  if (typeof usage !== 'object' || usage === null) return {};
+  const u = usage as Record<string, unknown>;
+  const n = (k: string) => (typeof u[k] === 'number' ? (u[k] as number) : 0);
+  const inTok = n('input_tokens');
+  const cacheRead = n('cache_read_input_tokens');
+  const cacheWrite = n('cache_creation_input_tokens');
+  const all = inTok + cacheRead + cacheWrite;
+  return { inTok, cacheRead, cacheWrite, outTok: n('output_tokens'), cachePct: all === 0 ? 0 : Math.round((cacheRead / all) * 100) };
+}

@@ -908,6 +908,9 @@ describe('hook paths', () => {
     expect(w.completes[0]?.prompt).toContain('Tools used: Bash. Failures: 0. Last shell command: ls.');
     // An untagged reply is the line alone.
     expect(await shows(ui, /A completed answer\./)).toBe(true);
+    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(records.find((r) => r.event === 'turn.call')).toMatchObject({ mode: 'complete', line: true, next: true });
+    expect(records.find((r) => r.event === 'quip.outcome')).toMatchObject({ outcome: 'answered', inTok: 1, outTok: 1, cacheRead: 0, cachePct: 0 });
     await ui.unmount();
   });
 
