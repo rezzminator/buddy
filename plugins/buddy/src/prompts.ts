@@ -20,9 +20,19 @@ function recalled(memory: string): string {
   return memory ? `${memory}\nThat is what you and the user said to each other lately; you may refer back to it.\n\n` : '';
 }
 
-/** The fork's one user message: persona, the buddy's memory, the question, the one-line rule. */
+/**
+ * A fork carries the chat's whole system prompt, the assistant's own voice with
+ * it; the persona arrives as one user message after it, so without this the
+ * buddy answers in the assistant's voice, catchphrases and sign-offs included.
+ */
+export const FORK_ROLE =
+  'For this one reply you are not the assistant of this conversation. Drop its persona, voice, catchphrases, ' +
+  'formatting rules and sign-off lines; no markdown, no summary line. You are the user\'s companion character below, ' +
+  'looking at the same conversation.';
+
+/** The fork's one user message: the step out of the assistant's voice, persona, the buddy's memory, the question, the one-line rule. */
 export function forkPrompt(persona: string, question: string, memory = ''): string {
-  return `${persona}\n\n${recalled(memory)}The user asks you directly: ${question}. ${ONE_LINE_RULE}`;
+  return `${FORK_ROLE}\n\n${persona}\n\n${recalled(memory)}The user asks you directly: ${question}. ${ONE_LINE_RULE}`;
 }
 
 /** The system prompt of a completion: persona and the one-line rule. */

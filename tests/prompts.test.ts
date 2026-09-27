@@ -1,13 +1,15 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ONE_LINE_RULE, SUGGESTION_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, lastExchange, lostThread, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestionText, turnPrompt, turnSystem,
+  FORK_ROLE, ONE_LINE_RULE, SUGGESTION_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, lastExchange, lostThread, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestionText, turnPrompt, turnSystem,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
-  test('the fork prompt: persona, the question, the one-line rule', () => {
+  test('the fork prompt: steps out of the chat\'s assistant voice, then persona, the question, the one-line rule', () => {
     expect(forkPrompt('You are X.', 'why')).toBe(
-      'You are X.\n\nThe user asks you directly: why. Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.',
+      `${FORK_ROLE}\n\nYou are X.\n\nThe user asks you directly: why. Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.`,
     );
+    expect(FORK_ROLE).toContain('not the assistant');
+    expect(FORK_ROLE).toContain('sign-off');
   });
   test('the completion system and prompt', () => {
     expect(oneLineSystem('You are X.')).toBe(`You are X.\n\n${ONE_LINE_RULE}`);
