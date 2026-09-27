@@ -7,7 +7,7 @@
 #   (c) /buddy pets it and counts; /buddy-personality marks it with *
 #   (d) a /buddy question before the first reply (nothing to fork, so the
 #       quip model answers) fills the bubble with an answer
-#   (e) a Bash run printing a test pass shows a testPass line
+#   (e) a Bash `npm test` run printing a test pass shows a testPass line
 #   (f) a /buddy question after a reply (a fork of the chat) is answered
 #   (g) Enter on another character in /buddy-personality draws it, and the
 #       reopened menu marks it with *; picking the duck there returns
@@ -21,6 +21,11 @@
 #       ask you to remember? is answered with pineapple; the plugin's store
 #       holds both as exchanges, no thinking filler (its memory:{session} key,
 #       nothing else read)
+#   (k) a /buddy question while a main turn runs (`sleep 8` via Bash, after a
+#       marker line) is answered without the main turn's text, and a second
+#       immediate ask gets a visible outcome: refused out loud, or asked
+#   (l) the plugin log (logFile set to this run's folder) holds the ask's
+#       start and outcome, and /buddy log prints its path and lines
 # Prints a table, one row per check, and exits 1 when any check fails,
 # 2 when the session could not be driven (no transcript, a turn timed out).
 # Spends real tokens: a few cents of Haiku. It resets this plugin's own
@@ -50,9 +55,12 @@ OTHER=$(ls "$CHARS"/*.json | xargs -n1 basename | sed 's/\.json$//' | grep -v -x
 RUN=/tmp/buddy/run-$(date +%Y%m%dT%H%M%S)
 WORK=$RUN/work
 mkdir -p "$WORK"
+# Only a test runner's output reacts as a test: (e) runs `npm test` here, which prints a pass summary.
+printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
 cat > "$RUN/settings.json" <<'EOF'
-{ "pluginConfigs": { "buddy@inline": { "options": { "questionMode": "fork", "quips": false, "motion": true } } } }
+{ "pluginConfigs": { "buddy@inline": { "options": { "questionMode": "fork", "quips": false, "motion": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
 EOF
+sed -i.bak "s|RUNDIR|$RUN|" "$RUN/settings.json" && rm -f "$RUN/settings.json.bak"
 ID=$(uuidgen | tr 'A-Z' 'a-z')
 PROJECTS=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects
 T="tmux -L buddy-proof"
@@ -109,12 +117,13 @@ command_out() {
   done
   echo "ERROR $1 printed no output row; pane in $RUN/pane.txt" >&2; exit 2
 }
-# Waits for the bubble to hold an answer: not empty, no thinking line, no lost thread.
+# Waits for the bubble to hold an answer: not empty, no thinking line, no refusal, no failure.
 answered() {
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 100); do
     sleep 1
     b=$(bubble)
-    if grep -q 'lost the thread' <<<"$b"; then echo "LOST: $b"; return 1; fi
+    if grep -q "couldn't answer" <<<"$b"; then echo "FAILED: $b"; return 1; fi
+    grep -q 'still thinking about your last question' <<<"$b" && continue
     [ -n "$b" ] && ! bubble_has_any "$RUN/thinking.pool" && { echo "$b"; return 0; }
   done
   echo "TIMEOUT: $(bubble)"; return 1
@@ -150,7 +159,8 @@ menu_pick() {
   from=$(marked) || { pane > "$RUN/menu-unmarked.txt"; echo "ERROR /buddy-personality marks no shipped character; pane in $RUN/menu-unmarked.txt" >&2; exit 2; }
   n=$(( $(index_of "$1") - $(index_of "$from") )); key=Down
   [ "$n" -lt 0 ] && { n=$(( -n )); key=Up; }
-  for _ in $(seq 1 "$n"); do $T send-keys -t proof "$key"; sleep 0.5; done
+  # Never seq 1 "$n": macOS seq 1 0 counts down and sends two keys.
+  for ((k = 0; k < n; k++)); do $T send-keys -t proof "$key"; sleep 0.5; done
   sleep 1
   # A key the pane dropped leaves the highlight short: one more at a time, up to 3.
   for _ in 1 2 3; do
@@ -186,7 +196,7 @@ out=$(command_out "/buddy what is your favourite tool")
 got=$(answered); v=$?
 [ $v -eq 0 ] && grep -q 'Asked' <<<"$out" && add "(d) question before a reply (quip model)" PASS "$got" || add "(d) question before a reply (quip model)" FAIL "$out / $got"
 
-send "Run this Bash command: echo 'Tests: 3 passed'. Then reply with exactly: T1"
+send "Run this Bash command: npm test. Then reply with exactly: T1"
 seen=""
 for _ in $(seq 1 180); do
   sleep 0.5
@@ -234,7 +244,7 @@ pane > "$RUN/i-esc.txt"
 if ! in_pane "$(about_of "$NEXT")" && ! in_pane "Your folder" && shows_any "$RUN/default.rows"; then add "(i) Esc closes it, nothing changed" PASS "pane gone, $DEFAULT still drawn"
 else add "(i) Esc closes it, nothing changed" FAIL "pane in $RUN/i-esc.txt"; fi
 command_out "/buddy-personality" >/dev/null; sleep 3
-for _ in $(seq 1 "$ups"); do $T send-keys -t proof Up; sleep 0.5; done
+for ((k = 0; k < ups; k++)); do $T send-keys -t proof Up; sleep 0.5; done
 sleep 1
 if in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi
 $T send-keys -t proof Enter; sleep 3
@@ -261,6 +271,33 @@ echo "$mem" > "$RUN/j-memory.txt"
 if grep -q -F 'question: remember the word pineapple -> ' <<<"$mem" && grep -q -F 'question: what word did I ask you to remember? -> ' <<<"$mem" && ! grep -q -F -f "$RUN/thinking.pool" <<<"$mem"; then
   add "(j) the store holds this session's memory" PASS "$(grep -c . <<<"$mem") exchanges under memory:$ID, no thinking filler"
 else add "(j) the store holds this session's memory" FAIL "${STORE:-no buddy_inline store file}: $(head -c 80 <<<"$mem")"; fi
+
+# (k) Ask while a main turn runs: the fork would replay that turn's words.
+MARK=ZEBRA-7Q
+send "First write exactly this sentence: $MARK the release is still running. Then run this Bash command: sleep 8. Then reply with exactly: K1"
+for _ in $(seq 1 40); do sleep 0.5; f=$(transcript); [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | select(.input.command? // "" | contains("sleep 8"))' "$f" >/dev/null 2>&1 && break; done
+# Both asks back to back, the second before the first's reply row is awaited.
+before=$(stdout_rows | wc -l)
+send "/buddy do you like yourself?"
+send "/buddy say ack"
+for _ in $(seq 1 20); do sleep 1; [ "$(stdout_rows | wc -l)" -ge "$((before + 2))" ] && break; done
+out=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 1p); out2=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 2p)
+got=$(answered); v=$?
+sleep 3
+mem=$([ -n "$STORE" ] && jq -r --arg k "memory:$ID" --arg d "$DEFAULT" '.[$k].characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$STORE" 2>&1)
+a1=$(grep -F 'do you like yourself? -> ' <<<"$mem" | tail -1 | sed 's/.* -> //')
+why=$(jq -r -s '[.[] | select(.event == "ask.fallback") | .why] | last // "none"' "$RUN/buddy.log" 2>&1)
+echo "$out / $out2 / $got / $a1 / $why" > "$RUN/k.txt"
+if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && ! grep -q -F "$MARK" <<<"$a1"; then add "(k) a question during a busy main turn: its own answer" PASS "$a1 (fallback: $why)"; else add "(k) a question during a busy main turn: its own answer" FAIL "$out / ${a1:-not in memory} / $why"; fi
+if grep -q 'still thinking about your last question' <<<"$out2" || { grep -q 'Asked' <<<"$out2" && [ $v -eq 0 ]; }; then add "(k) a second immediate ask: a visible outcome" PASS "$out2 / bubble: $got"; else add "(k) a second immediate ask: a visible outcome" FAIL "${out2:-no reply} / $got"; fi
+for _ in $(seq 1 60); do sleep 0.5; f=$(transcript); jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("K1"))' "$f" >/dev/null 2>&1 && break; done
+# (l) The plugin log: this run's file, the ask's start and outcome.
+BLOG=$RUN/buddy.log
+if [ -s "$BLOG" ] && jq -e -s 'any(.[]; .event == "ask.start") and any(.[]; .event == "ask.outcome" and .outcome != "refused")' "$BLOG" >/dev/null 2>&1; then
+  add "(l) the log holds the ask's start and outcome" PASS "$(jq -r -s '[.[] | select(.event == "ask.outcome")] | map("\(.outcome) via \(.via // "-") \(.ms)ms") | join(", ")' "$BLOG")"
+else add "(l) the log holds the ask's start and outcome" FAIL "$(tail -c 200 "$BLOG" 2>&1)"; fi
+out=$(command_out "/buddy log")
+if grep -q -F "Log: $BLOG" <<<"$out" && grep -q '"event":' <<<"$out"; then add "(l) /buddy log prints its path and lines" PASS "$(head -c 90 <<<"$out")"; else add "(l) /buddy log prints its path and lines" FAIL "$(head -c 200 <<<"$out")"; fi
 
 cp "$(transcript)" "$RUN/main.jsonl"
 echo

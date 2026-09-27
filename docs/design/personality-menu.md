@@ -44,11 +44,12 @@ The row drawn now carries `autoFocus`, so the menu opens on it.
 | Group | Rows | When there are none |
 | --- | --- | --- |
 | Shipped | the plugin's `characters/`, by id | `No shipped characters found.`, or why the folder could not be read |
-| Yours | your original companion, twice: `{name} — native install`, `{name} — npm install` | `No companion in ~/.claude.json or its backups.`, or why the file could not be read |
+| Yours | your original companion, twice: `{name} — native install`, `{name} — npm install` | `No companion in {config} or its backups.`, or why the file could not be read; `{config}` is `~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json` when that is set |
 | Your folder | the files in `characterDir`, by id | `No folder set: the characterDir option names one.`, `No character files in your folder.`, or why the folder could not be read |
 
 `*` marks the row drawn now (`rowLabel`, `currentKeyOf`); for your original, the roll you picked.
 An invalid file is still a row, `{id} (invalid)`.
+A character file taking the reserved id `original` is no row: its error, naming the file, is a line in Your folder (`buildMenu`).
 A shipped id your folder overrides appears once, under Your folder.
 "Yours" is read afresh at every open (`findOriginals`), and a companion found in a backup adds `From the backup {name}.` above its rows ([Original companion](./original-companion.md)).
 
@@ -60,6 +61,7 @@ The preview has its own clock: `$.clock.every(PREVIEW_MS)`, 500 ms, one frame pe
 It is separate from the band's clock, which stops while buddy is hidden and runs at the drawn character's period; the preview animates whatever you highlight, at one pace, hidden or not.
 A focus move starts the new entry at frame 0.
 Closing the menu in any way stops the clock (`stopMenu`).
+A pane gone without a close event is never drawn again, so the clock also stops after 10 beats with no draw of the pane (`MENU_UNDRAWN_TICKS`), and the log says `menu.gone`.
 
 ## Enter and Esc
 
@@ -78,7 +80,7 @@ Enter saves the store's `character` key; the menu is the only thing that writes 
 For an original it saves `character: "original"` and, under `original`, the roll and the soul, never the identity.
 The choice survives `/reload` and restarts; at a start with the original chosen, `restoreOriginal` rolls it again from the saved soul, with no backup scan.
 A save that fails still switches for this session and says so in the bubble: `{name} is here (not saved: {why})`, for 10 seconds.
-`/reload` rebuilds the plugin with no menu behind a pane left open, so that pane says `The menu closed with a reload; /buddy-personality opens it again.`
+`/reload` rebuilds the plugin with no menu behind a pane left open, so that pane says `The menu closed; /buddy-personality opens it again.`
 
 ## Error lines that never read as absence
 
@@ -86,15 +88,18 @@ Every failure to look is a line where the missing rows would be, and every entry
 
 | Condition | What the menu shows |
 | --- | --- |
-| a folder cannot be listed | `couldn't read {folder}: {why}` in its group |
-| `~/.claude.json` cannot be read, or HOME is not set | `couldn't read ~/.claude.json: {why}` in Yours |
-| `~/.claude.json` is not JSON | `couldn't parse ~/.claude.json: not valid JSON ({kind})`, never the parser's text, which can quote the file |
-| its companion is malformed | `~/.claude.json has a companion, but {why}` |
-| a backup folder cannot be listed, or backups would not parse | a note under Yours: `Couldn't list ~/.claude/backups: {why}`, `Skipped {n} backups that did not read or parse.` |
+| a folder cannot be listed | `couldn't read {folder}: {why}` in its group, and in the bubble at each session start and `/buddy reload` |
+| neither `CLAUDE_CONFIG_DIR` nor HOME is set | `couldn't find .claude.json: neither CLAUDE_CONFIG_DIR nor HOME is set` in Yours |
+| the config cannot be read | `couldn't read {config}: {why}` in Yours |
+| the config is not JSON | `couldn't parse {config}: not valid JSON ({kind})`, never the parser's text, which can quote the file |
+| its companion is malformed | `{config} has a companion, but {why}` |
+| a place for backups cannot be listed, or backups would not parse | a note under Yours: `Couldn't list {place} to look for backups: {why}`, `Skipped {n} backups that did not read or parse.` |
 | an invalid character file | the row `{id} (invalid)`; the preview `Can't draw it: {error}` |
+| a character file takes the reserved id `original` | `original.json ({source}): "original" is reserved for your original companion; rename the file and its id` in Your folder; the band's bubble says it too, for 10 s, at each session start and `/buddy reload`, ending `; /buddy-personality lists your characters` |
 | an original whose art will not draw | its row; the preview `Can't draw it: {why}`, such as a hat `species/hats.json` lacks |
 | nothing highlighted | `Nothing to preview`: `no entry is highlighted` |
 | the pane could not open | the reply `/buddy-personality couldn't open its pane: {why}` |
+| the pane opened but is not placed | the reply `The menu is open but not drawn yet: {why}` |
 
 ## Decisions
 
@@ -104,7 +109,7 @@ Every failure to look is a line where the missing rows would be, and every entry
 - **Only Enter switches.** Rejected: switching as the highlight moves. Browsing stays free, and Esc is a clean cancel.
 - **Enter remembers.** Rejected: a menu pick that lasts one session.
 - **The menu is the one way to see and switch.** Rejected: `/buddy list` and `/buddy use {id}` beside it. Two ways to choose drift apart; the menu shows everything the list did, with a preview.
-- **"Yours" read at every open.** Rejected: reading it once at start. A backup restored meanwhile shows at the next open, and a start never scans backups unless the original is chosen.
+- **"Yours" read at every open.** Rejected: reading it once at start. A backup restored meanwhile shows at the next open, and a start never scans backups: with the original chosen it re-rolls from the saved soul.
 - **Your additions live in a folder, never in `~/.claude.json`.** Rejected: storing characters or picks in that file. Claude Code rewrites it, so a key buddy added could be lost or race the engine's own write, and buddy treats it as read-only. Your characters live in `characterDir`, your picks in `$.store`.
 
 ## Where it lives
@@ -120,4 +125,4 @@ Every failure to look is a line where the missing rows would be, and every entry
 - Unit: [`tests/menu.test.ts`](../../tests/menu.test.ts): the three groups, a failure to look as a line, the current row marked, the preview's frames, card and errors.
 - Hooks: the `/buddy-personality` group opens the focused pane, moves the preview with `ui.focus`, picks with a press (saved, closed, greeted), shows an original from an invented `~/.claude.json` or its newest backup, restores it at a restart, and turns every unreadable or invalid file into its line.
 - The testing kit cannot raise a person's Esc, so the hooks only check that the pane asks for `closeOnEscape`; the live proof presses the real key.
-- Live: the six (i) rows open the menu, move with Down, close with Esc, pick with Enter, reopen it to check the `*` mark, and pick the default (duck) to return; rows (a), (c) and (g) switch through it too.
+- Live: the six (i) rows open the menu, move with Down, close with Esc, pick with Enter, reopen it to check the `*` mark, and pick the default (duck) to return; rows (a) and (g) switch through it too, and row (c) reads its `*` mark.

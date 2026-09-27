@@ -47,13 +47,13 @@ flowchart LR
 | Rule | Why |
 | --- | --- |
 | Only the adapter touches `$`, passes it only to its top-level functions, and spells every call `$.noun.event(...)` | otherwise Claude Code loads the module with zero hooks; `npm run validate:plugin` reports it |
-| Every hook catches, logs `buddy: {what} failed: {err}` with `$.ui.log`, and returns `next(e)` or the original result | a broken buddy never blocks the prompt of everyone who installed it |
+| Every hook catches, logs `buddy: {what} failed: {err}` with `$.ui.log` and the plugin log, and returns `next(e)` or the original result | a broken buddy never blocks the prompt of everyone who installed it |
 | An error never looks like "no buddy" | a bad character draws the duck with a bubble naming why; the menu says why inside the group |
 | Only a question, or a quip when quips are on, calls a model | walking, reactions, petting and every other command stay local and free |
 
 ## What persists
 
-`$.store` survives `/reload` and restarts; nothing else is written.
+`$.store` survives `/reload` and restarts; the only other file written is the plugin log (`logFile`, [Verification](./verification.md#logging)).
 
 | Key | Holds | Written by |
 | --- | --- | --- |
@@ -62,3 +62,5 @@ flowchart LR
 | `pets` | the pet count | `/buddy` |
 | `original` | the picked original's roll (`native` or `npm`) and its soul | Enter on a "Yours" row in the menu |
 | the memory's keys | recent exchanges, per session and character | see [Memory](./memory.md) |
+
+Every session shares one store, and Claude Code raises no event when it changes, so a session reads back what another may have written: `/buddy` counts on from the stored `pets`, and `hidden` is read back while the band draws ([Engine](./engine.md#the-tick)).

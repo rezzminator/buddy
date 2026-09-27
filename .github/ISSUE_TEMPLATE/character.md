@@ -29,10 +29,10 @@ assignees: ''
 
 **Checklist**
 
-- [ ] I read the character contract in [CONTRIBUTING.md](../../CONTRIBUTING.md).
+- [ ] I read the character contract in [CONTRIBUTING.md](https://github.com/rezzminator/buddy/blob/main/CONTRIBUTING.md).
 - [ ] It loads from my `characterDir` and `/buddy-personality` does not mark it `(invalid)`.
 - [ ] The art and the persona are my own work, not a copy of an existing character, a trademark or a real person.
 - [ ] Its lines are friendly: a companion, not a critic.
 - [ ] I agree to license it under the repository's MIT license.
 
-Ready to send it in? Skip this issue and open a pull request, as [CONTRIBUTING.md § Send it in](../../CONTRIBUTING.md#send-it-in) describes.
+Ready to send it in? Skip this issue and open a pull request, as [CONTRIBUTING.md § Send it in](https://github.com/rezzminator/buddy/blob/main/CONTRIBUTING.md#send-it-in) describes.

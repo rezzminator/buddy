@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import {
-  companionOf, hatRow, hatchedDate, identityOf, isBackupName, newestFirst, originalCharacter, originalLabel, personaOf, savedOriginalOf, statBar, stars,
+  companionOf, hatRow, hatchedDate, identityOf, newestFirst, originalCharacter, originalLabel, personaOf, savedOriginalOf, statBar, stars,
   type Soul,
 } from '../plugins/buddy/src/original.ts';
 import { frameAt } from '../plugins/buddy/src/character.ts';
 import type { Bones } from '../plugins/buddy/src/hatch.ts';
 import { RAINBOW, SHINY_STEP_MS, buildScene, spriteColor } from '../plugins/buddy/src/scene.ts';
+import { cellWidth } from '../plugins/buddy/src/width.ts';
 import { validateSpecies, type SpeciesTemplate } from '../plugins/buddy/src/species.ts';
 
 const v = validateSpecies(JSON.parse(readFileSync(new URL('./fixtures/species-blob.json', import.meta.url), 'utf8')), 'blob');
@@ -43,8 +44,6 @@ describe('the config', () => {
   });
 
   test('backup names, newest first', () => {
-    expect(['.claude.json.backup', '.claude.json.bak-20260409-101500'].every(isBackupName)).toBe(true);
-    expect(['.claude.json', '.claude.json.', 'claude.json.bak', '.claude'].some(isBackupName)).toBe(false);
     const sorted = [
       { name: '.claude.json.bak-20260401', mtimeMs: 5 },
       { name: '.claude.json.bak-20260409', mtimeMs: 5 },
@@ -103,6 +102,14 @@ describe('originalCharacter', () => {
       'SNARK     ████████░░ 81',
       'hatched 2026-04-01',
     ]);
+  });
+
+  test('the card is measured in cells: ★ █ ░ · count twice on an ambiguous-wide terminal', () => {
+    const input = { character: original(bones({ shiny: true })), pose: 'idle', frame: 0, x: 0, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0, stats: { pets: 2, questions: 1 }, now: 0 } as const;
+    expect(buildScene(input)!.card!.width).toBe(34);
+    const wide = buildScene({ ...input, ambiguousWide: true })!;
+    expect(wide.card!.width).toBe(37);
+    for (const line of wide.card!.lines) expect(cellWidth(line, { ambiguousWide: true })).toBeLessThanOrEqual(wide.card!.width - 4);
   });
 });
 

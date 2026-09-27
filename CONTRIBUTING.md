@@ -15,7 +15,7 @@ makes the file invalid.
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in built-ins |
-| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique; the id `/buddy-personality` stores |
+| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the Your folder group of `/buddy-personality` and in the bubble at a session's start and after `/buddy reload`; the id `/buddy-personality` stores |
 | `name` | string ≤ 40 | yes | display name |
 | `description` | string ≤ 100 | yes | one line for the menu's preview and the hover card |
 | `author` | string ≤ 60 | no | credit |
@@ -31,15 +31,16 @@ with `Bright` appended (`cyanBright`).
 
 ### Poses
 
-A pose is an array of frames; the frames alternate each tick, and a pose
-with a single frame is static. A pose you leave out falls back to another:
+A pose is an array of frames: a walking pose moves one frame per step,
+every other pose turns a frame every 0.9 seconds, and a pose with a single
+frame is static. A pose you leave out falls back to another:
 
 | Pose | Required | Falls back to | Drawn when |
 | --- | --- | --- | --- |
 | `idle` | yes, ≥ 1 frame | | standing still |
 | `walkRight` | when `motion.walk` is true (the default), ≥ 2 frames | | walking right: the leg cycle |
 | `walkLeft` | no | `walkRight` | walking left |
-| `rest` | no | `idle` | a pause in the walk (Quack shakes out its feathers) |
+| `rest` | no | `idle` | a pause in the walk (Quack floats on the water) |
 | `oops` | no | `idle` | a tool call failed, or a test run failed |
 | `yay` | no | `idle` | a test run passed |
 | `thinking` | no | `idle` | a question is being answered |
@@ -129,7 +130,7 @@ Every pose it leaves out falls back as the table above says: `oops`,
 
 1. Save the file in a folder of your own, for example
    `my-characters/blob.json`.
-2. Point the `characterDir` option at that folder: through `/config`, or in
+2. Point the `characterDir` option at that folder: through `/plugin configure`, or in
    `settings.json` under `pluginConfigs["buddy@buddy"].options.characterDir`.
    Start a new session.
 3. `/buddy-personality` lists it under Your folder, or as `blob (invalid)`
@@ -206,22 +207,24 @@ The rules:
 - `{E}` marks an eye. The engine swaps in the companion's eye glyph, which is
   one column wide, so `{E}` counts as one column. Everything else is printable
   ASCII.
-- `hatCol` is the column the hat is centered on, over the head. A hat can be
-  up to 7 columns wide, so keep `hatCol` at least 3 columns from either edge.
+- By convention, which `validateSpecies` does not check: keep `hatCol` at
+  least 3 columns from either edge. A hat can be up to 7 columns wide.
 - `idle`, `walkRight`, `oops`, `yay` and `sleep` are required. `walkLeft`,
   `working` and `rest` are optional.
-  - `idle` has at least 3 frames. Frame 0 is the base, a fidget comes
-    somewhere in between, and the last frame is the blink: the base with
-    every `{E}` replaced by `-`. Repeat the base frame to slow the rhythm.
+  - `idle` has at least 3 frames. By convention, which `validateSpecies`
+    does not check: frame 0 is the base, a fidget comes somewhere in
+    between, and the last frame is the blink: the base with every `{E}`
+    replaced by `-`. Repeat the base frame to slow the rhythm.
   - `walkRight` has at least 2 frames, and legs or body visibly move between
     them.
   - `sleep` draws its eyes as `-`. A `z` is welcome.
 - A creature drawn side-on needs its own `walkLeft`: the mirror image of
   `walkRight`, with the head turned the other way. Keep its head on the
   middle column, so that the mirrored head stays under the same `hatCol`.
-- `lines` has a pool for every event in the Lines table above, each with 2 to
-  4 lines of at most 120 characters, in the species' own voice. `{name}`
-  becomes the companion's name.
+- By convention, which `validateSpecies` does not check: `lines` has a pool
+  for every event in the Lines table above, each with 2 to 4 lines of at
+  most 120 characters, in the species' own voice. `{name}` becomes the
+  companion's name.
 - `hats.json` maps `crown`, `tophat`, `propeller`, `halo`, `wizard`, `beanie`
   and `tinyduck` to one row of at most 7 columns each. `none` draws no row.
 
@@ -244,6 +247,7 @@ they are friendly.
 
 A change to the engine lands in `plugins/buddy/src/` as a pure function with
 a test in `tests/` that you watched fail first; `plugins/buddy/hooks/buddy.tsx`
-only wires it to Claude Code. `npm test`, `npm run typecheck` and
+only wires it to Claude Code, and its hook tests live in `plugins/buddy/tests/`,
+where `claude plugin test` requires them. `npm test`, `npm run typecheck` and
 `npm run validate:plugin` pass before a pull request, and the pull request
 goes to `develop`.

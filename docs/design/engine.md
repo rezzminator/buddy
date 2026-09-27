@@ -21,13 +21,15 @@ A scene is plain data: the sprite's rows and color, its column, the bubble, the 
 Below `width + 2` columns there is no scene and the hook yields.
 
 The scene's JSON is also the redraw key.
-After any event the adapter computes the scene and calls `$.ui.invalidate('ui.render')` only when that JSON differs from the one last drawn, so a character standing still costs no redraws.
+After a tick or a tool call the adapter invalidates only when the scene's JSON differs from the one last drawn; a session start, a switch, `/buddy off` and `/buddy on` invalidate outright, and so does the menu's 500 ms preview clock while the menu is open.
 
 ## The tick
 
 One timer drives everything: `$.clock.every(period, onTick)`.
 The period is the character's `motion.stepMs` when it walks, else `STILL_PERIOD_MS` (300 ms); a switch to a character with another period restarts the timer.
 `/buddy off` stops it and `/buddy on` starts it again, so a hidden buddy costs nothing.
+Two sessions share one store, which raises no change event, so each reads `hidden` back (`syncHidden`): every 15 ticks (`SHARED_TICKS`) while drawn, and on a band draw at most every 3 s (`SHARED_MS`) while hidden; another session's `/buddy off` or `/buddy on` reaches this one that way.
+`/buddy` likewise counts on from the stored pet count.
 
 Each tick advances the brain's own clock, `b.now`, by exactly one period, then expires the bubble and the confetti, checks for sleep, and moves the character.
 Brain time is the tick count times the period, never the wall clock, so a test that advances the clock by N ms sees exactly N ms of behaviour.
@@ -70,12 +72,12 @@ Hidden is the adapter's state, not the brain's: the band yields and the clock st
 
 | Event | Brain function | What changes |
 | --- | --- | --- |
-| session start, a switch, `/buddy reload` | `setCharacter` | the new character greets (6 s); a load error shows instead (10 s) |
+| session start, a switch, `/buddy reload` | `setCharacter` | the new character greets (6 s); at a session start or `/buddy reload` the choice's load error and the roster's errors (a folder that could not be listed, a file taking the reserved id `original`) show instead (10 s), and at the session's first greeting so does every ignored or capped option, once (`startWarning`) |
 | `/buddy on` | `wake`, `greet` | the greeting |
 | a finished tool call | `react` | wakes, adds the call to the turn's tally, reacts per the table below |
 | a turn ends | `wake`, `endTurn` | the tally resets; a quip is due or not ([Voice](./voice.md)) |
 | `/buddy` | `pet` | `petted` pose and line, one more pet |
-| `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` for up to 60 s, then the answer for 15 s, or `oops` with the reason |
+| `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's 90 s deadline, then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
 | the band draws | `observeBand` | width, height, and work starting or stopping |
 | a tick | `tick` | brain time, expiries, sleep, motion |
 
@@ -88,7 +90,7 @@ A finished tool call is classified by `classifyToolCall`, and the outcome picks 
 | `testPass` | Bash output matches `TEST_PASS` and not `TEST_FAIL` | `yay` | `testPass` | yes |
 
 Only Bash output is read for tests, and only its last 20,000 characters, where a runner prints its summary.
-A failure pattern wins over a pass, and both need a non-zero count: `3 passed; 0 failed` is a pass.
+Bash output counts as a test result only when the command runs a test runner (`TEST_RUNNER`): `npm`/`pnpm`/`yarn`/`bun test`, `vitest`, `jest`, `mocha`, `ava`, `tap`, `pytest`, `python -m pytest` / `unittest`, `go test`, `cargo test` or `cargo nextest`, `rspec`, `rake test`, `rails test`, `mix test`, `dotnet test`, `mvn test`, `gradle test`, `deno test`, `phpunit` or `ctest`, where a command starts, past any `VAR=value`, a launcher such as `npx` or `bundle exec`, and a path. Its output, color codes stripped, is read against each runner's own summary shapes (`TEST_PASS`, `TEST_FAIL`): a counted summary needs a non-zero count of what it reports, so `3 passed; 0 failed` is a pass and `Attempt 1 failed` or `PASS=1` is no summary, while a runner's per-file or per-test marks (`PASS {file}`, `FAIL`, `--- FAIL`, `not ok N`, `FAILED {path}::{test}`) count with no number. A failure pattern always wins over a pass. Other commands' output (`git log`, `grep`, `ls`) never reacts as a test. Not recognised yet: a gradle pass (gradle prints no count), `make test`, a runner inside `docker` or `bash -c`, and `node --test`.
 
 ## Particles
 
@@ -103,17 +105,19 @@ Asleep, the same effect rows carry the `z Z` drift instead: it alternates `z Z` 
 
 ## The speech bubble
 
-A bubble is one line of italic text in a round-bordered box beside the sprite, `min(60, cols - width - 4)` columns wide (`bubbleWidth`).
+A bubble holds one line of italic text, wrapped inside a round-bordered box beside the sprite, `min(60, cols - width - 4)` columns wide (`bubbleWidth`), so a long line takes several rows.
 It opens toward the free side: to the left when the sprite stands past the middle, else to the right.
 When the row does not fit, the bubble pushes the sprite, and the sprite keeps the pushed column after the bubble closes, so it never jumps back.
-Below 40 columns (`MIN_BUBBLE_COLS`), or when the bubble would be under 10 columns, the line is kept but not drawn.
+Below 40 columns (`MIN_BUBBLE_COLS`), or when a bubble beside the sprite would be under 10 columns, the line is drawn above the sprite instead, unboxed, across the band's width; when the band is narrower than the sprite plus 2, the line is drawn alone.
+A bubble is never dropped: it is cut to the rows the band has (`maxRows`), its last line ending in `…` (`wrapCells`), and the confetti or the sleep drift gives way to it.
+Text is measured in terminal cells, not characters (`src/width.ts`): CJK and most emoji take two, combining marks none, and East Asian ambiguous-width characters (`★ █ × · …`) one, or two with the `ambiguousWidth` option set to `wide`, for a terminal whose font draws them wide. The bubble, the sprite rows and the hover card are laid out to it.
 
 | Bubble | Lasts |
 | --- | --- |
 | a canned line (`BUBBLE_MS`) | 6 s |
 | a load error, a failed save (`ERROR_MS`) | 10 s |
 | a model answer, or why it failed (`ANSWER_MS`) | 15 s |
-| the `thinking` line while a question runs (`THINKING_MS`) | up to 60 s, until the answer replaces it |
+| the `thinking` line while a question runs | until the answer, the failure or the question's 90 s deadline |
 
 While a bubble shows, the character stands still.
 Hovering the sprite shows a card, in terminals that report the mouse: the name, the description (or an original's subtitle), `pets N | questions N | {mood}`, and an original's stat rows.
@@ -127,6 +131,9 @@ The card opens on the side away from the bubble, or not at all when neither side
 - **One clock, its period set by the character.** Rejected: one fast clock for everyone. A character that never walks ticks at 300 ms, a walker at its own step.
 - **Work is read from the band's `isWorking` prop, at draw time.** Rejected: guessing from tool calls. The engine already states it on every draw.
 - **Test patterns need a non-zero count.** Rejected: any count. `3 passed; 0 failed` read as a failure; [Verification](./verification.md) tells the bug.
+- **Only a test runner's output is a test result.** Rejected: reading every Bash command's output. `git log`, `grep` or `ls` output holding `FAILED` or a line starting `ok` set off reactions for tests nobody ran.
+- **Terminal cells, with the ambiguous width an option.** Rejected: counting characters, which measures a CJK character or an emoji as one column where the terminal draws two. An ambiguous-width character's width depends on the terminal's font, which buddy cannot see, so the user says it.
+- **A narrow band draws the bubble above.** Rejected: leaving it out below 40 columns. An answer asked for would never show in a narrow window.
 - **Confetti is a function of seed and tick.** Rejected: particles kept as state in the brain. A burst replays the same, and a test pins it.
 - **The pushed column sticks.** Rejected: snapping back when the bubble closes, which reads as a jump.
 
@@ -134,12 +141,13 @@ The card opens on the side away from the bubble, or not at all when neither side
 
 | File | Symbols |
 | --- | --- |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bandScene`, `drawBand`, `refresh`, `startClock`, `stopClock`, `onTick`, `onToolCall`, `onTurnComplete` |
-| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `react`, `wake`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `THINKING_MS`, `SLEEP_IDLE_MS` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bandScene`, `drawBand`, `refresh`, `startClock`, `stopClock`, `onTick`, `syncHidden`, `onToolCall`, `onTurnComplete` |
+| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `setCharacter`, `greet`, `react`, `pet`, `wake`, `beginQuestion`, `endQuestion`, `askLeft`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `ASK_DEADLINE_MS`, `ASK_DEADLINE_REASON`, `SLEEP_IDLE_MS`, `REST_LINE_CHANCE`, `WORKING_LINE_CHANCE` |
 | [`src/motion.ts`](../../plugins/buddy/src/motion.ts) | `tickMotion`, `maxX`, `periodMs`, `STILL_FRAME_MS`, `STILL_PERIOD_MS` |
-| [`src/reactions.ts`](../../plugins/buddy/src/reactions.ts) | `REACTIONS`, `classifyToolCall`, `TEST_PASS`, `TEST_FAIL`, `toolOutput`, `bashCommand` |
+| [`src/reactions.ts`](../../plugins/buddy/src/reactions.ts) | `REACTIONS`, `classifyToolCall`, `TEST_RUNNER`, `TEST_PASS`, `TEST_FAIL`, `toolOutput`, `bashCommand` |
 | [`src/particles.ts`](../../plugins/buddy/src/particles.ts) | `particles`, `CONFETTI_MS`, `CONFETTI_TICK_MS`, `CONFETTI_ROWS` |
 | [`src/scene.ts`](../../plugins/buddy/src/scene.ts) | `Scene`, `buildScene`, `bubbleWidth`, `MOODS`, `MIN_BUBBLE_COLS`, `MIN_EFFECT_COLS` |
+| [`src/width.ts`](../../plugins/buddy/src/width.ts) | `charWidth`, `cellWidth`, `padEndCells`, `sliceCells`, `wrapCells`, `ELLIPSIS` |
 
 ## How it's tested
 

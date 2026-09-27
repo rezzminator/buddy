@@ -5,16 +5,17 @@ It keeps the last few exchanges with each character in each session and puts the
 
 ## What it remembers
 
-The memory is a ring of the last N exchanges, oldest first, N being the `memory` option:
+The memory is a ring of the last N exchanges, oldest first, N being the `memory` option, which counts exchanges, not lines or tokens: an exchange is a `/buddy` question with its answer (or the question alone if it got none), or one line the buddy said.
 
 | Exchange | Holds |
 | --- | --- |
-| `question` | a `/buddy` question and, once shown, its answer; a question whose call failed stays without one |
+| `question` | a `/buddy` question with its answer, or the question alone if it got none: its call failed, or another character was drawn by the time the answer came, so it was dropped |
 | `line` | a canned line the bubble showed on its own |
 | `quip` | a quip the bubble showed |
 
 A question and its answer fill one slot, not two.
 The `thinking` filler is not an exchange, and a line said while the buddy is hidden was never shown, so it is dropped.
+A line joins only once the band has drawn in the session: a headless `claude -p` or SDK session never draws it, so none of its lines was shown; before the first draw only the newest line is held, for when the band first shows it (`heard`).
 Each text is folded to one line of at most 160 characters (`capText`).
 When the ring is full, a new exchange pushes the oldest out (`remember`).
 
@@ -53,12 +54,12 @@ No call is added: the memory rides on calls buddy makes anyway, and the one-line
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `memory` | number | `6` | how many recent exchanges the buddy remembers; `0` is off; at most `30` |
+| `memory` | number | `6` | how many recent exchanges the buddy remembers, counting exchanges, not lines or tokens; `0` is off; at most `30` |
 
 `0` records nothing and adds nothing to any prompt.
 A value above 30 remembers 30 and says so: `option memory capped: {n} is above 30; remembering 30`.
 A value that is not a whole number of zero or more is ignored by name and remembers 6.
-Both lines reach the log at session start and `/buddy help`, as every option's error does.
+Both lines reach the log at session start, the first greeting's bubble once, and `/buddy help`, as every option's error does.
 
 ## Errors
 
@@ -83,7 +84,7 @@ A stored record that is malformed keeps what still reads and says how many excha
 | [`src/memory.ts`](../../plugins/buddy/src/memory.ts) | `MEMORY_DEFAULT`, `MEMORY_MAX`, `MEMORY_TEXT_CAP`, `MEMORY_SESSIONS`, `MEMORY_KEY_PREFIX`, `Exchange`, `Book`, `Stored`, `storeKey`, `capText`, `remember`, `record`, `recall`, `render`, `bookOf`, `staleKeys` |
 | [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `forkPrompt`, `questionPrompt`, `quipPrompt` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `memoryFailed`, `ask`, `quip` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `heard`, `memoryFailed`, `ask`, `quip` |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `memory` |
 
 ## How it's tested

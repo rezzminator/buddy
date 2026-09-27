@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
   "license": "MIT",
   "author": {
@@ -32,7 +32,7 @@
     "questionMode": {
       "type": "string",
       "title": "/buddy questions: fork (sees the chat, uses its cache), complete, or off",
-      "description": "fork: answers from a fork of this chat (same model, served from its prompt cache); complete: a fresh call on quipModel that does not see the chat; off: no model call.",
+      "description": "fork: answers from a fork of this chat (same model, served from its prompt cache), or from quipModel before the chat's first reply, while the main turn runs, or when the fork gives no answer; complete: a fresh call on quipModel that does not see the chat; off: no model call.",
       "default": "fork"
     },
     "quips": {
@@ -43,7 +43,7 @@
     },
     "quipModel": {
       "type": "string",
-      "title": "Model for quips and fresh-session answers",
+      "title": "Model for quips and questions that do not fork",
       "description": "An alias (haiku, sonnet) or a full model id.",
       "default": "haiku"
     },
@@ -56,8 +56,26 @@
     "memory": {
       "type": "number",
       "title": "How many recent exchanges the buddy remembers (0 = off)",
-      "description": "An exchange is a /buddy question with its answer, or a line it said on its own; they go into its next answer or quip, kept per session and per character; at most 30.",
+      "description": "Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), or one line the buddy said. They go into its next answer or quip, kept per session and per character; at most 30.",
       "default": 6
+    },
+    "logLevel": {
+      "type": "string",
+      "title": "Log level: error, info or debug",
+      "description": "What the plugin writes to logFile: error only failures; info also sessions, commands, asks and their outcomes, quips, menu picks; debug also question text, model result shapes and band decisions. Never your identity.",
+      "default": "info"
+    },
+    "logFile": {
+      "type": "string",
+      "title": "Log file (empty = no log file)",
+      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as given; ~ is your home folder. One JSON line per record, retried when another session writes at the same moment, capped at 1 MB with one rotation (.1). /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to the debug log.",
+      "default": "$CLAUDE_CONFIG_DIR/buddy/buddy.log"
+    },
+    "ambiguousWidth": {
+      "type": "string",
+      "title": "Ambiguous-width characters: narrow or wide",
+      "description": "How many columns your terminal gives East Asian ambiguous-width characters (a CJK locale often draws them wide): narrow 1, wide 2. The bubble and the sprite are laid out to it.",
+      "default": "narrow"
     }
   }
 }

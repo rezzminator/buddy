@@ -27,7 +27,7 @@ export type Menu = { sections: Section[] };
 /** What the "Yours" group found: a failure to look, nothing, or the companion rolled both ways. */
 export type Originals =
   | { kind: 'error'; error: string }
-  | { kind: 'none'; notes: string[] }
+  | { kind: 'none'; notes: string[]; shownConfig?: string }
   | { kind: 'found'; soul: Soul; from?: string; notes: string[]; rolls: { variant: Variant; character?: Character; error?: string }[] };
 
 export type MenuInput = {
@@ -51,7 +51,7 @@ function entryItem(e: Entry): Item {
 function yours(o: Originals): Section {
   const title = 'Yours';
   if (o.kind === 'error') return { title, lines: [o.error], items: [] };
-  if (o.kind === 'none') return { title, lines: [`No companion in ${SHOWN_CONFIG} or its backups.`, ...o.notes], items: [] };
+  if (o.kind === 'none') return { title, lines: [`No companion in ${o.shownConfig ?? SHOWN_CONFIG} or its backups.`, ...o.notes], items: [] };
   const items = o.rolls.map((r): Item => {
     const pick: Pick = { kind: 'original', variant: r.variant };
     const item: Item = { key: itemKey(pick), label: originalLabel(o.soul.name, r.variant), pick };
@@ -68,7 +68,10 @@ export function buildMenu(i: MenuInput): Menu {
   const shipped = i.roster.entries.filter((e) => e.source === 'builtin').map(entryItem);
   const mine = i.roster.entries.filter((e) => e.source === 'user').map(entryItem);
   const shippedLines = i.shippedError ? [i.shippedError] : shipped.length === 0 ? ['No shipped characters found.'] : [];
-  const folderLines = !i.folder.isSet ? ['No folder set: the characterDir option names one.'] : i.folder.error ? [i.folder.error] : mine.length === 0 ? ['No character files in your folder.'] : [];
+  // A roster error that is not a listing failure: a file taking a reserved id, said in the folder's group.
+  const listing = new Set([i.shippedError, i.folder.error]);
+  const refused = i.roster.errors.filter((e) => !listing.has(e));
+  const folderLines = [...(!i.folder.isSet ? ['No folder set: the characterDir option names one.'] : i.folder.error ? [i.folder.error] : mine.length === 0 ? ['No character files in your folder.'] : []), ...refused];
   return {
     sections: [
       { title: 'Shipped', lines: shippedLines, items: shipped },

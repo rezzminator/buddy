@@ -47,11 +47,6 @@ export function companionOf(config: unknown): { soul?: Soul; error?: string } {
   return soulOf(isObject(config) ? config.companion : undefined);
 }
 
-/** A file that may be a backup of ~/.claude.json, in the home folder: `.claude.json.{anything}`. */
-export function isBackupName(name: string): boolean {
-  return name.startsWith(`${CONFIG_NAME}.`) && name.length > CONFIG_NAME.length + 1;
-}
-
 /** Newest first: by modification time, then by name (timestamped names sort by date). */
 export function newestFirst(a: { name: string; mtimeMs: number }, b: { name: string; mtimeMs: number }): number {
   return b.mtimeMs - a.mtimeMs || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0);

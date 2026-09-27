@@ -10,7 +10,7 @@ A companion has two halves, and they come back by different roads:
 | Half | Holds | Where it comes from |
 | --- | --- | --- |
 | bones | rarity, species, eye, hat, shiny, five stats | recomputed: a pure function of the account's identity, never stored anywhere |
-| soul | name, personality, hatch date | read: the `companion` field of `~/.claude.json`, or of a backup of it |
+| soul | name, personality, hatch date | read: the `companion` field of Claude Code's config (`~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json`), or of a backup of it |
 
 ## Identity to bones
 
@@ -103,12 +103,14 @@ The hover card shows the species, stars and shiny, five stat bars (`SNARK     �
 
 ## Finding the soul
 
-`~/.claude.json` is read first.
-Without a companion there, buddy looks through `~/.claude.json.*` in the home folder and every file in `~/.claude/backups/`, newest first by modification time, and takes the first that parses and holds one (`backupSoul`); the menu names that backup.
-A companion in `~/.claude.json` that is present but malformed is an error, said as one, never "none"; backups that would not read or parse are counted and said.
+Claude Code's config is read first: `$CLAUDE_CONFIG_DIR/.claude.json` when `CLAUDE_CONFIG_DIR` is set, else `~/.claude.json` (`configSources`).
+With `CLAUDE_CONFIG_DIR` set, the files under HOME are another account's and are never looked at.
+Without a companion in the config, buddy lists its backups in two places: beside the config (`.claude.json.backup`, `.backup.{n}`, `.bak`, `.bak-*`, `.pre-*`), and in `$CLAUDE_CONFIG_DIR/backups/` or `~/.claude/backups/` (`.claude.json.backup.*`, what Claude Code writes there).
+It keeps real backup names only, never an unfinished write (`.tmp.*`), a folder, an empty file or one over 5 MB, then the newest 10 by modification time (`backupCandidates`, `BACKUP_LIMITS`), and takes the first of those that parses and holds a companion (`backupSoul`); the menu names that backup.
+A companion in the config that is present but malformed is an error, said as one, never "none"; backups that would not read or parse are counted and said, and each file left out is logged at `debug` by name with why.
 
-Once picked, the roll and the soul are saved (`SavedOriginal`).
-A restart reads `~/.claude.json` again only for the identity, re-rolls, and draws, with no backup scan (`restoreOriginal`).
+Once picked, the soul and which install's roll you chose, native or npm, are saved (`SavedOriginal`).
+A restart reads the config again only for the identity, re-rolls, and draws, with no backup scan (`restoreOriginal`).
 
 Nothing is ever hatched by a model.
 The bones can be recomputed; the soul cannot: it was chosen once, when the companion hatched.
@@ -118,9 +120,9 @@ No soul found means no "Yours" entry, said in one line.
 ## The privacy line
 
 - The identity is read to be hashed, and is never shown, saved or logged. A saved pick holds the soul and the roll, never the identity.
-- `~/.claude.json` and its backups are only listed, dated and read; buddy never writes them.
+- The config and its backups are only listed, dated and read; buddy never writes them.
 - An error names the file and the kind of failure, never the parser's message, which can quote the file (`readJson`).
-- The menu shows `~/.claude.json` and `~/`-relative backup names, never an absolute path.
+- The menu shows the config and its backups as `~/…` or `$CLAUDE_CONFIG_DIR/…`, never an absolute path.
 
 ## The legal line
 
@@ -135,6 +137,8 @@ Every sprite, hat, line and persona text is buddy's own, and no Claude Code sour
 - **List both installs.** Rejected: guessing one. A wrong guess gives you a stranger.
 - **The soul only from the file or a backup.** Rejected: hatching a new soul with a model.
 - **The newest backup that holds a companion.** Rejected: the newest backup. A backup written after the removal may hold none.
+- **The config directory Claude Code uses.** Rejected: always HOME. With `CLAUDE_CONFIG_DIR` set, HOME's `.claude.json` is another account's, and its companion would be a stranger.
+- **Real backup names, the newest 10.** Rejected: every `.claude.json.*` file. An unfinished `.tmp.*` write, an empty file or a huge one is read for nothing, and a long backup history would be read in full at every open.
 - **Save the soul and the roll, not the identity.** Rejected: saving nothing, which rescans backups at every start; and saving the identity, which is private.
 - **One template per species, with slots.** Rejected: a drawing per combination of species, eye and hat. 18 templates and one hat file cover them all.
 - **Exact widths in templates.** Rejected: padding as characters do. The hat and the eyes sit at fixed columns.
@@ -144,13 +148,14 @@ Every sprite, hat, line and persona text is buddy's own, and no Claude Code sour
 | File | Symbols |
 | --- | --- |
 | [`src/hatch.ts`](../../plugins/buddy/src/hatch.ts) | `SALT`, `SPECIES`, `EYES`, `HATS`, `STATS`, `RARITY_WEIGHTS`, `STAT_FLOOR`, `utf8`, `wyhash64`, `fnv1a32`, `hash32`, `mulberry32`, `rollSeed`, `roll` |
-| [`src/original.ts`](../../plugins/buddy/src/original.ts) | `identityOf`, `companionOf`, `soulOf`, `isBackupName`, `newestFirst`, `originalCharacter`, `wearFrame`, `personaOf`, `cardOf`, `RARITY_COLOR`, `SavedOriginal`, `savedOriginalOf` |
+| [`src/original.ts`](../../plugins/buddy/src/original.ts) | `identityOf`, `companionOf`, `soulOf`, `newestFirst`, `originalCharacter`, `wearFrame`, `personaOf`, `cardOf`, `RARITY_COLOR`, `SavedOriginal`, `savedOriginalOf` |
+| [`src/config-source.ts`](../../plugins/buddy/src/config-source.ts) | `configSources`, `backupCandidates`, `BACKUP_LIMITS` |
 | [`src/species.ts`](../../plugins/buddy/src/species.ts) | `validateSpecies`, `validateHats`, `EYE_TOKEN`, `SPECIES_REQUIRED_POSES` |
 | [`src/scene.ts`](../../plugins/buddy/src/scene.ts) | `spriteColor`, `RAINBOW` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `readConfig`, `readJson`, `backupSoul`, `loadArt`, `rollOriginal`, `findOriginals`, `restoreOriginal` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `sourcesOf`, `readConfig`, `readJson`, `backupSoul`, `loadArt`, `rollOriginal`, `findOriginals`, `restoreOriginal` |
 
 ## How it's tested
 
-- Unit: [`tests/hatch.test.ts`](../../tests/hatch.test.ts) (the 300 + 300 vectors, the Bun cross-check, the pieces), [`tests/original.test.ts`](../../tests/original.test.ts) (identity, soul, backups, the worn frame, shiny, the card, the persona, the saved pick), [`tests/species.test.ts`](../../tests/species.test.ts) (the validator, the schema agreeing with it, all 18 shipped templates and `hats.json`).
+- Unit: [`tests/hatch.test.ts`](../../tests/hatch.test.ts) (the 300 + 300 vectors, the Bun cross-check, the pieces), [`tests/config-source.test.ts`](../../tests/config-source.test.ts) (the config and backup places, backup names, the newest 10), [`tests/original.test.ts`](../../tests/original.test.ts) (identity, soul, backups, the worn frame, shiny, the card, the persona, the saved pick), [`tests/species.test.ts`](../../tests/species.test.ts) (the validator, the schema agreeing with it, all 18 shipped templates and `hats.json`).
 - Hooks: the `/buddy-personality` group feeds an invented `~/.claude.json` and backups from memory, and checks that no file is written and that the identity appears in no log line and no stored value.
 - Live: none. The live proof keeps the real HOME ([Verification](./verification.md)).

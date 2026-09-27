@@ -1,1 +1,11 @@
-{ "modules": ["./buddy.tsx"] }
+{
+  "modules": ["./buddy.tsx"],
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/function-hooks-check.sh\"" }]
+      }
+    ]
+  }
+}

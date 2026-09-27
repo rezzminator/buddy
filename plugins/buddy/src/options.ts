@@ -1,9 +1,13 @@
 // The plugin's userConfig, resolved to typed values with the manifest's
 // defaults; a bad value is ignored by name and listed, never silently.
 
+import { configDir, type ConfigEnv } from './config-source.ts';
+import { LOG_LEVELS, type LogLevel } from './log.ts';
 import { MEMORY_DEFAULT, MEMORY_MAX } from './memory.ts';
 
 export type QuestionMode = 'fork' | 'complete' | 'off';
+export type AmbiguousWidth = 'narrow' | 'wide';
+export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
 export const QUESTION_MODES: readonly QuestionMode[] = ['fork', 'complete', 'off'];
 
 export type Options = {
@@ -16,6 +20,12 @@ export type Options = {
   quipCooldownSec: number;
   /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
   memory: number;
+  /** The plugin log's level: error, info or debug. */
+  logLevel: LogLevel;
+  /** The plugin log's file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = no log file (errors still go to the debug log). */
+  logFile: string;
+  /** How many columns an East Asian ambiguous-width character takes: narrow 1, wide 2. */
+  ambiguousWidth: AmbiguousWidth;
   errors: string[];
 };
 
@@ -28,6 +38,9 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   quipModel: 'haiku',
   quipCooldownSec: 45,
   memory: MEMORY_DEFAULT,
+  logLevel: 'info',
+  logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
+  ambiguousWidth: 'narrow',
 };
 
 function bool(v: unknown): boolean | undefined {
@@ -40,7 +53,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, characterDir, motion, questionMode, quips, quipModel, quipCooldownSec, memory } = raw;
+  const { character, characterDir, motion, questionMode, quips, quipModel, quipCooldownSec, memory, logLevel, logFile, ambiguousWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -81,7 +94,40 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
       o.errors.push(`option memory capped: ${n} is above ${MEMORY_MAX}; remembering ${MEMORY_MAX}`);
     } else o.memory = n;
   }
+  if (logLevel !== undefined && logLevel !== '') {
+    const l = typeof logLevel === 'string' ? logLevel.trim().toLowerCase() : '';
+    if ((LOG_LEVELS as readonly string[]).includes(l)) o.logLevel = l as LogLevel;
+    else bad('logLevel', `${JSON.stringify(logLevel)} is not error, info or debug`);
+  }
+  if (ambiguousWidth !== undefined && ambiguousWidth !== '') {
+    const w = typeof ambiguousWidth === 'string' ? ambiguousWidth.trim().toLowerCase() : '';
+    if ((AMBIGUOUS_WIDTHS as readonly string[]).includes(w)) o.ambiguousWidth = w as AmbiguousWidth;
+    else bad('ambiguousWidth', `${JSON.stringify(ambiguousWidth)} is not narrow or wide`);
+  }
+  // Unlike the others, an empty logFile means something: no log file.
+  if (logFile !== undefined) {
+    if (typeof logFile === 'string') o.logFile = logFile.trim();
+    else bad('logFile', 'not a string');
+  }
   return o;
+}
+
+/** Stands for Claude Code's config folder at the start of logFile: CLAUDE_CONFIG_DIR, or ~/.claude when it is unset. */
+export const CONFIG_DIR_TOKEN = '$CLAUDE_CONFIG_DIR';
+
+/**
+ * Where the plugin log goes: '' for no file; a leading `$CLAUDE_CONFIG_DIR`
+ * is the config folder, as Claude Code resolves it, so accounts never share
+ * the default log; a leading `~` is HOME; any other path as given.
+ */
+export function logPath(logFile: string, env: ConfigEnv): { path: string } | { error: string } {
+  if (logFile === CONFIG_DIR_TOKEN || logFile.startsWith(`${CONFIG_DIR_TOKEN}/`)) {
+    const dir = configDir(env);
+    return dir === null ? { error: `no log file: neither CLAUDE_CONFIG_DIR nor HOME is set to place ${logFile}` } : { path: dir + logFile.slice(CONFIG_DIR_TOKEN.length) };
+  }
+  if (!logFile.startsWith('~')) return { path: logFile };
+  const path = expandHome(logFile, env.HOME);
+  return path.startsWith('~') ? { error: `no HOME to expand ${logFile}` } : { path };
 }
 
 /** `~` or `~/...` against the home directory; anything else as given. */

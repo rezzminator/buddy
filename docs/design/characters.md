@@ -53,14 +53,14 @@ flowchart LR
 
 | Source | Where | Marked |
 | --- | --- | --- |
-| Shipped (`builtin`) | the plugin's `characters/`: `professor`, `cat`, `dragon`, `duck`, `ghost`, `robot` | |
+| Shipped (`builtin`) | the plugin's `characters/`: `cat`, `dragon`, `duck`, `ghost`, `professor`, `robot`, `yellow-duck` | |
 | Your folder (`user`) | the folder the `characterDir` option names; `~` expands to HOME | the menu's Your folder group |
-| Original (`original`) | built from the account's roll and a species template, id `original` | [Original companion](./original-companion.md) |
+| Original (`original`) | built from the account's roll and a species template, id `original`, reserved: a character file with that id is refused with an error naming the file, said in the menu's Your folder group, the log, and the bubble at each session start and `/buddy reload` (`mergeRoster`, `startWarning`) | [Original companion](./original-companion.md) |
 
 A file is a candidate when it is a visible `.json` entry that is not a folder (`isCharacterFile`).
 The roster keeps every candidate, valid or not, sorted by id; an id in both folders is taken from yours.
 An invalid file stays in the roster with its first error, so `/buddy-personality` lists it as `{id} (invalid)`, its preview naming the error, rather than hiding it.
-A folder that cannot be listed is logged, and named in the menu's group.
+A folder that cannot be listed is logged, named in the menu's group, and said in the bubble at each session start and `/buddy reload` (`startWarning`).
 The roster loads at session start and again on `/buddy reload`.
 
 The character drawn is chosen in order (`choose`): the stored choice (Enter in `/buddy-personality`), then the `character` option, then `duck` (`DEFAULT_ID`).
@@ -74,15 +74,15 @@ A line is never the one said last from the same pool (`pickLine`).
 
 | Event | Fires when | Chance | Shows for |
 | --- | --- | --- | --- |
-| `greeting` | a character is set without an error: session start, `/buddy reload`, Enter in the menu; and `/buddy on` | always | 6 s |
+| `greeting` | a character is set with nothing to warn about (no load error, no roster error, no first-time option warning; `startWarning`): session start, `/buddy reload`, Enter in the menu; and `/buddy on` | always | 6 s |
 | `toolFail` | a finished tool call was denied, or failed without reading like a test failure | always | 6 s |
 | `testPass` | a Bash call's output matches the pass pattern and not the fail one, and the call did not fail | always | 6 s, with confetti |
 | `testFail` | a Bash call's output matches the fail pattern | always | 6 s |
 | `petted` | a bare `/buddy` | always | 6 s |
-| `thinking` | a `/buddy` question starts | always | until the answer, up to 60 s |
+| `thinking` | a `/buddy` question starts | always | until the answer, the failure or the question's 90 s deadline |
 | `rest` | the tick a walking rest begins | 1 in 4 | 6 s |
 | `working` | `isWorking` turns true while no bubble shows | 1 in 4 | 6 s |
-| `wake` | the first event after sleep: a tool call, `/buddy` (a pet or a question), a turn ending, work starting | always | 6 s |
+| `wake` | the first event after sleep: a tool call, `/buddy` (a pet or a question), a turn ending, work starting | always | 6 s, unless the waking event says its own line at once (a pet, a question, a tool reaction), which replaces it |
 | `farewell` | `/buddy off` | always | never in a bubble: it is the command's reply, since the band hides at once |
 
 An original companion's pools come from its species template, with `{name}` filled in.
@@ -102,11 +102,11 @@ A shipped character is original work (no copied character, trademark or real per
 - **The first error, by its path.** Rejected: a list of every problem. An author fixes one precise thing at a time, and the validator stays small.
 - **Unknown fields are invalid.** Rejected: ignoring them. A typo such as `walkright` would otherwise vanish silently.
 - **Invalid files stay listed.** Rejected: dropping them. A file that disappears reads as "buddy did not find it"; a named error reads as what it is.
-- **Printable ASCII only.** Rejected: Unicode art. The band counts columns per cell, and wide or ambiguous characters break alignment.
+- **Printable ASCII only.** Rejected: Unicode art. A wide character takes two columns, and an ambiguous-width one one or two as the terminal's font decides, so art that lines up in one terminal breaks in another. Only an original companion's eyes (`· ✦ × ◉ °`) use them, and the `ambiguousWidth` option measures those.
 - **The loader pads and bottom-aligns.** Rejected: requiring exact widths. Authors never count trailing spaces. (Species templates do require exact widths: their eye and hat slots sit at fixed columns.)
 - **A fallback chain for poses.** Rejected: requiring all ten. A small character is complete with `idle` and a walk.
 - **A neutral fallback pool.** Rejected: the duck's lines as the default for every character. No character ever speaks in another's voice.
-- **Your file wins an id.** Rejected: the shipped one winning. It lets you restyle a shipped character without forking the plugin.
+- **Your file wins an id.** Rejected: the shipped one winning. It lets you restyle a shipped character without forking the plugin. The one id no file takes is `original`: a file could otherwise stand in for your original companion.
 - **A stand-in compiled in.** Rejected: drawing nothing when `duck.json` fails. The error needs a buddy to say it.
 
 ## Where it lives

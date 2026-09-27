@@ -200,13 +200,3 @@ export function roll(identity: string, variant: Variant): Roll {
   const h = hash32(identity, variant);
   return { hash32: h, ...rollSeed(h) };
 }
-
-/** A store key for an identity that never holds the identity: its wyhash, in hex. */
-export function identityKey(identity: string): string {
-  return wyhash64(utf8(identity)).toString(16).padStart(16, '0');
-}
-
-/** The identity as it may be shown: at most its last 4 characters. */
-export function maskIdentity(identity: string): string {
-  return identity.length <= 4 ? '…' : `…${identity.slice(-4)}`;
-}
