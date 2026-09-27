@@ -9,6 +9,10 @@ export type QuestionMode = 'fork' | 'complete' | 'off';
 /** How hard the buddy's model thinks: the engine's ModelEffort values. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+/** quipModel's and effort's value for "whatever the main chat has", resolved at every call. */
+export const INHERIT = 'inherit';
+/** The model an inherited quipModel falls back to when the main chat's cannot be read. */
+export const INHERIT_FALLBACK_MODEL = 'opus';
 export type AmbiguousWidth = 'narrow' | 'wide';
 export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
 export const QUESTION_MODES: readonly QuestionMode[] = ['fork', 'complete', 'off'];
@@ -20,10 +24,10 @@ export type Options = {
   questionMode: QuestionMode;
   /** The end-of-turn call writes the buddy's line, shown in the bubble. */
   quips: boolean;
-  /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and questions that do not fork. */
+  /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and questions that do not fork; 'inherit' = the main chat's (resolveModel). */
   quipModel: string;
-  /** How hard quipModel thinks on each of those calls; a fork takes none. */
-  effort: Effort;
+  /** How hard quipModel thinks on each of those calls, a fork takes none; 'inherit' = the main chat's (resolveEffort). */
+  effort: Effort | typeof INHERIT;
   /** The least seconds between two lines; 0 = every answered turn. */
   quipCooldownSec: number;
   /** The end-of-turn call writes the next-prompt suggestion, and the harness's own is held back, shown only when the buddy has none. */
@@ -95,13 +99,14 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     else bad('questionMode', `${JSON.stringify(questionMode)} is not fork, complete or off`);
   }
   if (quipModel !== undefined && quipModel !== '') {
-    if (typeof quipModel === 'string') o.quipModel = quipModel.trim();
+    if (typeof quipModel === 'string') o.quipModel = quipModel.trim().toLowerCase() === INHERIT ? INHERIT : quipModel.trim();
     else bad('quipModel', 'not a string');
   }
   if (effort !== undefined && effort !== '') {
     const e = typeof effort === 'string' ? effort.trim().toLowerCase() : '';
-    if ((EFFORTS as readonly string[]).includes(e)) o.effort = e as Effort;
-    else bad('effort', `${JSON.stringify(effort)} is not low, medium, high, xhigh or max`);
+    if (e === INHERIT) o.effort = INHERIT;
+    else if ((EFFORTS as readonly string[]).includes(e)) o.effort = e as Effort;
+    else bad('effort', `${JSON.stringify(effort)} is not low, medium, high, xhigh, max or inherit`);
   }
   if (quipCooldownSec !== undefined && quipCooldownSec !== '') {
     const n = typeof quipCooldownSec === 'number' ? quipCooldownSec : Number(quipCooldownSec);
@@ -132,6 +137,20 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     else bad('logFile', 'not a string');
   }
   return o;
+}
+
+/** The model a call runs on: the option, or for 'inherit' the main chat's, INHERIT_FALLBACK_MODEL when that is unknown. */
+export function resolveModel(option: string, sessionModel: string | undefined): string {
+  if (option !== INHERIT) return option;
+  const model = sessionModel?.trim() ?? '';
+  return model || INHERIT_FALLBACK_MODEL;
+}
+
+/** The effort a call sends: the option, or for 'inherit' the main chat's level when it is one of EFFORTS; undefined sends none, so the model's default applies. */
+export function resolveEffort(option: Effort | typeof INHERIT, envEffort: string | undefined): Effort | undefined {
+  if (option !== INHERIT) return option;
+  const e = envEffort?.trim().toLowerCase() ?? '';
+  return (EFFORTS as readonly string[]).includes(e) ? (e as Effort) : undefined;
 }
 
 /** Stands for Claude Code's config folder at the start of logFile: CLAUDE_CONFIG_DIR, or ~/.claude when it is unset. */

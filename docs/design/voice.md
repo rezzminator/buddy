@@ -102,6 +102,7 @@ The rule makes the model aim for one line; the cap and the trim catch the rest.
 ## The quip model
 
 `quipModel` (default `opus`) is an alias such as `opus`, `sonnet` or `haiku`, or a full model id; `effort` (default `low`; low, medium, high, xhigh or max) is how hard it thinks on each call, passed to every `$.model.complete` the buddy makes. A fork takes no effort and keeps the chat's own.
+Either can be `inherit`, resolved before every call by `callSettings`: `quipModel: inherit` is the main chat's model (`$.session.model()`, `resolveModel`), `opus` when it cannot be read; `effort: inherit` is the main chat's level where Claude Code exposes it, the `CLAUDE_EFFORT` variable (`resolveEffort`), and otherwise no effort is sent, so the model's default applies. A failed read is logged once and falls back; each call's resolved model and effort are logged at debug (`turn.settings`, `ask.settings`), and `session.start` logs the options as set, `inherit` included.
 It serves two calls: the end-of-turn call and questions in `complete` mode; it never stands in for a fork.
 A question it answers carries the chat's last 3 turns (`recentTurns`) before the question, since a completion cannot see the chat.
 The fork itself always runs on the chat's model.
@@ -128,8 +129,8 @@ Like every option, it is resolved once at load by `resolveOptions`: a value of t
 | [`src/suggest.ts`](../../plugins/buddy/src/suggest.ts) | `dropsHarnessSuggestion` |
 | [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `holdsAnswer`, `endTurn`, `react`, `FORK_DEADLINE_MS`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason` |
 | [`src/command.ts`](../../plugins/buddy/src/command.ts) | `parseCommand`, `USAGE` |
-| [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS`, `QUESTION_MODES` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `onTurnComplete`, `turnCall`, `sayTurnLine`, `proposeTurnNext`, `giveUpSuggestion`, `runCommand`, the `prompt.submit` and `prompt.suggest` hooks |
+| [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS`, `QUESTION_MODES`, `resolveModel`, `resolveEffort`, `INHERIT` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `callSettings`, `onTurnComplete`, `turnCall`, `sayTurnLine`, `proposeTurnNext`, `giveUpSuggestion`, `runCommand`, the `prompt.submit` and `prompt.suggest` hooks |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `questionMode`, `quips`, `quipModel`, `effort`, `quipCooldownSec`, `suggestions` |
 
 ## How it's tested

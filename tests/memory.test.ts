@@ -49,6 +49,11 @@ describe('render', () => {
       'Recently (oldest first):\nYou: remember pineapple\nCat: Pineapple, noted.\nCat: Tests pass.\nYou: still there?',
     );
   });
+  test('a suggested next prompt is labelled as one, never as a line said', () => {
+    expect(render([qa('run the tests?', 'Go on.'), { kind: 'suggestion', text: 'run npm test' }], 'Cat')).toBe(
+      'Recently (oldest first):\nYou: run the tests?\nCat: Go on.\nCat suggested your next prompt: run npm test',
+    );
+  });
   test('empty is empty', () => {
     expect(render([], 'Cat')).toBe('');
   });
@@ -84,6 +89,13 @@ describe('the store', () => {
     expect(bookOf({ at: 1, characters: { cat: [line('hi'), { who: 'you', kind: 'question', text: 'x' }, { kind: 'question', question: 'q', answer: 3 }], duck: 'x' } })).toEqual({
       book: { cat: [line('hi')] },
       error: 'the stored memory had 3 malformed exchanges, dropped',
+    });
+  });
+  test('a stored suggestion reads back as a suggestion, capped; one without text is dropped', () => {
+    const long = 'x'.repeat(MEMORY_TEXT_CAP + 20);
+    expect(bookOf({ at: 1, characters: { cat: [{ kind: 'suggestion', text: 'run npm test' }, { kind: 'suggestion', text: long }, { kind: 'suggestion' }] } })).toEqual({
+      book: { cat: [{ kind: 'suggestion', text: 'run npm test' }, { kind: 'suggestion', text: capText(long) }] },
+      error: 'the stored memory had 1 malformed exchange, dropped',
     });
   });
   test('old sessions: all but the newest kept', () => {

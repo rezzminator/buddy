@@ -1,7 +1,8 @@
 // The buddy's short memory: the last N exchanges between you and one
 // character in one session, oldest first, as a ring. An exchange is one
-// /buddy question with its answer, or one bubble line on its own (a canned
-// event line or a quip). No I/O: the adapter keeps a session's book in
+// /buddy question with its answer, one bubble line on its own (a canned
+// event line or a quip), or a next prompt the buddy suggested and the prompt
+// box showed. No I/O: the adapter keeps a session's book in
 // $.store under storeKey(sessionId), each character's ring under its id, so a
 // switched character never claims another's words.
 
@@ -12,8 +13,8 @@ export const MEMORY_TEXT_CAP = 160;
 export const MEMORY_SESSIONS = 20;
 export const MEMORY_KEY_PREFIX = 'memory:';
 
-/** One slot of the ring: a question and its answer (none when it got none), or a line said on its own. */
-export type Exchange = { kind: 'question'; question: string; answer?: string } | { kind: 'line' | 'quip'; text: string };
+/** One slot of the ring: a question and its answer (none when it got none), a line said on its own, or a next prompt the buddy suggested. */
+export type Exchange = { kind: 'question'; question: string; answer?: string } | { kind: 'line' | 'quip' | 'suggestion'; text: string };
 /** One session's rings, by character id. */
 export type Book = Record<string, Exchange[]>;
 /** What the store holds under storeKey(sessionId): when it was last written, and the book. */
@@ -61,7 +62,13 @@ export function recall(book: Book, characterId: string, n: number): Exchange[] {
 /** The exchanges as the prompt carries them, oldest first; '' when there are none. */
 export function render(exchanges: readonly Exchange[], name: string): string {
   if (exchanges.length === 0) return '';
-  const lines = exchanges.flatMap((x) => (x.kind === 'question' ? [`You: ${x.question}`, ...(x.answer ? [`${name}: ${x.answer}`] : [])] : [`${name}: ${x.text}`]));
+  const lines = exchanges.flatMap((x) =>
+    x.kind === 'question'
+      ? [`You: ${x.question}`, ...(x.answer ? [`${name}: ${x.answer}`] : [])]
+      : x.kind === 'suggestion'
+        ? [`${name} suggested your next prompt: ${x.text}`]
+        : [`${name}: ${x.text}`],
+  );
   return ['Recently (oldest first):', ...lines].join('\n');
 }
 
@@ -73,7 +80,7 @@ function exchangeOf(v: unknown): Exchange | null {
     if (typeof x.question !== 'string' || (x.answer !== undefined && typeof x.answer !== 'string')) return null;
     return capped({ kind: 'question', question: x.question, ...(typeof x.answer === 'string' ? { answer: x.answer } : {}) });
   }
-  if ((x.kind === 'line' || x.kind === 'quip') && typeof x.text === 'string') return capped({ kind: x.kind, text: x.text });
+  if ((x.kind === 'line' || x.kind === 'quip' || x.kind === 'suggestion') && typeof x.text === 'string') return capped({ kind: x.kind, text: x.text });
   return null;
 }
 

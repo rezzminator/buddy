@@ -1102,6 +1102,21 @@ describe('prompt suggestions', () => {
     expect(w.origins).toEqual(['plugin']);
     await ui.unmount();
   });
+  test('a shown suggestion is remembered as one: the next question\'s prompt carries it, kept in the store', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'LINE: Fixy likes that.\nNEXT: run the tests' }, { isAnswered: true, text: 'I said run the tests.' }] });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['run the tests']);
+    await $.command.run(run('what was your last suggestion?'));
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(2);
+    expect(w.completes[1]!.prompt).toContain('Fixy: Fixy likes that.\nFixy suggested your next prompt: run the tests\n');
+    const stored = w.saved.get(`memory:${SESSION}`) as { characters: Record<string, unknown[]> };
+    expect(stored.characters.fixy).toContainEqual({ kind: 'suggestion', text: 'run the tests' });
+    await ui.unmount();
+  });
   test('the engine\'s own suggestion is held while the call runs; with NEXT: NONE it is shown after all, and a later one passes', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: All done here.\nNEXT: NONE' }, completeDelayMs: 5_000 });
     await $.session.start(START);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { DEFAULTS, expandHome, logPath, resolveOptions } from '../plugins/buddy/src/options.ts';
+import { DEFAULTS, expandHome, logPath, resolveEffort, resolveModel, resolveOptions } from '../plugins/buddy/src/options.ts';
 
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
@@ -29,8 +29,52 @@ describe('the effort option', () => {
     for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveOptions({ effort: e })).toMatchObject({ effort: e, errors: [] });
     expect(resolveOptions({ effort: 'Max' })).toMatchObject({ effort: 'max', errors: [] });
     expect(resolveOptions({ effort: '' })).toMatchObject({ effort: 'low', errors: [] });
-    expect(resolveOptions({ effort: 'turbo' })).toMatchObject({ effort: 'low', errors: ['option effort ignored: "turbo" is not low, medium, high, xhigh or max'] });
-    expect(resolveOptions({ effort: 3 })).toMatchObject({ effort: 'low', errors: ['option effort ignored: 3 is not low, medium, high, xhigh or max'] });
+    expect(resolveOptions({ effort: 'turbo' })).toMatchObject({ effort: 'low', errors: ['option effort ignored: "turbo" is not low, medium, high, xhigh, max or inherit'] });
+    expect(resolveOptions({ effort: 3 })).toMatchObject({ effort: 'low', errors: ['option effort ignored: 3 is not low, medium, high, xhigh, max or inherit'] });
+  });
+  test('inherit, any case, is kept as inherit', () => {
+    expect(resolveOptions({ effort: 'inherit' })).toMatchObject({ effort: 'inherit', errors: [] });
+    expect(resolveOptions({ effort: ' Inherit ' })).toMatchObject({ effort: 'inherit', errors: [] });
+  });
+});
+
+describe('the quipModel option', () => {
+  test('opus by default; a model name as given; inherit, any case, is kept as inherit', () => {
+    expect(resolveOptions({}).quipModel).toBe('opus');
+    expect(resolveOptions({ quipModel: ' haiku ' })).toMatchObject({ quipModel: 'haiku', errors: [] });
+    expect(resolveOptions({ quipModel: 'inherit' })).toMatchObject({ quipModel: 'inherit', errors: [] });
+    expect(resolveOptions({ quipModel: 'INHERIT' })).toMatchObject({ quipModel: 'inherit', errors: [] });
+  });
+});
+
+describe('resolveModel', () => {
+  test('a named model is itself, whatever the main chat runs', () => {
+    expect(resolveModel('sonnet', 'claude-opus-4-1')).toBe('sonnet');
+    expect(resolveModel('haiku', undefined)).toBe('haiku');
+  });
+  test("inherit is the main chat's model", () => {
+    expect(resolveModel('inherit', 'claude-sonnet-4-5')).toBe('claude-sonnet-4-5');
+  });
+  test('inherit with no main-chat model falls back to opus', () => {
+    expect(resolveModel('inherit', undefined)).toBe('opus');
+    expect(resolveModel('inherit', '')).toBe('opus');
+    expect(resolveModel('inherit', '  ')).toBe('opus');
+  });
+});
+
+describe('resolveEffort', () => {
+  test('a named level is itself, whatever the main chat uses', () => {
+    expect(resolveEffort('high', 'max')).toBe('high');
+    expect(resolveEffort('low', undefined)).toBe('low');
+  });
+  test("inherit is the main chat's level, when it is one of the five", () => {
+    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveEffort('inherit', e)).toBe(e);
+    expect(resolveEffort('inherit', ' High ')).toBe('high');
+  });
+  test("inherit without a known level sends none: the model's default applies", () => {
+    expect(resolveEffort('inherit', undefined)).toBeUndefined();
+    expect(resolveEffort('inherit', '')).toBeUndefined();
+    expect(resolveEffort('inherit', 'turbo')).toBeUndefined();
   });
 });
 

@@ -44,13 +44,13 @@
     "quipModel": {
       "type": "string",
       "title": "Model for the buddy's lines, suggestions and questions",
-      "description": "An alias (opus, sonnet, haiku) or a full model id. It writes the end-of-turn line and suggestion and answers questions that do not fork.",
+      "description": "An alias (opus, sonnet, haiku), a full model id, or inherit: the main chat's model, read at every call (opus when it cannot be read). It writes the end-of-turn line and suggestion and answers questions that do not fork.",
       "default": "opus"
     },
     "effort": {
       "type": "string",
-      "title": "How hard quipModel thinks: low, medium, high, xhigh or max",
-      "description": "The effort of every quipModel call the buddy makes (the end-of-turn line and suggestion, questions that do not fork); a fork keeps the chat's own. Higher is slower.",
+      "title": "How hard quipModel thinks: low, medium, high, xhigh, max or inherit",
+      "description": "The effort of every quipModel call the buddy makes (the end-of-turn line and suggestion, questions that do not fork); a fork keeps the chat's own. Higher is slower. inherit uses the main chat's level, read at every call, when Claude Code exposes it (CLAUDE_EFFORT), and otherwise sends none, so the model's default applies.",
       "default": "low"
     },
     "quipCooldownSec": {

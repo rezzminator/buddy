@@ -5,13 +5,14 @@ It keeps the last few exchanges with each character in each session and puts the
 
 ## What it remembers
 
-The memory is a ring of the last N exchanges, oldest first, N being the `memory` option, which counts exchanges, not lines or tokens: an exchange is a `/buddy` question with its answer (or the question alone if it got none), or one line the buddy said.
+The memory is a ring of the last N exchanges, oldest first, N being the `memory` option, which counts exchanges, not lines or tokens: an exchange is a `/buddy` question with its answer (or the question alone if it got none), one line the buddy said, or a next prompt it suggested.
 
 | Exchange | Holds |
 | --- | --- |
 | `question` | a `/buddy` question with its answer, or the question alone if it got none: its call failed, or another character was drawn by the time the answer came, so it was dropped |
 | `line` | a canned line the bubble showed on its own |
 | `quip` | a quip the bubble showed |
+| `suggestion` | a next prompt the end-of-turn call proposed and the prompt box showed; rendered as `{name} suggested your next prompt: …`, so "what was your last suggestion?" has an answer |
 
 A question and its answer fill one slot, not two.
 The `thinking` filler is not an exchange, and a line said while the buddy is hidden was never shown, so it is dropped.
@@ -75,6 +76,7 @@ A stored record that is malformed keeps what still reads and says how many excha
 - **Kept in `$.store`.** Rejected: plugin memory only. A `/reload` would forget the thread mid-conversation.
 - **Per session and per character.** Rejected: one global ring. A new session's buddy would recall another chat, and a switched character would quote another's words as its own.
 - **Its own lines count.** Rejected: remembering questions and answers only. "What did you just say?" deserves an answer, and a quip is part of the thread.
+- **Its suggestions count, labelled as suggestions.** Rejected: forgetting them, or keeping them as lines. "What was your last suggestion?" deserves an answer, and a suggestion was put in the prompt box, never said in the bubble; one the box did not show is not kept.
 - **A small default, a hard cap, and pruning.** Rejected: unbounded memory. Every exchange is sent with every call, and the store should not grow with every session ever held.
 
 ## Where it lives
@@ -84,7 +86,7 @@ A stored record that is malformed keeps what still reads and says how many excha
 | [`src/memory.ts`](../../plugins/buddy/src/memory.ts) | `MEMORY_DEFAULT`, `MEMORY_MAX`, `MEMORY_TEXT_CAP`, `MEMORY_SESSIONS`, `MEMORY_KEY_PREFIX`, `Exchange`, `Book`, `Stored`, `storeKey`, `capText`, `remember`, `record`, `recall`, `render`, `bookOf`, `staleKeys` |
 | [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `forkPrompt`, `questionPrompt`, `recentTurns`, `turnPrompt` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `heard`, `memoryFailed`, `ask`, `quip` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `heard`, `memoryFailed`, `ask`, `quip`, `proposeTurnNext` |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `memory` |
 
 ## How it's tested
