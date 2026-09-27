@@ -10,23 +10,23 @@ import { TURN_WINDOW, TURN_WINDOW_MAX } from './prompts.ts';
 /** How hard the buddy's model thinks: the engine's ModelEffort values. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
-/** buddyModel's and buddyEffort's value for "whatever the main chat has", resolved at every call. */
+/** model's and effort's value for "whatever the main chat has", resolved at every call. */
 export const INHERIT = 'inherit';
-/** The model an inherited buddyModel falls back to when the main chat's cannot be read. */
+/** The model an inherited model falls back to when the main chat's cannot be read. */
 export const INHERIT_FALLBACK_MODEL = 'opus';
 export type AmbiguousWidth = 'narrow' | 'wide';
 export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
 
 export type Options = {
   character: string;
-  customCharactersFolder: string;
-  walkAlongPrompt: boolean;
+  customCharactersDir: string;
+  walkOverPromptBar: boolean;
   /** The end-of-turn call writes the buddy's line, shown in the bubble. */
   commentAfterEachTurn: boolean;
   /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and every /buddy question; 'inherit' = the main chat's (resolveModel). */
-  buddyModel: string;
-  /** How hard buddyModel thinks on each of those calls; 'inherit' = the main chat's (resolveEffort). */
-  buddyEffort: Effort | typeof INHERIT;
+  model: string;
+  /** How hard model thinks on each of those calls; 'inherit' = the main chat's (resolveEffort). */
+  effort: Effort | typeof INHERIT;
   /** The least seconds between two lines; 0 = every answered turn. */
   secondsBetweenComments: number;
   /** The end-of-turn call writes the next-prompt suggestion, and the harness's own is held back, shown only when the buddy has none. */
@@ -46,11 +46,11 @@ export type Options = {
 
 export const DEFAULTS: Omit<Options, 'errors'> = {
   character: 'duck',
-  customCharactersFolder: '',
-  walkAlongPrompt: true,
+  customCharactersDir: '',
+  walkOverPromptBar: true,
   commentAfterEachTurn: true,
-  buddyModel: 'opus',
-  buddyEffort: 'low',
+  model: 'opus',
+  effort: 'low',
   secondsBetweenComments: 0,
   suggestNextPrompt: true,
   rememberedExchanges: MEMORY_DEFAULT,
@@ -70,19 +70,19 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, customCharactersFolder, walkAlongPrompt, commentAfterEachTurn, buddyModel, buddyEffort, secondsBetweenComments, suggestNextPrompt, rememberedExchanges, chatTurnsToRead, logLevel, logFile, ambiguousCharacterWidth } = raw;
+  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, rememberedExchanges, chatTurnsToRead, logLevel, logFile, ambiguousCharacterWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
   }
-  if (customCharactersFolder !== undefined && customCharactersFolder !== '') {
-    if (typeof customCharactersFolder === 'string') o.customCharactersFolder = customCharactersFolder.trim();
-    else bad('customCharactersFolder', 'not a string');
+  if (customCharactersDir !== undefined && customCharactersDir !== '') {
+    if (typeof customCharactersDir === 'string') o.customCharactersDir = customCharactersDir.trim();
+    else bad('customCharactersDir', 'not a string');
   }
-  if (walkAlongPrompt !== undefined) {
-    const b = bool(walkAlongPrompt);
-    if (b === undefined) bad('walkAlongPrompt', `${JSON.stringify(walkAlongPrompt)} is not true or false`);
-    else o.walkAlongPrompt = b;
+  if (walkOverPromptBar !== undefined) {
+    const b = bool(walkOverPromptBar);
+    if (b === undefined) bad('walkOverPromptBar', `${JSON.stringify(walkOverPromptBar)} is not true or false`);
+    else o.walkOverPromptBar = b;
   }
   if (commentAfterEachTurn !== undefined) {
     const b = bool(commentAfterEachTurn);
@@ -94,15 +94,15 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     if (b === undefined) bad('suggestNextPrompt', `${JSON.stringify(suggestNextPrompt)} is not true or false`);
     else o.suggestNextPrompt = b;
   }
-  if (buddyModel !== undefined && buddyModel !== '') {
-    if (typeof buddyModel === 'string') o.buddyModel = buddyModel.trim().toLowerCase() === INHERIT ? INHERIT : buddyModel.trim();
-    else bad('buddyModel', 'not a string');
+  if (model !== undefined && model !== '') {
+    if (typeof model === 'string') o.model = model.trim().toLowerCase() === INHERIT ? INHERIT : model.trim();
+    else bad('model', 'not a string');
   }
-  if (buddyEffort !== undefined && buddyEffort !== '') {
-    const e = typeof buddyEffort === 'string' ? buddyEffort.trim().toLowerCase() : '';
-    if (e === INHERIT) o.buddyEffort = INHERIT;
-    else if ((EFFORTS as readonly string[]).includes(e)) o.buddyEffort = e as Effort;
-    else bad('buddyEffort', `${JSON.stringify(buddyEffort)} is not low, medium, high, xhigh, max or inherit`);
+  if (effort !== undefined && effort !== '') {
+    const e = typeof effort === 'string' ? effort.trim().toLowerCase() : '';
+    if (e === INHERIT) o.effort = INHERIT;
+    else if ((EFFORTS as readonly string[]).includes(e)) o.effort = e as Effort;
+    else bad('effort', `${JSON.stringify(effort)} is not low, medium, high, xhigh, max or inherit`);
   }
   if (secondsBetweenComments !== undefined && secondsBetweenComments !== '') {
     const n = typeof secondsBetweenComments === 'number' ? secondsBetweenComments : Number(secondsBetweenComments);

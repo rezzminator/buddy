@@ -28,7 +28,7 @@ export type Talk = { text: string; pose: Pose | null; until: number; held?: bool
 
 export type Brain = {
   character: Character;
-  /** The walkAlongPrompt option; the character's own motion.walk also has to allow it. */
+  /** The walkOverPromptBar option; the character's own motion.walk also has to allow it. */
   walkOption: boolean;
   now: number;
   motion: MotionState;

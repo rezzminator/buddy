@@ -672,7 +672,7 @@ describe('/buddy-personality', () => {
     expect(await shows(pane, /^Fixy, a test fixture\.$/)).toBe(true);
     expect(await shows(pane, /You are Fixy/)).toBe(false);
     expect(await shows(pane, /^“Fixy says hi\.”$/)).toBe(true);
-    expect(await shows(pane, /^No folder set: the customCharactersFolder option names one\.$/)).toBe(true);
+    expect(await shows(pane, /^No folder set: the customCharactersDir option names one\.$/)).toBe(true);
     await pane.unmount();
   });
 
@@ -955,7 +955,7 @@ describe('hook paths', () => {
       expect(step.value).toMatchObject({ turnId: input.turnId, answer: 'streamed' });
     }
     expect(beneath).toEqual([{ effort: 'medium', agentId: undefined }, { effort: 'max', agentId: 'sub1' }]);
-    // buddyEffort inherit takes the main step's 'medium' (observeEffort, resolveEffort: the kit cannot set a plugin option); the default low is sent as set.
+    // effort inherit takes the main step's 'medium' (observeEffort, resolveEffort: the kit cannot set a plugin option); the default low is sent as set.
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes[0]).toMatchObject({ model: 'opus', effort: 'low' });

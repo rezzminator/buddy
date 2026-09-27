@@ -64,8 +64,8 @@ describe('roster', () => {
   });
   test('the first greeting says the choice error, the roster errors and every ignored option, joined; nothing when all is well', () => {
     expect(startWarning(undefined, [], [])).toBeUndefined();
-    expect(startWarning("Couldn't load x: no such character", [], ['option walkAlongPrompt ignored: "maybe" is not true or false'])).toBe(
-      'Couldn\'t load x: no such character; option walkAlongPrompt ignored: "maybe" is not true or false',
+    expect(startWarning("Couldn't load x: no such character", [], ['option walkOverPromptBar ignored: "maybe" is not true or false'])).toBe(
+      'Couldn\'t load x: no such character; option walkOverPromptBar ignored: "maybe" is not true or false',
     );
     expect(startWarning(undefined, [], ['option commentAfterEachTurn ignored: 1 is not true or false'])).toBe('option commentAfterEachTurn ignored: 1 is not true or false');
   });

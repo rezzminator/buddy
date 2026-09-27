@@ -29,11 +29,11 @@ Useful when judging impact:
   starts or resumes: when `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is unset it
   searches the config for Claude Code's function-hooks rollout flag, and it
   prints one line saying buddy is off, or nothing. It writes nothing.
-- It reads the character JSON files in the folder the `customCharactersFolder` option
+- It reads the character JSON files in the folder the `customCharactersDir` option
   names.
 - It makes model calls only through Claude Code itself: a `/buddy` question,
   and one short call at the end of each answered turn for the buddy's line
-  and the prompt suggestion, on `buddyModel` (default `opus`) at `buddyEffort`
+  and the prompt suggestion, on `model` (default `opus`) at `effort`
   (default `low`) and sent its memory and the chat's last `chatTurnsToRead` turns (default 3) (`commentAfterEachTurn` and `suggestNextPrompt`, on by default; turn
   both off for none). There is no buddy server.
 

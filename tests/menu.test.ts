@@ -39,7 +39,7 @@ describe('buildMenu', () => {
 
   test('nothing there says so in one line; a backup is named', () => {
     const none = buildMenu(input({ originals: { kind: 'none', notes: [] }, folder: { isSet: false }, roster: mergeRoster([], []) }));
-    expect(none.sections.map((s) => s.lines)).toEqual([['No shipped characters found.'], ['No companion in ~/.claude.json or its backups.'], ['No folder set: the customCharactersFolder option names one.']]);
+    expect(none.sections.map((s) => s.lines)).toEqual([['No shipped characters found.'], ['No companion in ~/.claude.json or its backups.'], ['No folder set: the customCharactersDir option names one.']]);
     const backup = buildMenu(input({ originals: { ...found, from: '~/.claude.json.backup' } as Originals }));
     expect(backup.sections[1]!.lines).toEqual(['From the backup ~/.claude.json.backup.']);
   });

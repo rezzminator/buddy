@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Live configuration proof: five real Claude Code sessions (the main chat on
 # Haiku) with this checkout loaded by --plugin-dir, two user turns each, the
-# buddy options pinned per session (buddyModel opus, buddyEffort low, logLevel debug,
+# buddy options pinned per session (model opus, effort low, logLevel debug,
 # logFile in the session's folder, always), every turn measured:
 #   S1 defaults (commentAfterEachTurn, suggestNextPrompt, rememberedExchanges 6): after each turn a line shows in
 #      the bubble and a suggestion in the prompt box; a /buddy question is
@@ -11,7 +11,7 @@
 #      or read (the store holds nothing for the session)
 #   S4 headless `claude -p`, then `-p --resume`: turn.skipped why headless and
 #      no model call from the plugin
-#   S5 customCharactersFolder with one invalid character, the character option naming it:
+#   S5 customCharactersDir with one invalid character, the character option naming it:
 #      the duck is drawn with a bubble naming the error
 # Per turn, from the plugin log and the transcript: the turn's end to the line
 # in the log (quip.outcome ts minus the transcript's reply), the plugin's own
@@ -42,7 +42,7 @@ options_of() {
     S1|S4) echo '{}' ;;
     S2) echo '{ "commentAfterEachTurn": false }' ;;
     S3) echo '{ "suggestNextPrompt": false, "rememberedExchanges": 0 }' ;;
-    S5) jq -n --arg d "$RUN/chars" '{ customCharactersFolder: $d, character: "broken" }' ;;
+    S5) jq -n --arg d "$RUN/chars" '{ customCharactersDir: $d, character: "broken" }' ;;
   esac
 }
 lines() { [ -f "$RUN/buddy.log" ] && wc -l < "$RUN/buddy.log" | tr -d ' ' || echo 0; }
@@ -150,7 +150,7 @@ run_session() {
   ID=$(uuidgen | tr 'A-Z' 'a-z'); echo "$ID" > "$RUN/session-id"
   if [ "$S" = S5 ]; then mkdir -p "$RUN/chars"; printf '%s\n' '{ "name": "Broken", "poses": 3 }' > "$RUN/chars/broken.json"; fi
   jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" \
-    '{ pluginConfigs: { "buddy@inline": { options: ({ buddyModel: "opus", buddyEffort: "low", logLevel: "debug", logFile: $log } + $o) } } }' > "$RUN/settings.json"
+    '{ pluginConfigs: { "buddy@inline": { options: ({ model: "opus", effort: "low", logLevel: "debug", logFile: $log } + $o) } } }' > "$RUN/settings.json"
   pool_of duck thinking > "$RUN/thinking.pool"
   [ -s "$RUN/thinking.pool" ] || printf '%s\n' 'Let me think...' 'Hmm...' 'One moment...' > "$RUN/thinking.pool"
   rows_of duck > "$RUN/duck.rows"

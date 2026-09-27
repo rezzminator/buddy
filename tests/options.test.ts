@@ -4,44 +4,44 @@ import { DEFAULTS, expandHome, logPath, observeEffort, resolveEffort, resolveMod
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersFolder: '', walkAlongPrompt: true, commentAfterEachTurn: true, buddyModel: 'opus', buddyEffort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, rememberedExchanges: 6, chatTurnsToRead: 3, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousCharacterWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, rememberedExchanges: 6, chatTurnsToRead: 3, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousCharacterWidth: 'narrow' });
   });
   test('good values', () => {
-    const o = resolveOptions({ character: ' Cat ', customCharactersFolder: '~/chars', walkAlongPrompt: false, commentAfterEachTurn: 'false', buddyModel: 'sonnet', buddyEffort: ' HIGH ', secondsBetweenComments: '10' });
-    expect(o).toMatchObject({ character: 'cat', customCharactersFolder: '~/chars', walkAlongPrompt: false, commentAfterEachTurn: false, buddyModel: 'sonnet', buddyEffort: 'high', secondsBetweenComments: 10, errors: [] });
+    const o = resolveOptions({ character: ' Cat ', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: 'false', model: 'sonnet', effort: ' HIGH ', secondsBetweenComments: '10' });
+    expect(o).toMatchObject({ character: 'cat', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: false, model: 'sonnet', effort: 'high', secondsBetweenComments: 10, errors: [] });
   });
   test('a bad value is ignored by name', () => {
-    const o = resolveOptions({ walkAlongPrompt: 'maybe', secondsBetweenComments: -1 });
-    expect(o.walkAlongPrompt).toBe(true);
+    const o = resolveOptions({ walkOverPromptBar: 'maybe', secondsBetweenComments: -1 });
+    expect(o.walkOverPromptBar).toBe(true);
     expect(o.secondsBetweenComments).toBe(0);
     expect(o.errors).toEqual([
-      'option walkAlongPrompt ignored: "maybe" is not true or false',
+      'option walkOverPromptBar ignored: "maybe" is not true or false',
       'option secondsBetweenComments ignored: -1 is not a number of seconds',
     ]);
   });
 });
 
-describe('the buddyEffort option', () => {
+describe('the effort option', () => {
   test('low by default; any ModelEffort, any case; anything else is ignored by name', () => {
-    expect(resolveOptions({}).buddyEffort).toBe('low');
-    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveOptions({ buddyEffort: e })).toMatchObject({ buddyEffort: e, errors: [] });
-    expect(resolveOptions({ buddyEffort: 'Max' })).toMatchObject({ buddyEffort: 'max', errors: [] });
-    expect(resolveOptions({ buddyEffort: '' })).toMatchObject({ buddyEffort: 'low', errors: [] });
-    expect(resolveOptions({ buddyEffort: 'turbo' })).toMatchObject({ buddyEffort: 'low', errors: ['option buddyEffort ignored: "turbo" is not low, medium, high, xhigh, max or inherit'] });
-    expect(resolveOptions({ buddyEffort: 3 })).toMatchObject({ buddyEffort: 'low', errors: ['option buddyEffort ignored: 3 is not low, medium, high, xhigh, max or inherit'] });
+    expect(resolveOptions({}).effort).toBe('low');
+    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveOptions({ effort: e })).toMatchObject({ effort: e, errors: [] });
+    expect(resolveOptions({ effort: 'Max' })).toMatchObject({ effort: 'max', errors: [] });
+    expect(resolveOptions({ effort: '' })).toMatchObject({ effort: 'low', errors: [] });
+    expect(resolveOptions({ effort: 'turbo' })).toMatchObject({ effort: 'low', errors: ['option effort ignored: "turbo" is not low, medium, high, xhigh, max or inherit'] });
+    expect(resolveOptions({ effort: 3 })).toMatchObject({ effort: 'low', errors: ['option effort ignored: 3 is not low, medium, high, xhigh, max or inherit'] });
   });
   test('inherit, any case, is kept as inherit', () => {
-    expect(resolveOptions({ buddyEffort: 'inherit' })).toMatchObject({ buddyEffort: 'inherit', errors: [] });
-    expect(resolveOptions({ buddyEffort: ' Inherit ' })).toMatchObject({ buddyEffort: 'inherit', errors: [] });
+    expect(resolveOptions({ effort: 'inherit' })).toMatchObject({ effort: 'inherit', errors: [] });
+    expect(resolveOptions({ effort: ' Inherit ' })).toMatchObject({ effort: 'inherit', errors: [] });
   });
 });
 
-describe('the buddyModel option', () => {
+describe('the model option', () => {
   test('opus by default; a model name as given; inherit, any case, is kept as inherit', () => {
-    expect(resolveOptions({}).buddyModel).toBe('opus');
-    expect(resolveOptions({ buddyModel: ' haiku ' })).toMatchObject({ buddyModel: 'haiku', errors: [] });
-    expect(resolveOptions({ buddyModel: 'inherit' })).toMatchObject({ buddyModel: 'inherit', errors: [] });
-    expect(resolveOptions({ buddyModel: 'INHERIT' })).toMatchObject({ buddyModel: 'inherit', errors: [] });
+    expect(resolveOptions({}).model).toBe('opus');
+    expect(resolveOptions({ model: ' haiku ' })).toMatchObject({ model: 'haiku', errors: [] });
+    expect(resolveOptions({ model: 'inherit' })).toMatchObject({ model: 'inherit', errors: [] });
+    expect(resolveOptions({ model: 'INHERIT' })).toMatchObject({ model: 'inherit', errors: [] });
   });
 });
 
@@ -68,20 +68,20 @@ describe('resolveEffort', () => {
   test("inherit is the level of the main chat's latest request", () => {
     for (const e of ['low', 'medium', 'high', 'xhigh', 'max'] as const) expect(resolveEffort('inherit', e)).toBe(e);
   });
-  test("inherit with a numeric buddyEffort, none on the request, or no request yet sends none: the model's default applies", () => {
+  test("inherit with a numeric effort, none on the request, or no request yet sends none: the model's default applies", () => {
     expect(resolveEffort('inherit', 32000)).toBeUndefined();
     expect(resolveEffort('inherit', undefined)).toBeUndefined();
   });
 });
 
 describe('observeEffort', () => {
-  test("a step of the running main turn replaces the recorded buddyEffort, an absent one included", () => {
+  test("a step of the running main turn replaces the recorded effort, an absent one included", () => {
     expect(observeEffort(undefined, { turnId: 't1', effort: 'medium' }, 't1')).toBe('medium');
     expect(observeEffort('medium', { turnId: 't1', effort: 'max' }, 't1')).toBe('max');
     expect(observeEffort('medium', { turnId: 't1', effort: 32000 }, 't1')).toBe(32000);
     expect(observeEffort('medium', { turnId: 't1' }, 't1')).toBeUndefined();
   });
-  test("a subagent's step leaves the main chat's recorded buddyEffort as it was", () => {
+  test("a subagent's step leaves the main chat's recorded effort as it was", () => {
     expect(observeEffort('medium', { turnId: 's1', agentId: 'sub1', effort: 'max' }, 't1')).toBe('medium');
     expect(observeEffort(undefined, { turnId: 't1', agentId: 'sub1', effort: 'low' }, 't1')).toBeUndefined();
   });

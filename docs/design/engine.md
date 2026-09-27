@@ -44,7 +44,7 @@ A tick that throws is logged once, and again only when the message changes, so a
 - **Rest.** Every step rolls `restChance`; a hit stops it for `restTicks` steps and draws `rest`. One rest in four (`REST_LINE_CHANCE`) also says a `rest` line.
 - **Held still.** A bubble, work or sleep holds it in place, and a rest's countdown waits too.
 - **Frames.** Walking frames advance one per step. Every other pose changes frame every `STILL_FRAME_MS` (900 ms). A new pose starts at its first frame.
-- **Standing.** Walking needs both the `walkAlongPrompt` option and the character's `motion.walk`. Without either, the character stands on its `idle` frames and still animates.
+- **Standing.** Walking needs both the `walkOverPromptBar` option and the character's `motion.walk`. Without either, the character stands on its `idle` frames and still animates.
 - **Working.** When `isWorking` turns true, the brain draws `working` and stands still. Work starting wakes it; with no bubble up, one time in four (`WORKING_LINE_CHANCE`) it says a `working` line.
 - **Sleep.** From midnight to 6 am local time (`isSleepHour`), after `SLEEP_IDLE_MS` (60 s) with no event, no bubble and no work, it falls asleep: the `sleep` pose and a `z Z` drift above it. Any event wakes it with a `wake` line; until one comes, it sleeps on past six.
 

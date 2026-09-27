@@ -17,34 +17,34 @@
       "description": "The id of the character drawn above your prompt, such as duck or cat. A pick in /buddy-personality overrides it on this machine; picking this same character there returns to it.",
       "default": "duck"
     },
-    "customCharactersFolder": {
+    "customCharactersDir": {
       "type": "directory",
       "title": "Folder with your own characters (optional)",
       "description": "A folder of character files, one {id}.json each, following the plugin's schema/character.schema.json. They join the built-in characters in /buddy-personality; one with the same id as a built-in replaces it. Leave empty to use only the built-in characters.",
       "default": ""
     },
-    "walkAlongPrompt": {
+    "walkOverPromptBar": {
       "type": "boolean",
-      "title": "Walk back and forth along the prompt line",
-      "description": "On: the character walks along the line above your prompt. Off: it stays in one place and only animates there.",
+      "title": "Walk back and forth over the prompt bar",
+      "description": "On: the character walks over the prompt bar, on the line above your prompt. Off: it stays in one place and only animates there.",
       "default": true
     },
     "commentAfterEachTurn": {
       "type": "boolean",
       "title": "Say a line after each of Claude's answers (uses tokens)",
-      "description": "After every answered turn, one short call on buddyModel reads the last chatTurnsToRead turns of your chat and writes a line in the character's voice for its speech bubble. The same call also writes the prompt suggestion when suggestNextPrompt is on. secondsBetweenComments spaces the lines out. Off: the buddy stays quiet after turns.",
+      "description": "After every answered turn, one short call on model reads the last chatTurnsToRead turns of your chat and writes a line in the character's voice for its speech bubble. The same call also writes the prompt suggestion when suggestNextPrompt is on. secondsBetweenComments spaces the lines out. Off: the buddy stays quiet after turns.",
       "default": true
     },
-    "buddyModel": {
+    "model": {
       "type": "string",
       "title": "Model the buddy uses (opus, sonnet, haiku, a model id, or inherit)",
       "description": "The model behind every buddy call: the line after each turn (commentAfterEachTurn), the suggested next prompt (suggestNextPrompt) and the answer to every /buddy question. Give an alias (opus, sonnet, haiku) or a full model id. inherit uses whatever model your chat is on, read at each call, and opus when it cannot be read.",
       "default": "opus"
     },
-    "buddyEffort": {
+    "effort": {
       "type": "string",
       "title": "How hard the buddy's model thinks: low, medium, high, xhigh, max or inherit",
-      "description": "The thinking effort of every buddyModel call. Higher is slower and costs more. inherit uses the effort of your chat's latest request; before its first request, or when that request sets none or a number, no effort is sent and the model's own default applies.",
+      "description": "The thinking effort of every buddy call, on the model option's model. Higher is slower and costs more. inherit uses the effort of your chat's latest request; before its first request, or when that request sets none or a number, no effort is sent and the model's own default applies.",
       "default": "low"
     },
     "secondsBetweenComments": {
@@ -56,7 +56,7 @@
     "suggestNextPrompt": {
       "type": "boolean",
       "title": "The buddy suggests your next prompt (uses tokens)",
-      "description": "After every answered turn, the same short call on buddyModel proposes your next prompt, in your words, as the grey suggestion in the prompt box. Claude Code's own suggestion is held back and shown only when the buddy has none. Off: Claude Code's own suggestion shows as usual.",
+      "description": "After every answered turn, the same short call on model proposes your next prompt, in your words, as the grey suggestion in the prompt box. Claude Code's own suggestion is held back and shown only when the buddy has none. Off: Claude Code's own suggestion shows as usual.",
       "default": true
     },
     "rememberedExchanges": {

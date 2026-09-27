@@ -4,11 +4,11 @@
     "buddy@buddy": {
       "options": {
         "character": "duck",
-        "customCharactersFolder": "",
-        "walkAlongPrompt": true,
+        "customCharactersDir": "",
+        "walkOverPromptBar": true,
         "commentAfterEachTurn": true,
-        "buddyModel": "opus",
-        "buddyEffort": "low",
+        "model": "opus",
+        "effort": "low",
         "secondsBetweenComments": 0,
         "suggestNextPrompt": true,
         "rememberedExchanges": 6,

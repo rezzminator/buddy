@@ -137,8 +137,8 @@ Every pose it leaves out falls back as the table above says: `oops`,
 
 1. Save the file in a folder of your own, for example
    `my-characters/blob.json`.
-2. Point the `customCharactersFolder` option at that folder: through `/plugin configure`, or in
-   `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersFolder`.
+2. Point the `customCharactersDir` option at that folder: through `/plugin configure`, or in
+   `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersDir`.
    Start a new session.
 3. `/buddy-personality` lists it under Your folder, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.

@@ -53,7 +53,7 @@ type State = {
   original: Entry | null;
   /** The picked original's roll and soul, as saved: a restart draws it with no backup scan. */
   saved: SavedOriginal | undefined;
-  /** Why characters/ or the customCharactersFolder could not be listed: the menu says it in the group. */
+  /** Why characters/ or the customCharactersDir could not be listed: the menu says it in the group. */
   shippedError: string | undefined;
   folderError: string | undefined;
   menu: MenuState | null;
@@ -92,7 +92,7 @@ type State = {
   suggestGaveUp: boolean;
   /** The inherit read of the main chat's model failed once and was logged; a later failure falls back to opus in silence. */
   inheritFailed: Set<'model'>;
-  /** The effort of the main chat's latest model request (turn.step), which buddyEffort inherit sends; undefined before its first. */
+  /** The effort of the main chat's latest model request (turn.step), which effort inherit sends; undefined before its first. */
   mainEffort: ObservedEffort;
   /** The prompts given to the main chat (prompt.submit) and the main turns they started (turn.start), by id: an answered turn files its own into `turns`. */
   prompts: PromptLedger;
@@ -196,8 +196,8 @@ async function loadRoster(st: State, $: EngineInterface): Promise<void> {
   st.shippedError = builtin.error;
   st.folderError = undefined;
   let user: Entry[] = [];
-  if (st.options.customCharactersFolder) {
-    let dir = st.options.customCharactersFolder;
+  if (st.options.customCharactersDir) {
+    let dir = st.options.customCharactersDir;
     if (dir.startsWith('~')) dir = expandHome(dir, await $.env.get('HOME'));
     const mine = await readDir($, dir.replace(/\/+$/, ''), 'user');
     if (mine.error) errors.push(mine.error);
@@ -219,7 +219,7 @@ function applyChoice(st: State, $: EngineInterface): void {
   // An ignored option is said once, in the first greeting's bubble, as a character or roster error is: never a silent revert.
   const warning = startWarning(choice.error, st.roster.errors, st.warned ? [] : st.options.errors);
   st.warned = true;
-  if (!st.b) st.b = createBrain(choice.character, st.options.walkAlongPrompt, st.options.ambiguousCharacterWidth === 'wide');
+  if (!st.b) st.b = createBrain(choice.character, st.options.walkOverPromptBar, st.options.ambiguousCharacterWidth === 'wide');
   st.b.pets = st.pets;
   setCharacter(st.b, choice.character, warning, Math.random);
   L.context.character = choice.character.id;
@@ -460,7 +460,7 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     lg($, 'debug', 'session.build-unread', { error: message(error) });
   }
-  lg($, 'info', 'session.start', { build, model: st.options.buddyModel, effort: st.options.buddyEffort, level: L.level, quips: st.options.commentAfterEachTurn, suggestions: st.options.suggestNextPrompt, memory: st.options.rememberedExchanges });
+  lg($, 'info', 'session.start', { build, model: st.options.model, effort: st.options.effort, level: L.level, quips: st.options.commentAfterEachTurn, suggestions: st.options.suggestNextPrompt, memory: st.options.rememberedExchanges });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
@@ -526,7 +526,7 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
   }
 }
 
-/** Records the effort of a request of the running main turn, which buddyEffort inherit sends; a subagent's or a side request's leaves it. */
+/** Records the effort of a request of the running main turn, which effort inherit sends; a subagent's or a side request's leaves it. */
 function onTurnStep(st: State, $: EngineInterface, e: TurnStepInput): void {
   try {
     st.mainEffort = observeEffort(st.mainEffort, e, st.mainTurn);
@@ -615,23 +615,23 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
  */
 async function callSettings(st: State, $: EngineInterface, event: string): Promise<{ model: string; effort?: Effort }> {
   let sessionModel: string | undefined;
-  if (st.options.buddyModel === INHERIT) {
+  if (st.options.model === INHERIT) {
     try {
       sessionModel = await $.session.model();
     } catch (error) {
-      if (!st.inheritFailed.has('model')) log($, "reading the main chat's model for buddyModel inherit", error);
+      if (!st.inheritFailed.has('model')) log($, "reading the main chat's model for model inherit", error);
       st.inheritFailed.add('model');
     }
   }
-  const model = resolveModel(st.options.buddyModel, sessionModel);
-  const effort = resolveEffort(st.options.buddyEffort, st.mainEffort);
+  const model = resolveModel(st.options.model, sessionModel);
+  const effort = resolveEffort(st.options.effort, st.mainEffort);
   lg($, 'debug', event, { model, effort: effort ?? 'none' });
   return effort ? { model, effort } : { model };
 }
 
 /**
  * One call at a turn's end writes the buddy's line and the next-prompt
- * suggestion, those wanted: a buddyModel completion on the main chat's last
+ * suggestion, those wanted: a model completion on the main chat's last
  * chatTurnsToRead turns, in the voice of `c`, the character drawn as the turn ended.
  * One deadline covers the memory read, the settings and the completion.
  * A timeout, a refusal, an empty reply or a throw fails the line as a quip
@@ -932,7 +932,7 @@ async function openMenu(st: State, $: EngineInterface): Promise<{ text: string }
   if (!b) return { text: 'buddy is still starting; try again in a moment' };
   lg($, 'info', 'menu.open', { current: b.character.id });
   const originals = await findOriginals($);
-  const model = buildMenu({ roster: st.roster, shippedError: st.shippedError, folder: { isSet: Boolean(st.options.customCharactersFolder), error: st.folderError }, originals });
+  const model = buildMenu({ roster: st.roster, shippedError: st.shippedError, folder: { isSet: Boolean(st.options.customCharactersDir), error: st.folderError }, originals });
   const current = currentKeyOf(b.character.id, st.saved?.variant);
   const start = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
   stopMenu(st);

@@ -25,7 +25,7 @@ The hook tests and the validation need `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, as
 The script drives a real, interactive Claude Code session and reads the screen.
 
 - **The session.** tmux on a private socket (`-L buddy-proof`), a 160 × 50 window, never your own tmux server. The real Claude binary (`CLAUDE_BIN`, else `claude` resolved past a text wrapper), with `--model haiku --setting-sources project --allowedTools Bash --plugin-dir plugins/buddy`, a fresh `--session-id`, and function hooks on.
-- **The options.** A settings file pins them under `buddy@inline`, the id a `--plugin-dir` copy reads: `commentAfterEachTurn: false`, `suggestNextPrompt: false`, `walkAlongPrompt: true`, `logLevel: debug`, and `logFile` in the run folder.
+- **The options.** A settings file pins them under `buddy@inline`, the id a `--plugin-dir` copy reads: `commentAfterEachTurn: false`, `suggestNextPrompt: false`, `walkOverPromptBar: true`, `logLevel: debug`, and `logFile` in the run folder.
 - **The boot.** The trust dialog defaults to "No, exit", so the script presses Down, then Enter; the session is up once the prompt glyph shows, followed by a space or the no-break space Claude Code draws.
 - **The helpers.** `scripts/live-lib.sh` holds what both live scripts use: the binary, the store set aside and put back, the boot, the pane, the bubble, the transcript's replies, and sending a prompt or a command.
 - **What it reads.** What is drawn, from the pane (`tmux capture-pane`). The art to look for, from the characters' own JSON: rows of four or more visible characters, and for a second character only rows the duck lacks. The bubble, as the text between the round border's bars. Each command's reply, from the session transcript's `<local-command-stdout>`, so a reply is read as data, not scraped.
@@ -73,7 +73,7 @@ The hook tests prove that path instead, with an invented `~/.claude.json` and ba
 ## The live configuration proof
 
 `scripts/live-configs.sh` proves the buddy per configuration and measures every turn.
-Each session is the live proof's (the helpers in `scripts/live-lib.sh`, the main chat on Haiku, `--plugin-dir plugins/buddy`), on its own tmux socket (`-L buddy-cfg-{S}`) and folder, three at once at most; the options always pin `buddyModel: opus`, `buddyEffort: low`, `logLevel: debug` and `logFile` in the session's folder.
+Each session is the live proof's (the helpers in `scripts/live-lib.sh`, the main chat on Haiku, `--plugin-dir plugins/buddy`), on its own tmux socket (`-L buddy-cfg-{S}`) and folder, three at once at most; the options always pin `model: opus`, `effort: low`, `logLevel: debug` and `logFile` in the session's folder.
 Each session sends two prompts (one running `ls` via Bash, one plain reply), waits for the reply in the transcript, then for the end-of-turn records (`turn.call` and its outcomes, or `turn.skipped`), 45 seconds at most.
 
 | Session | Options | Passes when |
@@ -82,7 +82,7 @@ Each session sends two prompts (one running `ls` via Bash, one plain reply), wai
 | S2 | `commentAfterEachTurn: false` | no `quip.outcome` after a turn; a suggestion is shown |
 | S3 | `suggestNextPrompt: false`, `rememberedExchanges: 0` | a line shows after each turn; no `suggest.outcome`; the store holds nothing under `memory:{session}` |
 | S4 | the defaults, headless | `claude -p`, then `claude -p --resume`: two `turn.skipped` with `why: headless`, and no `turn.call`, `turn.settings`, `turn.prompt`, `ask.settings` or `ask.start` |
-| S5 | `customCharactersFolder` holding one invalid `broken.json`, `character: broken` | the duck is drawn with a bubble naming the error (`Couldn't load broken: …; /buddy-personality picks another`); the error holds the bubble 10 s from the session's start, part of it behind the trust dialog, so when it is gone by the prompt `/buddy reload` says it again, and the row names which |
+| S5 | `customCharactersDir` holding one invalid `broken.json`, `character: broken` | the duck is drawn with a bubble naming the error (`Couldn't load broken: …; /buddy-personality picks another`); the error holds the bubble 10 s from the session's start, part of it behind the trust dialog, so when it is gone by the prompt `/buddy reload` says it again, and the row names which |
 
 A suggestion check also passes on `suggest.outcome` none: the model answered `NEXT: NONE`, which by design hands the prompt box back to Claude Code's own suggestion, and the row says so.
 Per turn the report reads, from the log: `quip.outcome` and `suggest.outcome` with their `ms` (the turn's end to the reply, as the plugin measures it) and the call's `inTok`, `outTok`, `cacheRead` and `cacheWrite`; from the transcript, the reply's timestamp, so `end→line ms` is the `quip.outcome` record's time minus the main turn's end; the number of model calls (`turn.settings`, `ask.settings`); and every error record.

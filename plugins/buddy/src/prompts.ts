@@ -1,4 +1,4 @@
-// The words sent to a model: a completion on buddyModel, for /buddy questions
+// The words sent to a model: a completion on model, for /buddy questions
 // and for the end-of-turn call, which writes the buddy's line and the prompt
 // suggestion together. Each demands short lines.
 

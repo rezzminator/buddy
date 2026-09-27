@@ -29,7 +29,7 @@ flowchart LR
   B --> S["scene: src/scene.ts"]
   S --> A
   A --> Band["AbovePrompt band"]
-  R["roster: characters/, customCharactersFolder"] --> A
+  R["roster: characters/, customCharactersDir"] --> A
   O["original: hatch.ts, original.ts, species/"] --> R
   A --> M["menu pane: src/menu.ts"]
   A --> V["voice + memory: src/prompts.ts"]

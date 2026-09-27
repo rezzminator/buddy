@@ -34,7 +34,7 @@ export type MenuInput = {
   roster: Roster;
   /** Why the plugin's characters/ could not be listed, if it could not. */
   shippedError?: string;
-  /** Whether a customCharactersFolder is set, and why it could not be listed. */
+  /** Whether a customCharactersDir is set, and why it could not be listed. */
   folder: { isSet: boolean; error?: string };
   originals: Originals;
 };
@@ -71,7 +71,7 @@ export function buildMenu(i: MenuInput): Menu {
   // A roster error that is not a listing failure: a file taking a reserved id, said in the folder's group.
   const listing = new Set([i.shippedError, i.folder.error]);
   const refused = i.roster.errors.filter((e) => !listing.has(e));
-  const folderLines = [...(!i.folder.isSet ? ['No folder set: the customCharactersFolder option names one.'] : i.folder.error ? [i.folder.error] : mine.length === 0 ? ['No character files in your folder.'] : []), ...refused];
+  const folderLines = [...(!i.folder.isSet ? ['No folder set: the customCharactersDir option names one.'] : i.folder.error ? [i.folder.error] : mine.length === 0 ? ['No character files in your folder.'] : []), ...refused];
   return {
     sections: [
       { title: 'Shipped', lines: shippedLines, items: shipped },
