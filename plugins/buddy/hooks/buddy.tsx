@@ -80,6 +80,10 @@ type State = {
   hiddenSaves: number;
   /** Bumped at each turn's prompt suggestion: a suggestion from an earlier turn is stale and never proposed. */
   suggestGen: number;
+  /** The engine's own suggestion for this turn, held back while the buddy's fork runs: shown if the buddy gives up. */
+  harnessSuggestion: string | null;
+  /** The buddy gave up on this turn's suggestion: the engine's own passes. */
+  suggestGaveUp: boolean;
   /** The options' warnings were said: once, in the first greeting's bubble. */
   warned: boolean;
 };
@@ -510,6 +514,8 @@ function onTurnComplete(st: State, $: EngineInterface): void {
     // Every completed turn, tools or none: the buddy proposes the next prompt.
     if (st.options.suggestions && !st.hidden) {
       const gen = ++st.suggestGen;
+      st.harnessSuggestion = null;
+      st.suggestGaveUp = false;
       suggest(st, $, gen).catch((error) => log($, 'a prompt suggestion', error));
     }
     refresh(st, $);
@@ -528,16 +534,16 @@ async function suggest(st: State, $: EngineInterface, gen: number): Promise<void
     const r = await within($, $.model.fork({ prompt }), SUGGEST_DEADLINE_MS);
     if (r === 'timeout') {
       lg($, 'info', 'suggest.outcome', { outcome: 'timeout' });
-      return;
+      return await giveUpSuggestion(st, $, gen);
     }
     if (!r.isAnswered) {
       lg($, 'info', 'suggest.outcome', { outcome: 'failed', reason: r.reason });
-      return;
+      return await giveUpSuggestion(st, $, gen);
     }
     const text = suggestionText(r.text);
     if (text === null) {
       lg($, 'info', 'suggest.outcome', { outcome: 'none', length: r.text.length });
-      return;
+      return await giveUpSuggestion(st, $, gen);
     }
     lg($, 'debug', 'suggest.text', { length: text.length });
     // A later turn asked for its own, or /buddy off came meanwhile: this one is never proposed.
@@ -549,7 +555,19 @@ async function suggest(st: State, $: EngineInterface, gen: number): Promise<void
     lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'shown' : 'not-shown' });
   } catch (error) {
     log($, 'a prompt suggestion', error);
+    await giveUpSuggestion(st, $, gen).catch((e) => log($, 'showing the engine\'s own suggestion', e));
   }
+}
+
+/** The buddy has no suggestion for turn `gen`: the engine's own, held back meanwhile, is shown, and a later one passes. */
+async function giveUpSuggestion(st: State, $: EngineInterface, gen: number): Promise<void> {
+  if (gen !== st.suggestGen) return;
+  st.suggestGaveUp = true;
+  const text = st.harnessSuggestion;
+  st.harnessSuggestion = null;
+  if (text === null || st.hidden) return;
+  const { isShown } = await $.prompt.suggest({ text });
+  lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'harness-shown' : 'harness-not-shown' });
 }
 
 // ---- the original companion ---------------------------------------------
@@ -1078,6 +1096,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     hiddenGen: 0,
     hiddenSaves: 0,
     suggestGen: 0,
+    harnessSuggestion: null,
+    suggestGaveUp: false,
     warned: false,
   };
 
@@ -1116,11 +1136,12 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return r;
   });
 
-  // With suggestions on, the engine's own guess is dropped: the buddy's fork proposes the next prompt instead.
+  // With suggestions on, the engine's own guess is held back: the buddy's fork proposes the next prompt instead.
   on('prompt.suggest', async ($, e, next) => {
     try {
-      if (dropsHarnessSuggestion(e.origin, st.options.suggestions, st.hidden || st.b === null)) {
-        lg($, 'debug', 'suggest.harness-dropped');
+      if (dropsHarnessSuggestion(e.origin, st.options.suggestions, st.hidden || st.b === null, st.suggestGaveUp)) {
+        st.harnessSuggestion = e.text;
+        lg($, 'debug', 'suggest.harness-held');
         return { isShown: false };
       }
     } catch (error) {

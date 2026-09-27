@@ -256,8 +256,9 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   as the prompt box's dim suggestion, Tab to take it, and Claude Code's own
   suggestion is hidden so it never covers the buddy's. It costs one fork per
   turn: to avoid paying for both, turn off Claude Code's own prompt
-  suggestions. No suggestion when the fork answers `NONE` or nothing, takes
-  longer than 20 seconds, or the next turn or `/buddy off` comes first.
+  suggestions. When the fork answers `NONE` or nothing, or takes longer than
+  90 seconds, Claude Code's own suggestion shows instead; the next turn or
+  `/buddy off` drops a late one.
 - **Errors are never silent.** A chosen character that is missing or invalid
   draws the duck with a bubble
   `Couldn't load {id}: {error}; /buddy-personality picks another` for 10

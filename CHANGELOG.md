@@ -5,7 +5,7 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 ## [Unreleased]
 
 ### Added
-- The `suggestions` option (off by default): after each completed turn, one fork of this chat, on its model and from its prompt cache, proposes the next prompt in your words, the persona deciding what it nudges toward, as the prompt box's dim suggestion (Tab takes it); Claude Code's own suggestion is hidden meanwhile, and a suggestion another plugin proposes still shows. It spends one fork per turn, so turn off Claude Code's own prompt suggestions to avoid paying for both. A fork that answers `NONE`, nothing, or not within 20 seconds proposes nothing, and neither does one overtaken by the next turn or by `/buddy off`.
+- The `suggestions` option (off by default): after each completed turn, one fork of this chat, on its model and from its prompt cache, proposes the next prompt in your words, the persona deciding what it nudges toward, as the prompt box's dim suggestion (Tab takes it); Claude Code's own suggestion is hidden meanwhile, and a suggestion another plugin proposes still shows. It spends one fork per turn, so turn off Claude Code's own prompt suggestions to avoid paying for both. When the fork answers `NONE`, nothing, or not within 90 seconds, Claude Code's own suggestion shows instead; a suggestion overtaken by the next turn or by `/buddy off` is dropped.
 
 ### Fixed
 - A log fallback that threw (the debug log refusing a record) left the log's write chain rejected, and every later record was silently never written. A throwing fallback is now swallowed, the chain never stays rejected, and a flush never throws into a hook.

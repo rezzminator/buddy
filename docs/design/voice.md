@@ -71,9 +71,10 @@ Suggestions are off by default (`suggestions: false`), because they spend one fo
 With them on, the end of each turn (`turn.complete`), whether it used a tool or not and with no cooldown, while the buddy is not hidden, sends one `$.model.fork` with `suggestPrompt`: the persona, then the ask for the prompt the user is most likely to send Claude next, in the user's own words as they would type it, at most 15 words, `NONE` when there is no clear next step, no tools.
 The persona decides what to nudge toward; the words are never in character.
 The reply becomes the prompt box's dim suggestion through `$.prompt.suggest`, after `suggestionText` takes its first non-empty line, strips wrapping quotes and collapses whitespace; `NONE`, an empty reply or a line past 160 characters (`SUGGESTION_MAX_CHARS`) proposes nothing.
-The fork gets 20 seconds (`SUGGEST_DEADLINE_MS`); past them the turn's suggestion is given up, though the fork runs to its end (no cancel) and may still bill.
+The fork gets 90 seconds (`SUGGEST_DEADLINE_MS`): a fork of a long chat takes tens of seconds and cannot be cancelled, so a shorter wait throws away an answer already paid for; a late answer is safe, since Claude Code refuses it once the box holds text or a turn runs.
 A suggestion overtaken by the next turn's, or by `/buddy off`, is stale and never proposed; Claude Code itself shows none while the box holds text or a turn runs.
-While suggestions are on and the buddy is shown, the `prompt.suggest` hook drops Claude Code's own guess (origin `suggestion`, `dropsHarnessSuggestion`), so it never covers the buddy's; a plugin's proposal, the buddy's or another's, always passes.
+While suggestions are on and the buddy is shown, the `prompt.suggest` hook holds back Claude Code's own guess (origin `suggestion`, `dropsHarnessSuggestion`), so it never covers the buddy's; a plugin's proposal, the buddy's or another's, always passes.
+When the buddy gives up on a turn (timeout, no answer, `NONE`, an error), the held guess is proposed after all, and one arriving later passes: the box is never emptier than without the plugin.
 Claude Code's own suggestions still cost their own call: turning them off saves paying for both.
 The log records each outcome at info (`suggest.outcome`: shown, not-shown, none, failed, timeout, stale), and at debug only the suggestion's length, never its text.
 
