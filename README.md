@@ -237,9 +237,9 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   thinking about your last question; ask again once it answers.`
 - **The log.** buddy keeps its own log in `logFile` (default
   `~/.claude/buddy/buddy.log`, or `$CLAUDE_CONFIG_DIR/buddy/buddy.log` when
-  `CLAUDE_CONFIG_DIR` is set; a path you set is used as given), one JSON
+  `CLAUDE_CONFIG_DIR` is set; a path you set is used with `~` and a leading `$CLAUDE_CONFIG_DIR` expanded), one JSON
   line per record; a write another session overwrote is retried, and a record
-  still lost is reported, never dropped silently; capped at 1 MB with one rotation (`buddy.log.1`). `logLevel` `error` writes failures
+  lost after the retries is reported, though two writes landing at the same instant can still drop one unseen; capped at 1 MB with one rotation (`buddy.log.1`). `logLevel` `error` writes failures
   only; `info`, the default, adds sessions, commands, questions and their
   outcomes, quips and menu picks; `debug` adds the question text and the
   model's result shapes. It never holds your account id or anything from

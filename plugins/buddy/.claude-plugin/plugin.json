@@ -68,7 +68,7 @@
     "logFile": {
       "type": "string",
       "title": "Log file (empty = no log file)",
-      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as given; ~ is your home folder. One JSON line per record, retried when another session writes at the same moment, capped at 1 MB with one rotation (.1). /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to the debug log.",
+      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record, retried when another session writes at the same moment, capped at 1 MB with one rotation (.1). /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to the debug log.",
       "default": "$CLAUDE_CONFIG_DIR/buddy/buddy.log"
     },
     "ambiguousWidth": {

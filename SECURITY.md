@@ -44,7 +44,7 @@ It writes two things, and nothing else:
   roll you chose, the pet count, and whether it is hidden.
 - **The log file**, unless `logFile` is empty: by default
   `~/.claude/buddy/buddy.log` (`$CLAUDE_CONFIG_DIR/buddy/buddy.log` when
-  `CLAUDE_CONFIG_DIR` is set; a path you set is used as given), one JSON line
+  `CLAUDE_CONFIG_DIR` is set; a path you set is used with `~` and a leading `$CLAUDE_CONFIG_DIR` expanded), one JSON line
   per record, with one rotation, `buddy.log.1`, past 1 MB.
   One JSON line per record: every failure with its message and stack; at
   `info` (the default) also session starts, commands (their kind and length,

@@ -71,8 +71,8 @@ The hook tests prove that path instead, with an invented `~/.claude.json` and ba
 ## Logging
 
 The plugin log is for debugging a live session: `src/log.ts` queues one JSON line per record, `{ts, level, event, session?, character?, ...fields}`, and the adapter writes the queue through the calling hook's `$.fs` (a hook's `$` is never kept).
-`logLevel` (`error`, `info` or `debug`; default `info`) sets what is written, and `logFile` where: by default `$CLAUDE_CONFIG_DIR/buddy/buddy.log` when `CLAUDE_CONFIG_DIR` is set, else `~/.claude/buddy/buddy.log`; a path set in the option is used as given, `~` expanded to HOME; empty for no file.
-`$.fs` has no append, so each flush writes the whole file, reads it back and puts back records another session wrote over, up to `WRITE_ATTEMPTS` (3) tries; a record still lost is reported on the fallback (`buddy: the log {file} lost N records to another writer at the same time`), never dropped silently; past 1 MB the file moves to `{logFile}.1`, one rotation.
+`logLevel` (`error`, `info` or `debug`; default `info`) sets what is written, and `logFile` where: by default `$CLAUDE_CONFIG_DIR/buddy/buddy.log` when `CLAUDE_CONFIG_DIR` is set, else `~/.claude/buddy/buddy.log`; a path set in the option is used as written, `~` expanded to HOME and a leading `$CLAUDE_CONFIG_DIR` to the config folder; empty for no file.
+`$.fs` has no append, so each flush writes the whole file, reads it back and puts back records another session wrote over, up to `WRITE_ATTEMPTS` (3) tries; a loss the re-read sees is reported on the fallback (`buddy: the log {file} lost N records to another writer at the same time`), never dropped silently; past 1 MB the file moves to `{logFile}.1`, one rotation.
 A failed write goes to the debug log (`$.ui.log`) with every error record in it, and never throws into a hook; an empty `logFile` writes no file and errors still reach the debug log.
 
 | Level | Adds |
