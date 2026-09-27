@@ -15,10 +15,13 @@ export type Options = {
   characterDir: string;
   motion: boolean;
   questionMode: QuestionMode;
+  /** The end-of-turn call writes the buddy's line, shown in the bubble. */
   quips: boolean;
+  /** The model of the end-of-turn call and of questions that do not fork. */
   quipModel: string;
+  /** The least seconds between two lines; 0 = every answered turn. */
   quipCooldownSec: number;
-  /** After each turn a fork of the chat proposes the next prompt, and the harness's own suggestion is dropped. */
+  /** The end-of-turn call writes the next-prompt suggestion, and the harness's own is held back, shown only when the buddy has none. */
   suggestions: boolean;
   /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
   memory: number;
@@ -36,10 +39,10 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   characterDir: '',
   motion: true,
   questionMode: 'fork',
-  quips: false,
+  quips: true,
   quipModel: 'haiku',
-  quipCooldownSec: 45,
-  suggestions: false,
+  quipCooldownSec: 0,
+  suggestions: true,
   memory: MEMORY_DEFAULT,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',

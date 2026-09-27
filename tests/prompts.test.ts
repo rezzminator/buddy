@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'vitest';
-import { ONE_LINE_RULE, SUGGESTION_MAX_CHARS, forkPrompt, lostThread, oneLine, oneLineSystem, questionPrompt, quipPrompt, suggestPrompt, suggestionText } from '../plugins/buddy/src/prompts.ts';
+import {
+  ONE_LINE_RULE, SUGGESTION_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, lastExchange, lostThread, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestionText, turnPrompt, turnSystem,
+} from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
   test('the fork prompt: persona, the question, the one-line rule', () => {
@@ -11,10 +13,10 @@ describe('prompts', () => {
     expect(oneLineSystem('You are X.')).toBe(`You are X.\n\n${ONE_LINE_RULE}`);
     expect(questionPrompt('hi')).toBe('The user asks you directly: hi');
   });
-  test('the quip prompt counts tools and caps the command', () => {
-    const p = quipPrompt({ tools: ['Bash', 'Read', 'Bash'], failures: 1, lastBash: 'x'.repeat(200) });
-    expect(p).toBe(`The turn just ended. Tools used: Bash x2, Read. Failures: 1. Last shell command: ${'x'.repeat(120)}. React to it.`);
-    expect(quipPrompt({ tools: ['Read'], failures: 0, lastBash: '' })).toContain('Last shell command: none.');
+  test('the turn prompt counts tools and caps the command', () => {
+    const p = turnPrompt({ tools: ['Bash', 'Read', 'Bash'], failures: 1, lastBash: 'x'.repeat(200) }, 'fix it', 'Fixed.');
+    expect(p).toContain(`Tools used: Bash x2, Read. Failures: 1. Last shell command: ${'x'.repeat(120)}.`);
+    expect(turnPrompt({ tools: [], failures: 0, lastBash: '' }, 'hi', 'Hello.')).toContain('Tools used: none. Failures: 0. Last shell command: none.');
   });
   test('oneLine takes the first non-empty line, unquoted, capped', () => {
     expect(oneLine('\n  "Hello there."  \nmore')).toBe('Hello there.');
@@ -36,8 +38,28 @@ describe('memory in the prompts', () => {
     const c = questionPrompt('what word', memory);
     expect(c.startsWith(memory)).toBe(true);
     expect(c.endsWith('The user asks you directly: what word')).toBe(true);
-    const qp = quipPrompt({ tools: ['Read'], failures: 0, lastBash: '' }, memory);
-    expect(qp.indexOf(memory)).toBeLessThan(qp.indexOf('The turn just ended.'));
+    const tp = turnPrompt({ tools: ['Read'], failures: 0, lastBash: '' }, 'hi', 'Hello.', memory);
+    expect(tp.startsWith(memory)).toBe(true);
+    expect(tp).toContain('you may refer back to it');
+  });
+  test('a completion\'s question sees the main chat\'s last exchange, after the memory and before the question', () => {
+    const exchange = lastExchange('build the thing', 'Built it.');
+    expect(exchange).toContain('The user last asked Claude:\nbuild the thing');
+    expect(exchange).toContain('Claude answered:\nBuilt it.');
+    const q = questionPrompt('can you see the main chat?', memory, exchange);
+    expect(q.startsWith(memory)).toBe(true);
+    expect(q.indexOf('Built it.')).toBeGreaterThan(q.indexOf(memory));
+    expect(q.endsWith('The user asks you directly: can you see the main chat?')).toBe(true);
+    expect(lastExchange('', '')).toBe('');
+    expect(questionPrompt('hi', '', '')).toBe('The user asks you directly: hi');
+  });
+  test('the last exchange keeps each end past its cap; the turn prompt reads the same block', () => {
+    const long = lastExchange(`START${'a'.repeat(5000)}END`, `HEAD${'b'.repeat(9000)}TAIL`);
+    expect(long).toContain('END');
+    expect(long).toContain('TAIL');
+    expect(long).not.toContain('START');
+    expect(long).not.toContain('HEAD');
+    expect(turnPrompt({ tools: [], failures: 0, lastBash: '' }, 'p', 'a')).toContain(lastExchange('p', 'a'));
   });
   test('no memory: the prompts as before', () => {
     expect(questionPrompt('hi', '')).toBe('The user asks you directly: hi');
@@ -45,15 +67,57 @@ describe('memory in the prompts', () => {
   });
 });
 
-describe('the prompt suggestion', () => {
-  test('the fork prompt: the persona, then the next prompt in the person\'s own words, NONE when unclear, no tools', () => {
-    const p = suggestPrompt('You are X.');
-    expect(p.startsWith('You are X.\n\n')).toBe(true);
-    expect(p).toContain('the prompt the user is most likely to send Claude next');
-    expect(p).toContain("in the user's own words");
-    expect(p).toContain('at most 15 words');
-    expect(p).toContain('NONE');
-    expect(p).toContain('Do not use tools.');
+describe('the end-of-turn call', () => {
+  test('the system: the persona, then a LINE in character and a NEXT in the user\'s own words, NONE only when finished', () => {
+    const s = turnSystem('You are X.', { line: true, next: true });
+    expect(s.startsWith('You are X.\n\n')).toBe(true);
+    expect(s).toContain('LINE:');
+    expect(s).toContain('at most 20 words');
+    expect(s).toContain('NEXT:');
+    expect(s).toContain('the prompt the user is most likely to send Claude next');
+    expect(s).toContain("in the user's own words");
+    expect(s).toContain('at most 15 words');
+    expect(s).toContain('NEXT: NONE');
+    expect(s).toContain('Do not use tools.');
+  });
+  test('the system asks only for what is wanted', () => {
+    const line = turnSystem('You are X.', { line: true, next: false });
+    expect(line).toContain('LINE:');
+    expect(line).not.toContain('NEXT:');
+    const next = turnSystem('You are X.', { line: false, next: true });
+    expect(next).toContain('NEXT:');
+    expect(next).not.toContain('LINE:');
+  });
+  test('the prompt: the user\'s last prompt, then Claude\'s answer, each keeping its end past its cap', () => {
+    const t = { tools: [], failures: 0, lastBash: '' };
+    const p = turnPrompt(t, 'add a login page', 'Done: login.tsx is in.');
+    expect(p).toContain('The user last asked Claude:\nadd a login page');
+    expect(p).toContain('Claude answered:\nDone: login.tsx is in.');
+    expect(p.indexOf('add a login page')).toBeLessThan(p.indexOf('Done: login.tsx is in.'));
+    const long = turnPrompt(t, `START${'a'.repeat(5000)}END`, `HEAD${'b'.repeat(9000)}TAIL`);
+    expect(long).toContain('END');
+    expect(long).toContain('TAIL');
+    expect(long).not.toContain('START');
+    expect(long).not.toContain('HEAD');
+    expect(long.length).toBeLessThan(1500 + 4000 + 400);
+  });
+  test('parseTurnReply: the tagged lines, in any case, bullets tolerated', () => {
+    expect(parseTurnReply('LINE: "Tests are green!"\nNEXT: commit this')).toEqual({ line: 'Tests are green!', next: 'commit this' });
+    expect(parseTurnReply('  - line: Nice.\n * next:  run   the tests ')).toEqual({ line: 'Nice.', next: 'run the tests' });
+    expect(parseTurnReply('NEXT: add a test\nLINE: Onward.')).toEqual({ line: 'Onward.', next: 'add a test' });
+  });
+  test('parseTurnReply: NEXT NONE, empty or past the cap is no suggestion; an empty LINE is no line', () => {
+    expect(parseTurnReply('LINE: Done and dusted.\nNEXT: NONE')).toEqual({ line: 'Done and dusted.', next: null });
+    expect(parseTurnReply('LINE:\nNEXT:')).toEqual({ line: null, next: null });
+    expect(parseTurnReply(`NEXT: ${'y'.repeat(SUGGESTION_MAX_CHARS + 1)}`)).toEqual({ line: null, next: null });
+  });
+  test('parseTurnReply: an untagged reply is the line alone', () => {
+    expect(parseTurnReply('\n  Quack, that went well.\nmore')).toEqual({ line: 'Quack, that went well.', next: null });
+    expect(parseTurnReply('')).toEqual({ line: null, next: null });
+  });
+  test('one short call: 120 tokens, 30 s', () => {
+    expect(TURN_MAX_TOKENS).toBe(120);
+    expect(TURN_DEADLINE_MS).toBe(30_000);
   });
   test('suggestionText: the first non-empty line, unquoted, whitespace collapsed', () => {
     expect(suggestionText('\n  "run   the tests"  \nmore')).toBe('run the tests');

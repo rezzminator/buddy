@@ -64,8 +64,9 @@ server of its own.
   hatched for your account (species, rarity, eyes, hat, stats) with the name
   and personality it saved.
 - 🤫 **Free unless you ask.** Walking, petting, switching and reactions never
-  call a model. Only a question you ask, and quips and prompt suggestions
-  if you turn them on, spend tokens.
+  call a model. Only a question you ask, and one short call at the end of
+  each answered turn for the buddy's line and the prompt suggestion (on by
+  default; `quips: false` and `suggestions: false` turn them off), spend tokens.
 - 🛡️ **Never in the way.** A character that fails to load is replaced by the
   duck, who says why; a hook that fails logs the error and steps aside.
   `/buddy off` hides it, and it stays hidden across restarts.
@@ -245,20 +246,23 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   model's result shapes. It never holds your account id or anything from
   `~/.claude.json`. `/buddy log` shows the path and the last 20 lines, to
   paste into an issue; an empty `logFile` writes no file.
-- **Quips** (off by default). At the end of a turn that used at least one
-  tool, and no sooner than `quipCooldownSec` after the last one,
-  `quipModel` writes a one-line reaction to the turn: the tools it used,
-  how many failed, and the last Bash command.
-- **Prompt suggestions** (off by default). With `suggestions` on, after every
-  completed turn one fork of this chat (its model, read from its prompt
-  cache) proposes the prompt you are most likely to send next, in your own
-  words, the character's persona deciding what it nudges toward; it shows
-  as the prompt box's dim suggestion, Tab to take it, and Claude Code's own
-  suggestion is hidden so it never covers the buddy's. It costs one fork per
-  turn: to avoid paying for both, turn off Claude Code's own prompt
-  suggestions. When the fork answers `NONE` or nothing, or takes longer than
-  90 seconds, Claude Code's own suggestion shows instead; the next turn or
-  `/buddy off` drops a late one.
+- **Quips** (on by default). At the end of every answered turn, tool use or
+  not, one short call on `quipModel` (at most 120 output tokens, a 30-second
+  deadline) reads your last prompt, the end of Claude's answer and the
+  turn's tally (the tools it used, how many failed, the last Bash command)
+  and writes the buddy's one-line reaction for the bubble. `quipCooldownSec`
+  (default 0) spaces the lines out; `quips: false` keeps the buddy quiet. An
+  aborted turn, or a subagent's, makes no call.
+- **Prompt suggestions** (on by default). The same call also writes the
+  prompt you are most likely to send next, in your own words, the
+  character's persona deciding what it nudges toward; it shows as the
+  prompt box's dim suggestion, Tab to take it. One call serves the line and
+  the suggestion, never a fork of the chat. Claude Code's own suggestion is
+  held back meanwhile and shown only when the buddy has none (it answers
+  `NONE`, nothing, or not within 30 seconds); the next turn or `/buddy off`
+  drops a late one. `suggestions: false` leaves Claude Code's own alone;
+  with it on, turning off Claude Code's own prompt suggestions saves paying
+  for both.
 - **Errors are never silent.** A chosen character that is missing or invalid
   draws the duck with a bubble
   `Couldn't load {id}: {error}; /buddy-personality picks another` for 10
@@ -279,10 +283,10 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 | `characterDir` | directory | `""` | Folder of your own character JSON files |
 | `motion` | boolean | `true` | Walk along the prompt line |
 | `questionMode` | string | `"fork"` | /buddy questions: fork (sees the chat, uses its cache), complete, or off |
-| `quips` | boolean | `false` | Model-written one-liners at the end of a turn (spends tokens) |
-| `quipModel` | string | `"haiku"` | Model for quips and questions that do not fork |
-| `quipCooldownSec` | number | `45` | Minimum seconds between quips |
-| `suggestions` | boolean | `false` | The buddy writes the prompt suggestion (spends tokens): after each turn one fork of this chat proposes your next prompt, and Claude Code's own suggestion is hidden. Turn off Claude Code's own prompt suggestions to avoid paying for both |
+| `quips` | boolean | `true` | The buddy says a line at the end of every answered turn, from one short `quipModel` call that also writes the suggestion (spends tokens); `false` keeps it quiet |
+| `quipModel` | string | `"haiku"` | Model for the end-of-turn call and questions that do not fork |
+| `quipCooldownSec` | number | `0` | Minimum seconds between the buddy's lines; 0 = every answered turn |
+| `suggestions` | boolean | `true` | The buddy writes the prompt suggestion in the same end-of-turn call (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
 | `memory` | number | `6` | How many recent exchanges the buddy remembers (0 = off). Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), or one line the buddy said. They go into its next answer or quip, kept per session and per character; at most 30 |
 | `logLevel` | string | `"info"` | Log level: error, info or debug |
 | `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, capped at 1 MB with one rotation; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
@@ -343,12 +347,15 @@ Only when a model answers. Walking, reactions, petting and every command
 except a question are local. A question in `fork` mode runs on the chat's
 own model and reads the conversation from its prompt cache; `complete` mode,
 and a question asked while Claude is busy mid-turn, send `quipModel` the
-question, the character's persona and its memory, never the conversation.
+question, the character's persona, its memory and the ends of your last
+prompt and Claude's last answer, never the rest of the conversation.
 A question that reaches its 90-second deadline ends in the bubble, but a
 fork already sent runs on to its end (Claude Code offers no cancel), so it
-may still bill. Quips and prompt suggestions are off until you turn them
-on; a suggestion is one fork of the chat per turn, and with it on, turning
-off Claude Code's own prompt suggestions saves paying for both.
+may still bill. Quips and prompt suggestions are on by default: one short
+`quipModel` call per answered turn, sent your last prompt, the end of
+Claude's answer and the turn's tally; `quips: false` and `suggestions: false`
+turn them off, and with suggestions on, turning off Claude Code's own prompt
+suggestions saves paying for both.
 </details>
 
 <details>

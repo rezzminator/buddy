@@ -78,7 +78,7 @@ A failed write goes to the debug log (`$.ui.log`) with every error record in it,
 | Level | Adds |
 | --- | --- |
 | `error` | every failure: what failed, its ids, the message and stack |
-| `info` | session start, roster loads and invalid characters, option warnings, commands (kind and argument length, never the text), menu open, pick and close, character switches, each ask's start and outcome (`answered`, `fallback`, `refused`, `failed`, `dropped`, with reason and ms), another session's `/buddy off` or `/buddy on` read back, a menu pane found gone, quips fired or skipped and why |
+| `info` | session start, roster loads and invalid characters, option warnings, commands (kind and argument length, never the text), menu open, pick and close, character switches, each ask's start and outcome (`answered`, `fallback`, `refused`, `failed`, `dropped`, with reason and ms), another session's `/buddy off` or `/buddy on` read back, a menu pane found gone, each end-of-turn call made or skipped and why (`turn.call`, `turn.skipped`), its line (`quip.outcome`) and its suggestion (`suggest.outcome`) |
 | `debug` | the question text, prompt lengths, each model result's shape (`isAnswered`, reason, length, first 80 characters), band scenes and clock ticks, at most one per second per event |
 
 The identity and `~/.claude.json` never reach the log at any level; the hook test for the original companion checks the log file for the account id.

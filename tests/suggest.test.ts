@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { SUGGEST_DEADLINE_MS, dropsHarnessSuggestion } from '../plugins/buddy/src/suggest.ts';
+import { dropsHarnessSuggestion } from '../plugins/buddy/src/suggest.ts';
 
 describe('dropsHarnessSuggestion', () => {
   const harness = { kind: 'suggestion' } as const;
@@ -14,8 +14,5 @@ describe('dropsHarnessSuggestion', () => {
   test('a plugin\'s proposal, the buddy\'s own or another\'s, always passes', () => {
     expect(dropsHarnessSuggestion({ kind: 'plugin', name: 'buddy' }, true, false, false)).toBe(false);
     expect(dropsHarnessSuggestion({ kind: 'plugin', name: 'other' }, true, false, false)).toBe(false);
-  });
-  test('the fork gets 90 s: it cannot be cancelled, so a shorter wait only throws away a paid answer', () => {
-    expect(SUGGEST_DEADLINE_MS).toBe(90_000);
   });
 });

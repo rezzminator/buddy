@@ -37,27 +37,27 @@
     },
     "quips": {
       "type": "boolean",
-      "title": "Model-written one-liners at the end of a turn (spends tokens)",
-      "description": "At the end of a turn that used a tool, one short call on quipModel for a one-line reaction.",
-      "default": false
+      "title": "The buddy says a line at the end of every answered turn (spends tokens)",
+      "description": "One short quipModel call at the end of every answered turn writes the buddy's in-character line and, with suggestions on, the prompt suggestion too. Set false to keep the buddy quiet.",
+      "default": true
     },
     "quipModel": {
       "type": "string",
-      "title": "Model for quips and questions that do not fork",
+      "title": "Model for the end-of-turn call and questions that do not fork",
       "description": "An alias (haiku, sonnet) or a full model id.",
       "default": "haiku"
     },
     "quipCooldownSec": {
       "type": "number",
-      "title": "Minimum seconds between quips",
-      "description": "A quip waits at least this long after the previous one.",
-      "default": 45
+      "title": "Minimum seconds between the buddy's lines",
+      "description": "A line waits at least this long after the previous one; 0 is every answered turn. The suggestion is written every turn regardless.",
+      "default": 0
     },
     "suggestions": {
       "type": "boolean",
       "title": "The buddy writes the prompt suggestion (spends tokens)",
-      "description": "After each turn, one fork of this chat, on its model and from its prompt cache, proposes your next prompt in your words, and Claude Code's own suggestion is hidden. To stop paying for both, turn off Claude Code's own prompt suggestions.",
-      "default": false
+      "description": "The same short quipModel call at the end of every answered turn proposes your next prompt, in your words. Claude Code's own suggestion is held back and shown only when the buddy has none. Set false to keep Claude Code's own.",
+      "default": true
     },
     "memory": {
       "type": "number",

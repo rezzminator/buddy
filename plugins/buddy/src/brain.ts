@@ -262,16 +262,16 @@ export function farewell(b: Brain, rand: () => number): string {
 }
 
 /**
- * The turn ended: its summary when a quip is due (quips on, a tool used, the
- * cooldown passed), else null. The turn's tally starts over either way.
+ * The turn ended: its summary, tools or none, and whether the buddy's line is
+ * due (quips on and the cooldown passed; cooldown 0 is every turn). The
+ * turn's tally starts over either way.
  */
-export function endTurn(b: Brain, quips: boolean, cooldownSec: number): TurnSummary | null {
-  const t = b.turn;
+export function endTurn(b: Brain, quips: boolean, cooldownSec: number): { turn: TurnSummary; lineDue: boolean } {
+  const turn = b.turn;
   b.turn = { tools: [], failures: 0, lastBash: '' };
-  if (!quips || t.tools.length === 0) return null;
-  if (b.lastQuipAt !== null && b.now - b.lastQuipAt < cooldownSec * 1000) return null;
-  b.lastQuipAt = b.now;
-  return t;
+  const lineDue = quips && (b.lastQuipAt === null || b.now - b.lastQuipAt >= cooldownSec * 1000);
+  if (lineDue) b.lastQuipAt = b.now;
+  return { turn, lineDue };
 }
 
 /** The scene to draw now; the sprite keeps the column the bubble pushed it to. */

@@ -4,17 +4,17 @@ import { DEFAULTS, expandHome, logPath, resolveOptions } from '../plugins/buddy/
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'fork', quips: false, quipModel: 'haiku', quipCooldownSec: 45, suggestions: false, memory: 6, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'fork', quips: true, quipModel: 'haiku', quipCooldownSec: 0, suggestions: true, memory: 6, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
   });
   test('good values', () => {
-    const o = resolveOptions({ character: ' Cat ', characterDir: '~/chars', motion: false, questionMode: 'COMPLETE', quips: 'true', quipModel: 'sonnet', quipCooldownSec: '10' });
-    expect(o).toMatchObject({ character: 'cat', characterDir: '~/chars', motion: false, questionMode: 'complete', quips: true, quipModel: 'sonnet', quipCooldownSec: 10, errors: [] });
+    const o = resolveOptions({ character: ' Cat ', characterDir: '~/chars', motion: false, questionMode: 'COMPLETE', quips: 'false', quipModel: 'sonnet', quipCooldownSec: '10' });
+    expect(o).toMatchObject({ character: 'cat', characterDir: '~/chars', motion: false, questionMode: 'complete', quips: false, quipModel: 'sonnet', quipCooldownSec: 10, errors: [] });
   });
   test('a bad value is ignored by name', () => {
     const o = resolveOptions({ questionMode: 'loud', motion: 'maybe', quipCooldownSec: -1 });
     expect(o.questionMode).toBe('fork');
     expect(o.motion).toBe(true);
-    expect(o.quipCooldownSec).toBe(45);
+    expect(o.quipCooldownSec).toBe(0);
     expect(o.errors).toEqual([
       'option motion ignored: "maybe" is not true or false',
       'option questionMode ignored: "loud" is not fork, complete or off',
@@ -24,11 +24,15 @@ describe('resolveOptions', () => {
 });
 
 describe('the suggestions option', () => {
-  test('off by default; true or false, as a boolean or its string; anything else is ignored by name', () => {
-    expect(resolveOptions({}).suggestions).toBe(false);
-    expect(resolveOptions({ suggestions: true })).toMatchObject({ suggestions: true, errors: [] });
-    expect(resolveOptions({ suggestions: 'false' })).toMatchObject({ suggestions: false, errors: [] });
-    expect(resolveOptions({ suggestions: 'yes' })).toMatchObject({ suggestions: false, errors: ['option suggestions ignored: "yes" is not true or false'] });
+  test('on by default; true or false, as a boolean or its string; anything else is ignored by name', () => {
+    expect(resolveOptions({}).suggestions).toBe(true);
+    expect(resolveOptions({ suggestions: false })).toMatchObject({ suggestions: false, errors: [] });
+    expect(resolveOptions({ suggestions: 'true' })).toMatchObject({ suggestions: true, errors: [] });
+    expect(resolveOptions({ suggestions: 'yes' })).toMatchObject({ suggestions: true, errors: ['option suggestions ignored: "yes" is not true or false'] });
+  });
+  test('quips and suggestions turn off independently', () => {
+    expect(resolveOptions({ quips: false })).toMatchObject({ quips: false, suggestions: true, errors: [] });
+    expect(resolveOptions({ suggestions: 'false' })).toMatchObject({ quips: true, suggestions: false, errors: [] });
   });
 });
 

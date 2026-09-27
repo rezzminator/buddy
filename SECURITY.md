@@ -32,7 +32,9 @@ Useful when judging impact:
 - It reads the character JSON files in the folder the `characterDir` option
   names.
 - It makes model calls only through Claude Code itself: a `/buddy` question,
-  and quips when you turn them on. There is no buddy server.
+  and one short call at the end of each answered turn for the buddy's line
+  and the prompt suggestion (`quips` and `suggestions`, on by default; turn
+  both off for none). There is no buddy server.
 
 It writes two things, and nothing else:
 

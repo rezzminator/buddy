@@ -67,9 +67,10 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
   const focuses: string[] = [];
   const gets: string[] = [];
   /** A read of `hidden` answers what the store held when asked, this long later: a read in flight; a write of it lands this long later. */
-  const slow = { hiddenMs: 0, setHiddenMs: 0 };
-  /** The texts that reached the prompt box's suggestion beneath the plugin. */
+  const slow = { hiddenMs: 0, setHiddenMs: 0, sessionIdMs: 0 };
+  /** The texts that reached the prompt box's suggestion beneath the plugin, and who proposed each. */
   const suggested: string[] = [];
+  const origins: string[] = [];
   on('ui.open', async (_$, e) => {
     opens.push(e);
     return { value: { isPlaced: true as const } };
@@ -86,8 +87,10 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
     return (call.key !== undefined ? { value: {} } : {}) as never;
   });
   on('turn.complete', async () => ({ text: '' }));
+  on('prompt.submit', async (_$, e) => ({ text: e.text }));
   on('prompt.suggest', async (_$, e) => {
     suggested.push(e.text);
+    origins.push(e.origin.kind);
     return { isShown: true };
   });
   on('env.get', async (_$, e) => ({ value: e.name === 'HOME' ? HOME : disk.env?.[e.name] }));
@@ -113,7 +116,10 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
     return { value: undefined };
   });
   on('store.keys', async () => ({ value: [...saved.keys()] }));
-  on('session.id', async () => ({ value: SESSION }));
+  on('session.id', async () => {
+    if (slow.sessionIdMs > 0) await clock.sleep(slow.sessionIdMs);
+    return { value: SESSION };
+  });
   on('store.delete', async (_$, e) => {
     saved.delete(e.key);
     return { value: undefined };
@@ -158,7 +164,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
     if (answers.completeDelayMs) await clock.sleep(answers.completeDelayMs);
     return { value: { usage, ...(queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' }) } } as never;
   });
-  return { logs, forks, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested };
+  return { logs, forks, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins };
 }
 
 function run(args: string) {
@@ -867,17 +873,24 @@ describe('core fixes', () => {
 });
 
 describe('hook paths', () => {
-  test('turn.complete with quips off (the default): the turn ends with no model call', async ($, on) => {
+  test('turn.complete (quips and suggestions on by default): one call on the quip model reads the prompt, the answer and the tally; never a fork', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
     await $.session.start(START);
     const ui = await band($);
+    await $.prompt.submit({ text: 'list the files' } as never);
     await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
-    await $.turn.complete({ reason: 'answer', answer: 'T1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(w.completes).toEqual([]);
     expect(w.forks).toEqual([]);
-    expect(await shows(ui, /\(f_f\)/)).toBe(true);
+    expect(w.completes.length).toBe(1);
+    expect(w.completes[0]?.model).toBe('haiku');
+    expect(w.completes[0]?.timeoutMs).toBe(30_000);
+    expect(w.completes[0]?.prompt).toContain('The user last asked Claude:\nlist the files');
+    expect(w.completes[0]?.prompt).toContain('Claude answered:\nT1');
+    expect(w.completes[0]?.prompt).toContain('Tools used: Bash. Failures: 0. Last shell command: ls.');
+    // An untagged reply is the line alone.
+    expect(await shows(ui, /A completed answer\./)).toBe(true);
     await ui.unmount();
   });
 
@@ -993,16 +1006,98 @@ describe('pre-release fixes', () => {
 });
 
 describe('prompt suggestions', () => {
-  test('suggestions off (the default): the engine\'s own suggestion is shown as it came, and a turn makes no fork', async ($, on) => {
+  test('a question asked while idle forks, even when the band turns working before the question is sent', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($);
-    expect(await $.prompt.suggest({ text: 'run the tests', origin: { kind: 'suggestion' } } as never)).toMatchObject({ isShown: true });
-    expect(w.suggested).toEqual(['run the tests']);
-    await $.turn.complete({ reason: 'answer', answer: 'T1' } as never);
+    await w.clock.settle();
+    // The question's memory read waits on the session id: the band draws as working meanwhile.
+    w.slow.sessionIdMs = 1_000;
+    const asked = $.command.run(run('what is up'));
+    // Let the command reach its memory read before the band redraws.
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+    const working = await band($, { isWorking: true });
+    await w.clock.advance(1_000);
+    expect((await asked).text).toBe('Asked Fixy.');
+    await w.clock.settle();
+    expect(w.forks.length).toBe(1);
+    expect(w.completes).toEqual([]);
+    await working.unmount();
+    await ui.unmount();
+  });
+  test('a question asked while the main turn runs falls back to the quip model and sees the last prompt and answer', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
+    await $.session.start(START);
+    const ui = await band($);
+    await $.prompt.submit({ text: 'build the thing' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Built it.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
+    await $.command.run(run('can you see the main chat?'));
+    await w.clock.settle();
+    const asked = w.completes.find((c) => c.prompt.endsWith('The user asks you directly: can you see the main chat?'));
+    expect(asked?.prompt).toContain('The user last asked Claude:\nbuild the thing');
+    expect(asked?.prompt).toContain('Claude answered:\nBuilt it.');
+    expect(w.forks).toEqual([]);
+    await ui.unmount();
+  });
+  test('one answered turn: ONE call writes the line for the band and the suggestion for the prompt box, as a plugin\'s', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: Fixy likes that.\nNEXT: run the tests' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.forks).toEqual([]);
+    expect(w.completes.length).toBe(1);
+    expect(w.completes[0]?.system).toContain('You are Fixy, a test fixture.');
+    expect(w.completes[0]?.system).toContain('LINE:');
+    expect(w.completes[0]?.system).toContain('NEXT:');
+    expect(await shows(ui, /Fixy likes that\./)).toBe(true);
     expect(w.suggested).toEqual(['run the tests']);
+    expect(w.origins).toEqual(['plugin']);
+    await ui.unmount();
+  });
+  test('the engine\'s own suggestion is held while the call runs; with NEXT: NONE it is shown after all, and a later one passes', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: All done here.\nNEXT: NONE' }, completeDelayMs: 5_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    expect(await $.prompt.suggest({ text: 'run the tests', origin: { kind: 'suggestion' } } as never)).toMatchObject({ isShown: false });
+    expect(w.suggested).toEqual([]);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(w.completes.length).toBe(1);
+    expect(w.suggested).toEqual(['run the tests']);
+    expect(await $.prompt.suggest({ text: 'commit', origin: { kind: 'suggestion' } } as never)).toMatchObject({ isShown: true });
+    expect(w.suggested).toEqual(['run the tests', 'commit']);
+    await ui.unmount();
+  });
+  test('an aborted turn, or a subagent\'s, makes no call', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'aborted', answer: '', isAborted: true, turnId: 't1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Sub done.', isAborted: false, turnId: 't2', agentId: 'agent-1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toEqual([]);
+    expect(w.forks).toEqual([]);
+    expect(w.suggested).toEqual([]);
+    await ui.unmount();
+  });
+  test('a held /buddy answer keeps the bubble over the turn\'s line, and the suggestion still goes out', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Forty-two, friend.' }, complete: { isAnswered: true, text: 'LINE: Should not show.\nNEXT: commit this' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('what is up'));
+    await w.clock.settle();
+    expect(await shows(ui, /Forty-two, friend\./)).toBe(true);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes.length).toBe(1);
+    expect(await shows(ui, /Forty-two, friend\./)).toBe(true);
+    expect(await shows(ui, /Should not show/)).toBe(false);
+    expect(w.suggested).toEqual(['commit this']);
     await ui.unmount();
   });
 });

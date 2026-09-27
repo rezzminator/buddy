@@ -121,19 +121,23 @@ describe('brain', () => {
     expect(b.motion.x).toBe(0);
     expect(b.sleeping).toBe(false);
   });
-  test('quips: only with the option, a tool used, and past the cooldown', () => {
+  test('the turn\'s summary at every end, tools or none; the line due only with quips on and past the cooldown', () => {
     const b = createBrain(char(), true);
-    expect(endTurn(b, true, 45)).toBeNull();
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, false, 45)).toBeNull();
+    const read = () => react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: [], failures: 0, lastBash: '' }, lineDue: true });
+    read();
+    expect(endTurn(b, false, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, lineDue: false });
     expect(b.turn.tools).toEqual([]);
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).toEqual({ tools: ['Read'], failures: 0, lastBash: '' });
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).toBeNull();
+    read();
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, lineDue: false });
     ticks(b, 45000 / 200);
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).not.toBeNull();
+    expect(endTurn(b, true, 45).lineDue).toBe(true);
+  });
+  test('cooldown 0: the line is due at every turn\'s end', () => {
+    const b = createBrain(char(), true);
+    expect(endTurn(b, true, 0).lineDue).toBe(true);
+    expect(endTurn(b, true, 0).lineDue).toBe(true);
+    expect(endTurn(b, true, 0).lineDue).toBe(true);
   });
   test('a new pose starts at its first frame and steps through every frame in order', () => {
     const b = createBrain(char({ poses: { idle: [['1'], ['2'], ['3'], ['2']], walkRight: [['a'], ['b']] }, motion: { walk: false } }), true);

@@ -81,10 +81,10 @@ voice.
 
 ### Persona
 
-`persona` is the prompt a model answers in when you ask a question (and for
-quips, when they are on; with `suggestions` on, it also decides what the
-prompt suggestion nudges toward, though the suggestion itself is written in
-the user's words). Write it in the second person ("You are …"): who
+`persona` is the prompt a model answers in when you ask a question, and at
+the end of every answered turn, when it voices the buddy's line (`quips`) and
+decides what the prompt suggestion nudges toward (`suggestions`), though the
+suggestion itself is written in the user's words. Write it in the second person ("You are …"): who
 the character is, how it talks, a phrase or two it likes. The engine adds
 the rule that answers are one line, so the persona does not need to.
 
