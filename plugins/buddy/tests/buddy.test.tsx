@@ -914,6 +914,18 @@ describe('hook paths', () => {
     await ui.unmount();
   });
 
+  test('a headless session (-p, the SDK) makes no end-of-turn call: nobody sees the line, and there is no prompt box to suggest into', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start({ ...START, isInteractive: false });
+    await $.prompt.submit({ text: 'list the files' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(0);
+    expect(w.forks).toHaveLength(0);
+    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(records.find((r) => r.event === 'turn.skipped')).toMatchObject({ why: 'headless' });
+  });
+
   test('a subagent\'s tool calls and turn end are not the main turn: no call, no busy, and the main turn keeps its tally', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);

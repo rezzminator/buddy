@@ -20,6 +20,7 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ### Fixed
 - A subagent's tool calls and turn end no longer count as the main turn's: its end had cleared the main turn's busy state (a `/buddy` question then forked mid-turn instead of waiting) and wiped the turn's tally of tools and failures before the end-of-turn call read it, and its tool calls, the buddy's own fork's denied attempts included, marked the main turn busy and drew reactions. Only the main loop's events do now.
+- A headless session (`claude -p`, the SDK) no longer makes an end-of-turn call: it paid for a line nobody saw and a suggestion with no prompt box. The log records `turn.skipped` with `why: headless`; a `/buddy` question still answers.
 - Every fork is told it has no tools: the end-of-turn fork was not, and a tool attempt, always refused, costs the fork another slow round.
 - A forked `/buddy` answer no longer speaks in the main chat's assistant voice: the fork carries the chat's whole system prompt, so its message now steps out of that role before the character's persona.
 - A `/buddy` question asked while Claude is idle forks the chat again, instead of always falling back to `quipModel`: whether the main turn runs is decided once, when the question is asked, before the band draws the question's own command as work.

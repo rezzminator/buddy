@@ -71,6 +71,8 @@ type State = {
   asking: { since: number } | null;
   /** A tool ran since the last turn.complete, or the band reports work: the main turn is running. */
   turnBusy: boolean;
+  /** A person is at the prompt (session.start's isInteractive): a -p run or the SDK makes no end-of-turn call, nobody sees it. */
+  interactive: boolean;
   /** The band has drawn in this session: before that (a headless session, ever) no line was shown, so none is remembered. */
   bandSeen: boolean;
   /** Clock ticks since the start, and when `hidden` was last read back from the store. */
@@ -509,8 +511,9 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
       st.turns = pushTurn(st.turns, { prompt: st.pendingPrompt, answer: e.answer }, st.options.contextTurns);
       st.pendingPrompt = '';
     }
-    const { turn, lineDue } = endTurn(st.b, st.options.quips && !st.hidden && answered, st.options.quipCooldownSec);
-    const wants: TurnWants = { line: lineDue, next: st.options.suggestions && !st.hidden && answered };
+    const calls = answered && !st.hidden && st.interactive;
+    const { turn, lineDue } = endTurn(st.b, st.options.quips && calls, st.options.quipCooldownSec);
+    const wants: TurnWants = { line: lineDue, next: st.options.suggestions && calls };
     if (wants.line || wants.next) {
       const gen = wants.next ? ++st.suggestGen : st.suggestGen;
       if (wants.next) {
@@ -520,7 +523,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
       lg($, 'info', 'turn.call', { mode: st.options.turnMode, line: wants.line, next: wants.next, tools: turn.tools.length });
       turnCall(st, $, turn, gen, wants).catch((error) => log($, 'the end-of-turn call', error));
     } else {
-      const why = !answered ? 'not an answered turn' : st.hidden ? 'hidden' : !st.options.quips && !st.options.suggestions ? 'quips and suggestions off' : 'cooldown';
+      const why = !answered ? 'not an answered turn' : !st.interactive ? 'headless' : st.hidden ? 'hidden' : !st.options.quips && !st.options.suggestions ? 'quips and suggestions off' : 'cooldown';
       lg($, 'info', 'turn.skipped', { why });
     }
     refresh(st, $);
@@ -1198,6 +1201,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     memoryError: '',
     asking: null,
     turnBusy: false,
+    interactive: true,
     bandSeen: false,
     ticks: 0,
     sharedAt: 0,
@@ -1216,6 +1220,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   on('session.start', async ($, e, next) => {
     const result = await next(e);
     try {
+      st.interactive = e.isInteractive !== false;
       await startSession(st, $);
     } catch (error) {
       log($, 'starting', error);

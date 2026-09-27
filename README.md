@@ -67,7 +67,8 @@ server of its own.
 - 🤫 **Free unless you ask.** Walking, petting, switching and reactions never
   call a model. Only a question you ask, and one short call at the end of
   each answered turn for the buddy's line and the prompt suggestion (on by
-  default; `quips: false` and `suggestions: false` turn them off), spend tokens.
+  default; `quips: false` and `suggestions: false` turn them off), spend tokens;
+  a headless `claude -p` run makes no end-of-turn call.
 - 🛡️ **Never in the way.** A character that fails to load is replaced by the
   duck, who says why; a hook that fails logs the error and steps aside.
   `/buddy off` hides it, and it stays hidden across restarts.
