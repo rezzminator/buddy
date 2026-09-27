@@ -2,7 +2,7 @@
   "name": "buddy",
   "version": "0.3.0",
   "private": true,
-  "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
+  "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back \u2014 or bring back your /buddy",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -12,7 +12,8 @@
     "test": "vitest run --dir tests && claude plugin test plugins/buddy",
     "test:unit": "vitest run --dir tests",
     "test:hooks": "claude plugin test plugins/buddy",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.hooks.json",
+    "types": "claude -p \"/plugin-types $PWD/types\" < /dev/null > /dev/null",
+    "typecheck": "npm run types && tsc --noEmit && tsc -p tsconfig.hooks.json",
     "validate:plugin": "claude plugin validate --strict . && claude plugin validate --strict plugins/buddy",
     "release:check": "scripts/release-check.sh",
     "live": "scripts/live-proof.sh"
@@ -22,5 +23,19 @@
     "typescript": "^5.7.2",
     "vitest": "^3.2.4"
   },
-  "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "duck", "ascii-art", "terminal-pet", "virtual-pet", "tamagotchi", "function-hooks", "claude-mods", "professor"]
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "claude-code-buddy",
+    "buddy",
+    "companion",
+    "duck",
+    "ascii-art",
+    "terminal-pet",
+    "virtual-pet",
+    "tamagotchi",
+    "function-hooks",
+    "claude-mods",
+    "professor"
+  ]
 }

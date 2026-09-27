@@ -9,7 +9,7 @@ Each gate below says what it proves and what it prints when it fails; a gate tha
 | --- | --- | --- | --- |
 | Unit tests | `npm run test:unit` (vitest over `tests/`) | every decision in `plugins/buddy/src/` | the failing test by name; a hatch mismatch lists each vector as `#i (id length n): got …, want …` |
 | Hook tests | `npm run test:hooks` (`claude plugin test plugins/buddy`) | the adapter wired to Claude Code's own testing kit, over an in-memory world | the failing test by name |
-| Typecheck | `npm run typecheck` (`tsc`, then `tsc -p tsconfig.hooks.json`) | the engine, the tests and the adapter against `types/claude-code.d.ts` | each type error by file and line |
+| Typecheck | `npm run typecheck` (`npm run types`, then `tsc`, then `tsc -p tsconfig.hooks.json`) | the engine, the tests and the adapter against `types/claude-code.d.ts`, which `npm run types` writes from the installed Claude Code (`/plugin-types`, no login needed) and git ignores | each type error by file and line |
 | Validate | `npm run validate:plugin` (`claude plugin validate --strict`, the repo and the plugin) | both manifests, and the rule on `$` | the violation; a broken `$` rule would otherwise load the module with zero hooks |
 | Release check | `scripts/release-check.sh [main's version]` | the version agrees in `plugin.json`, `marketplace.json`, `package.json` and the README badge; `CHANGELOG.md` has a dated section; the version moved past `main`'s | one `FAIL` line per disagreement and exit 1; `ERROR` and exit 2 when a file cannot be read |
 | Live proof | `npm run live` (`scripts/live-proof.sh`) | a real session draws, walks, answers, switches, hides, runs the menu and remembers | a table with a `FAIL` row per failed check and its evidence, exit 1; `ERROR` and exit 2 when the session cannot be driven |
@@ -112,7 +112,7 @@ Named here, so none reads as a pass:
 
 | File | What |
 | --- | --- |
-| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `typecheck`, `validate:plugin`, `release:check` and `live` scripts |
+| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `types`, `typecheck`, `validate:plugin`, `release:check` and `live` scripts |
 | [`tests/`](../../tests/) | one vitest file per engine concern, [`fixtures.ts`](../../tests/fixtures.ts), the hatch fixtures |
 | [`plugins/buddy/tests/buddy.test.tsx`](../../plugins/buddy/tests/buddy.test.tsx) | the hook tests; `world` answers `$.fs`, `$.store`, `$.clock`, `$.model` and the rest from memory |
 | [`scripts/live-proof.sh`](../../scripts/live-proof.sh) | the live proof |

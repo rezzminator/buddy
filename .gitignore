@@ -3,3 +3,4 @@ node_modules
 .DS_Store
 .worktrees/
 plugins/buddy/tsconfig.json
+/types/
