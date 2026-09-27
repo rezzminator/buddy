@@ -14,7 +14,7 @@ import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, sta
 import { Logger, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { expandHome, logPath, resolveOptions, type Options } from '../src/options.ts';
 import {
-  QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, lastExchange, oneLine, oneLineSystem, parseTurnReply, questionPrompt, stillThinking, turnPrompt, turnSystem, type TurnSummary, type TurnWants,
+  QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, stillThinking, turnPrompt, turnSystem, type Turn, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion } from '../src/suggest.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
@@ -86,12 +86,12 @@ type State = {
   harnessSuggestion: string | null;
   /** The buddy gave up on this turn's suggestion: the engine's own passes. */
   suggestGaveUp: boolean;
-  /** The user's last submitted prompt, read by the end-of-turn call and a question's completion. */
-  lastPrompt: string;
+  /** The user's prompt of the running main turn, from prompt.submit: an answered turn files it into `turns`. */
+  pendingPrompt: string;
   /** Questions asked while the main turn ran, each waiting to fork: the main thread's next turn.complete, of any reason, lets them go. */
   turnWaiters: (() => void)[];
-  /** Claude's answer at the main chat's last answered turn, read by a question's completion. */
-  lastAnswer: string;
+  /** The main chat's last TURN_WINDOW answered turns, oldest first, read by the end-of-turn call and a question's completion. */
+  turns: Turn[];
   /** The options' warnings were said: once, in the first greeting's bubble. */
   warned: boolean;
 };
@@ -493,7 +493,10 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
     st.turnBusy = false;
     // Every answered turn of the main loop, tools or none; never an aborted one, nor a subagent's.
     const answered = e.reason === 'answer' && !e.isAborted && e.agentId === undefined;
-    if (answered) st.lastAnswer = e.answer;
+    if (answered) {
+      st.turns = pushTurn(st.turns, { prompt: st.pendingPrompt, answer: e.answer });
+      st.pendingPrompt = '';
+    }
     const { turn, lineDue } = endTurn(st.b, st.options.quips && !st.hidden && answered, st.options.quipCooldownSec);
     const wants: TurnWants = { line: lineDue, next: st.options.suggestions && !st.hidden && answered };
     if (wants.line || wants.next) {
@@ -503,7 +506,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
         st.suggestGaveUp = false;
       }
       lg($, 'info', 'turn.call', { line: wants.line, next: wants.next, tools: turn.tools.length });
-      turnCall(st, $, turn, e.answer, gen, wants).catch((error) => log($, 'the end-of-turn call', error));
+      turnCall(st, $, turn, gen, wants).catch((error) => log($, 'the end-of-turn call', error));
     } else {
       const why = !answered ? 'not an answered turn' : st.hidden ? 'hidden' : !st.options.quips && !st.options.suggestions ? 'quips and suggestions off' : 'cooldown';
       lg($, 'info', 'turn.skipped', { why });
@@ -515,22 +518,24 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
 }
 
 /**
- * One quipModel call at a turn's end writes the buddy's line and the
+ * One quipModel call at a turn's end, on the main chat's recent turns, writes the buddy's line and the
  * next-prompt suggestion, those wanted; a timeout, a refusal or a throw fails
  * the line as a quip fails and gives the suggestion up. Never throws.
  */
-async function turnCall(st: State, $: EngineInterface, t: TurnSummary, answerText: string, gen: number, wants: TurnWants): Promise<void> {
+async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: number, wants: TurnWants): Promise<void> {
   const b = st.b;
   if (!b) return;
+  // The window as this turn ended, before a later turn can move it.
+  const turns = st.turns;
   let reply: { line: string | null; next: string | null } | null = null;
   let reason = '';
   try {
     const memory = await recollect(st, $, b.character);
-    const prompt = turnPrompt(t, st.lastPrompt, answerText, memory);
+    const prompt = turnPrompt(t, turns, memory);
     lg($, 'debug', 'turn.prompt', { length: prompt.length });
     const r = await within(
       $,
-      $.model.complete({ model: st.options.quipModel, system: turnSystem(b.character.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }),
+      $.model.complete({ model: st.options.quipModel, effort: st.options.effort, system: turnSystem(b.character.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }),
       TURN_DEADLINE_MS,
     );
     if (r === 'timeout') reason = 'timeout';
@@ -922,7 +927,7 @@ function shape(r: ModelForkResult | 'timeout'): LogFields {
  * else: a fork replays the main thread's last request, so one asked while the
  * main turn runs would continue that turn, and the question waits for the
  * turn to end first. In `complete` mode the quip model answers from persona,
- * memory, the main chat's last exchange and question.
+ * memory, the main chat's last TURN_WINDOW turns (`recentTurns`) and question.
  * `memory`: what the buddy remembered before this question; it goes before the question.
  * `busy`: whether the main turn ran when the question was asked, decided once at ask.start.
  */
@@ -959,11 +964,11 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
         r = await within($, $.model.fork({ prompt }), deadline);
       }
     } else {
-      // A completion does not see the chat: the last exchange tells it where the chat stands.
-      const prompt = questionPrompt(question, memory, lastExchange(st.lastPrompt, st.lastAnswer));
+      // A completion does not see the chat: the recent turns tell it where the chat stands.
+      const prompt = questionPrompt(question, memory, recentTurns(st.turns));
       lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
       deadline = COMPLETE_DEADLINE_MS;
-      r = await within($, $.model.complete({ model: st.options.quipModel, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: deadline }), deadline);
+      r = await within($, $.model.complete({ model: st.options.quipModel, effort: st.options.effort, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: deadline }), deadline);
     }
     lg($, 'debug', 'ask.result', { via, ...shape(r) });
     const text = r !== 'timeout' && r.isAnswered ? oneLine(r.text) : '';
@@ -1136,9 +1141,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
     suggestGen: 0,
     harnessSuggestion: null,
     suggestGaveUp: false,
-    lastPrompt: '',
+    pendingPrompt: '',
     turnWaiters: [],
-    lastAnswer: '',
+    turns: [],
     warned: false,
   };
 
@@ -1173,7 +1178,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   on('prompt.submit', async ($, e, next) => {
     try {
-      st.lastPrompt = e.text;
+      st.pendingPrompt = e.text;
     } catch (error) {
       log($, 'remembering the prompt', error);
     }

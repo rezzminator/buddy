@@ -9,16 +9,29 @@ export const QUESTION_MAX_TOKENS = 100;
 export const TURN_MAX_TOKENS = 120;
 /** How long the end-of-turn call may take before its line and suggestion are given up. */
 export const TURN_DEADLINE_MS = 30_000;
-/** How much of the user's last prompt a completion reads: its end. */
-const LAST_PROMPT_CAP = 1500;
-/** How much of Claude's last answer a completion reads: its end. */
-const ANSWER_CAP = 4000;
+/** How many of the main chat's latest turns a completion reads. */
+export const TURN_WINDOW = 3;
+/** How much of each of those prompts a completion reads: its end. */
+const TURN_PROMPT_CAP = 1500;
+/** How much of each of those answers a completion reads: its end. */
+const TURN_ANSWER_CAP = 3000;
 const REPLY_CAP = 240;
 
 /** The rendered memory before what is asked, and leave to refer back to it; '' without one. */
 function recalled(memory: string): string {
   return memory ? `${memory}\nThat is what you and the user said to each other lately; you may refer back to it.\n\n` : '';
 }
+
+/**
+ * Said right after the persona, wherever the character speaks: the persona is
+ * the voice, this is what the voice is for.
+ */
+export const CHARACTER_RULE =
+  'Become this character completely, in voice and in attitude; stay in it for every word. ' +
+  'Say ONE thing that is actually useful and that both the user and the assistant in the recent turns have missed: ' +
+  'a risk, a gap, a wrong assumption, or a better next step. ' +
+  'The character decides HOW it is said, never WHAT is true. ' +
+  'Never repeat what the chat already said.';
 
 /**
  * A fork carries the chat's whole system prompt, the assistant's own voice with
@@ -30,17 +43,17 @@ export const FORK_ROLE =
   'formatting rules and sign-off lines; no markdown, no summary line. You are the user\'s companion character below, ' +
   'looking at the same conversation.';
 
-/** The fork's one user message: the step out of the assistant's voice, persona, the buddy's memory, the question, the one-line rule. */
+/** The fork's one user message: the step out of the assistant's voice, persona, the character rule, the buddy's memory, the question, the one-line rule. */
 export function forkPrompt(persona: string, question: string, memory = ''): string {
-  return `${FORK_ROLE}\n\n${persona}\n\n${recalled(memory)}The user asks you directly: ${question}. ${ONE_LINE_RULE}`;
+  return `${FORK_ROLE}\n\n${persona}\n\n${CHARACTER_RULE}\n\n${recalled(memory)}The user asks you directly: ${question}. ${ONE_LINE_RULE}`;
 }
 
-/** The system prompt of a completion: persona and the one-line rule. */
+/** The system prompt of a completion: persona, the character rule and the one-line rule. */
 export function oneLineSystem(persona: string): string {
-  return `${persona}\n\n${ONE_LINE_RULE}`;
+  return `${persona}\n\n${CHARACTER_RULE}\n\n${ONE_LINE_RULE}`;
 }
 
-/** A completion's question, after the buddy's memory and the main chat's last exchange (`lastExchange`), when there is one. */
+/** A completion's question, after the buddy's memory and the main chat's recent turns (`recentTurns`), when there are some. */
 export function questionPrompt(question: string, memory = '', exchange = ''): string {
   return `${recalled(memory)}${exchange}The user asks you directly: ${question}`;
 }
@@ -65,8 +78,8 @@ function tail(text: string, cap: number): string {
 export type TurnWants = { line: boolean; next: boolean };
 
 /**
- * The end-of-turn call's system prompt: the persona, then the tagged lines to
- * reply with, only those wanted. The persona voices the line and picks what
+ * The end-of-turn call's system prompt: the persona, the character rule when a
+ * LINE is wanted, then the tagged lines to reply with, only those wanted. The persona voices the line and picks what
  * the suggestion nudges toward; the suggestion's words are the user's own.
  */
 export function turnSystem(persona: string, wants: TurnWants): string {
@@ -79,22 +92,33 @@ export function turnSystem(persona: string, wants: TurnWants): string {
         'Write NEXT: NONE only when the work is plainly finished and nothing follows.',
     );
   }
-  return `${persona}\n\nA turn of the user's work with Claude just ended. Reply with exactly these lines and nothing else:\n${lines.join('\n')}\nDo not use tools. Do not think out loud.`;
+  const rule = wants.line ? `${CHARACTER_RULE}\n\n` : '';
+  return `${persona}\n\n${rule}A turn of the user's work with Claude just ended. Reply with exactly these lines and nothing else:\n${lines.join('\n')}\nDo not use tools. Do not think out loud.`;
+}
+
+/** One main-thread turn: what the user asked Claude and what Claude answered. */
+export type Turn = { prompt: string; answer: string };
+
+/** The window with `turn` added last, the oldest dropped past TURN_WINDOW; `turns` itself unchanged. */
+export function pushTurn(turns: readonly Turn[], turn: Turn): Turn[] {
+  return [...turns, turn].slice(-TURN_WINDOW);
 }
 
 /**
- * The main chat's last exchange, which a completion cannot see for itself:
- * the user's last prompt and Claude's last answer, each keeping its end;
- * '' when neither was seen yet.
+ * The main chat's recent turns, which a completion cannot see for itself:
+ * oldest first, each prompt and answer keeping its end; '' for none.
  */
-export function lastExchange(lastPrompt: string, answer: string): string {
-  if (lastPrompt === '' && answer === '') return '';
-  return `The user last asked Claude:\n${tail(lastPrompt, LAST_PROMPT_CAP) || '(not seen)'}\n\nClaude answered:\n${tail(answer, ANSWER_CAP) || '(no text)'}\n\n`;
+export function recentTurns(turns: readonly Turn[]): string {
+  if (turns.length === 0) return '';
+  const blocks = turns.map(
+    (t) => `The user asked Claude:\n${tail(t.prompt, TURN_PROMPT_CAP) || '(not seen)'}\n\nClaude answered:\n${tail(t.answer, TURN_ANSWER_CAP) || '(no text)'}\n\n`,
+  );
+  return `The main chat's last ${turns.length === 1 ? 'turn' : `${turns.length} turns`}, oldest first:\n\n${blocks.join('')}`;
 }
 
-/** The end-of-turn call's prompt: the buddy's memory, the main chat's last exchange, then what the turn did. */
-export function turnPrompt(t: TurnSummary, lastPrompt: string, answer: string, memory = ''): string {
-  return `${recalled(memory)}${lastExchange(lastPrompt, answer)}${turnFacts(t)}`;
+/** The end-of-turn call's prompt: the buddy's memory, the main chat's recent turns, then what the turn did. */
+export function turnPrompt(t: TurnSummary, turns: readonly Turn[], memory = ''): string {
+  return `${recalled(memory)}${recentTurns(turns)}${turnFacts(t)}`;
 }
 
 const TAGGED = /^[\s\-*]*(line|next)\s*:\s*(.*)$/i;

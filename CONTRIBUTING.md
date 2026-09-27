@@ -85,8 +85,13 @@ voice.
 the end of every answered turn, when it voices the buddy's line (`quips`) and
 decides what the prompt suggestion nudges toward (`suggestions`), though the
 suggestion itself is written in the user's words. Write it in the second person ("You are …"): who
-the character is, how it talks, a phrase or two it likes. The engine adds
-the rule that answers are one line, so the persona does not need to.
+the character is, how it talks, a phrase or two it likes. The engine puts
+its character rule (`CHARACTER_RULE`) right after the persona: become the
+character completely and say one useful thing that both the user and Claude
+missed, the character deciding how it is said, never what is true. So write
+the persona for voice, not for tasks: what to say comes from the rule. The
+engine also adds the rule that answers are one line, so the persona does
+not need to.
 
 ### Motion
 

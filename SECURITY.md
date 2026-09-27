@@ -33,7 +33,8 @@ Useful when judging impact:
   names.
 - It makes model calls only through Claude Code itself: a `/buddy` question,
   and one short call at the end of each answered turn for the buddy's line
-  and the prompt suggestion (`quips` and `suggestions`, on by default; turn
+  and the prompt suggestion, on `quipModel` (default `opus`) at `effort`
+  (default `low`) and sent the chat's last 3 turns (`quips` and `suggestions`, on by default; turn
   both off for none). There is no buddy server.
 
 It writes two things, and nothing else:

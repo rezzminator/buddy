@@ -59,6 +59,7 @@ WORK=$RUN/work
 mkdir -p "$WORK"
 # Only a test runner's output reacts as a test: (e) runs `npm test` here, which prints a pass summary.
 printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
+# questionMode defaults to complete; (d), (f), (k) and (l) prove the fork, so the proof pins it.
 cat > "$RUN/settings.json" <<'EOF'
 { "pluginConfigs": { "buddy@inline": { "options": { "questionMode": "fork", "quips": false, "suggestions": false, "motion": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
 EOF

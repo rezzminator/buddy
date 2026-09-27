@@ -4,15 +4,15 @@ import { DEFAULTS, expandHome, logPath, resolveOptions } from '../plugins/buddy/
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'fork', quips: true, quipModel: 'haiku', quipCooldownSec: 0, suggestions: true, memory: 6, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'complete', quips: true, quipModel: 'opus', effort: 'low', quipCooldownSec: 0, suggestions: true, memory: 6, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
   });
   test('good values', () => {
-    const o = resolveOptions({ character: ' Cat ', characterDir: '~/chars', motion: false, questionMode: 'COMPLETE', quips: 'false', quipModel: 'sonnet', quipCooldownSec: '10' });
-    expect(o).toMatchObject({ character: 'cat', characterDir: '~/chars', motion: false, questionMode: 'complete', quips: false, quipModel: 'sonnet', quipCooldownSec: 10, errors: [] });
+    const o = resolveOptions({ character: ' Cat ', characterDir: '~/chars', motion: false, questionMode: 'FORK', quips: 'false', quipModel: 'sonnet', effort: ' HIGH ', quipCooldownSec: '10' });
+    expect(o).toMatchObject({ character: 'cat', characterDir: '~/chars', motion: false, questionMode: 'fork', quips: false, quipModel: 'sonnet', effort: 'high', quipCooldownSec: 10, errors: [] });
   });
   test('a bad value is ignored by name', () => {
     const o = resolveOptions({ questionMode: 'loud', motion: 'maybe', quipCooldownSec: -1 });
-    expect(o.questionMode).toBe('fork');
+    expect(o.questionMode).toBe('complete');
     expect(o.motion).toBe(true);
     expect(o.quipCooldownSec).toBe(0);
     expect(o.errors).toEqual([
@@ -20,6 +20,17 @@ describe('resolveOptions', () => {
       'option questionMode ignored: "loud" is not fork, complete or off',
       'option quipCooldownSec ignored: -1 is not a number of seconds',
     ]);
+  });
+});
+
+describe('the effort option', () => {
+  test('low by default; any ModelEffort, any case; anything else is ignored by name', () => {
+    expect(resolveOptions({}).effort).toBe('low');
+    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveOptions({ effort: e })).toMatchObject({ effort: e, errors: [] });
+    expect(resolveOptions({ effort: 'Max' })).toMatchObject({ effort: 'max', errors: [] });
+    expect(resolveOptions({ effort: '' })).toMatchObject({ effort: 'low', errors: [] });
+    expect(resolveOptions({ effort: 'turbo' })).toMatchObject({ effort: 'low', errors: ['option effort ignored: "turbo" is not low, medium, high, xhigh or max'] });
+    expect(resolveOptions({ effort: 3 })).toMatchObject({ effort: 'low', errors: ['option effort ignored: 3 is not low, medium, high, xhigh or max'] });
   });
 });
 

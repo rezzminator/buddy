@@ -31,9 +31,9 @@
     },
     "questionMode": {
       "type": "string",
-      "title": "/buddy questions: fork (sees the chat, uses its cache), complete, or off",
-      "description": "fork: answers only from a fork of this chat (its model and context, served from its prompt cache), never quipModel; asked while the main turn runs, it waits for that turn to end; before the chat's first reply it says there is nothing to fork yet; in a long chat an answer can take a minute. complete: a fast call on quipModel that sees only your last prompt and Claude's last answer; off: no model call.",
-      "default": "fork"
+      "title": "/buddy questions: complete (fast, sees the last 3 turns), fork (sees the whole chat), or off",
+      "description": "complete: a fast call on quipModel at the effort option's level, seeing the chat's last 3 turns (your prompts and Claude's answers), answered at once even while the main turn runs. fork: answers only from a fork of this chat (its model and context, served from its prompt cache), never quipModel; asked while the main turn runs, it waits for that turn to end; before the chat's first reply it says there is nothing to fork yet; in a long chat an answer can take a minute. off: no model call.",
+      "default": "complete"
     },
     "quips": {
       "type": "boolean",
@@ -43,9 +43,15 @@
     },
     "quipModel": {
       "type": "string",
-      "title": "Model for the end-of-turn call and questions that do not fork",
-      "description": "An alias (haiku, sonnet) or a full model id.",
-      "default": "haiku"
+      "title": "Model for the buddy's lines, suggestions and questions",
+      "description": "An alias (opus, sonnet, haiku) or a full model id. It writes the end-of-turn line and suggestion and answers questions that do not fork.",
+      "default": "opus"
+    },
+    "effort": {
+      "type": "string",
+      "title": "How hard quipModel thinks: low, medium, high, xhigh or max",
+      "description": "The effort of every quipModel call the buddy makes (the end-of-turn line and suggestion, questions that do not fork); a fork keeps the chat's own. Higher is slower.",
+      "default": "low"
     },
     "quipCooldownSec": {
       "type": "number",

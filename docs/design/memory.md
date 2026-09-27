@@ -44,8 +44,8 @@ That is what you and the user said to each other lately; you may refer back to i
 | Call | Where the block goes |
 | --- | --- |
 | a question, forked | the fork's one user message, between the persona and the question (`forkPrompt`) |
-| a question, completed | the prompt, before the question (`questionPrompt`) |
-| the end-of-turn call | the prompt, before the last exchange and the turn's summary (`turnPrompt`) |
+| a question, completed (the default) | the prompt, before the chat's last 3 turns and the question (`questionPrompt`) |
+| the end-of-turn call | the prompt, before the chat's last 3 turns and the turn's summary (`turnPrompt`) |
 
 The block is read once, when the question is asked, so it holds what came before the question; the question joins the ring with its answer.
 No call is added: the memory rides on calls buddy makes anyway, and the one-line rule and token caps of [Voice](./voice.md) apply unchanged.
@@ -82,7 +82,7 @@ A stored record that is malformed keeps what still reads and says how many excha
 | File | Symbols |
 | --- | --- |
 | [`src/memory.ts`](../../plugins/buddy/src/memory.ts) | `MEMORY_DEFAULT`, `MEMORY_MAX`, `MEMORY_TEXT_CAP`, `MEMORY_SESSIONS`, `MEMORY_KEY_PREFIX`, `Exchange`, `Book`, `Stored`, `storeKey`, `capText`, `remember`, `record`, `recall`, `render`, `bookOf`, `staleKeys` |
-| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `forkPrompt`, `questionPrompt`, `lastExchange`, `turnPrompt` |
+| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `forkPrompt`, `questionPrompt`, `recentTurns`, `turnPrompt` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `heard`, `memoryFailed`, `ask`, `quip` |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `memory` |

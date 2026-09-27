@@ -6,6 +6,9 @@ import { LOG_LEVELS, type LogLevel } from './log.ts';
 import { MEMORY_DEFAULT, MEMORY_MAX } from './memory.ts';
 
 export type QuestionMode = 'fork' | 'complete' | 'off';
+/** How hard the buddy's model thinks: the engine's ModelEffort values. */
+export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 export type AmbiguousWidth = 'narrow' | 'wide';
 export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
 export const QUESTION_MODES: readonly QuestionMode[] = ['fork', 'complete', 'off'];
@@ -17,8 +20,10 @@ export type Options = {
   questionMode: QuestionMode;
   /** The end-of-turn call writes the buddy's line, shown in the bubble. */
   quips: boolean;
-  /** The model of the end-of-turn call and of questions that do not fork. */
+  /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and questions that do not fork. */
   quipModel: string;
+  /** How hard quipModel thinks on each of those calls; a fork takes none. */
+  effort: Effort;
   /** The least seconds between two lines; 0 = every answered turn. */
   quipCooldownSec: number;
   /** The end-of-turn call writes the next-prompt suggestion, and the harness's own is held back, shown only when the buddy has none. */
@@ -38,9 +43,10 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   character: 'duck',
   characterDir: '',
   motion: true,
-  questionMode: 'fork',
+  questionMode: 'complete',
   quips: true,
-  quipModel: 'haiku',
+  quipModel: 'opus',
+  effort: 'low',
   quipCooldownSec: 0,
   suggestions: true,
   memory: MEMORY_DEFAULT,
@@ -59,7 +65,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, characterDir, motion, questionMode, quips, quipModel, quipCooldownSec, suggestions, memory, logLevel, logFile, ambiguousWidth } = raw;
+  const { character, characterDir, motion, questionMode, quips, quipModel, effort, quipCooldownSec, suggestions, memory, logLevel, logFile, ambiguousWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -91,6 +97,11 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
   if (quipModel !== undefined && quipModel !== '') {
     if (typeof quipModel === 'string') o.quipModel = quipModel.trim();
     else bad('quipModel', 'not a string');
+  }
+  if (effort !== undefined && effort !== '') {
+    const e = typeof effort === 'string' ? effort.trim().toLowerCase() : '';
+    if ((EFFORTS as readonly string[]).includes(e)) o.effort = e as Effort;
+    else bad('effort', `${JSON.stringify(effort)} is not low, medium, high, xhigh or max`);
   }
   if (quipCooldownSec !== undefined && quipCooldownSec !== '') {
     const n = typeof quipCooldownSec === 'number' ? quipCooldownSec : Number(quipCooldownSec);
