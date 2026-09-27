@@ -6,8 +6,15 @@ export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character
 export const QUESTION_MAX_TOKENS = 100;
 /** The end-of-turn call's budget: a LINE and a NEXT, short. */
 export const TURN_MAX_TOKENS = 120;
-/** How long the end-of-turn completion may take before its line and suggestion are given up. */
+/** How long the end-of-turn call, its memory and settings reads included, may take before its line and suggestion are given up. */
 export const TURN_DEADLINE_MS = 30_000;
+/** How long past the buddy's own deadline a completion runs before the engine abandons it (`timeoutMs`): the deadline always ends it first, with one reason. */
+export const REQUEST_MARGIN_MS = 5_000;
+
+/** The `timeoutMs` of a completion whose deadline is `deadlineMs`: past it, so the buddy's deadline decides, and the request is still abandoned. */
+export function requestTimeoutMs(deadlineMs: number): number {
+  return deadlineMs + REQUEST_MARGIN_MS;
+}
 /** How many of the main chat's latest turns a completion reads by default: the contextTurns option's default. */
 export const TURN_WINDOW = 3;
 /** The most of the main chat's latest turns a completion may read: the contextTurns option's ceiling. */
@@ -63,6 +70,30 @@ function tail(text: string, cap: number): string {
 /** What the end-of-turn call writes: the buddy's line, the user's next prompt, or both. */
 export type TurnWants = { line: boolean; next: boolean };
 
+/** What an ended main-loop turn and the session look like to the end-of-turn call. */
+export type TurnGate = { answered: boolean; hidden: boolean; interactive: boolean; bandSeen: boolean; quips: boolean; suggestions: boolean };
+
+/**
+ * What an ended main turn may ask the model for, before the line's cooldown:
+ * nothing for a turn not answered, while hidden, or with nobody at the prompt;
+ * a line only once the band has drawn in this session (a line nobody can see
+ * is never paid for); a suggestion wherever the prompt box is.
+ */
+export function turnMay(g: TurnGate): TurnWants {
+  const calls = g.answered && !g.hidden && g.interactive;
+  return { line: g.quips && calls && g.bandSeen, next: g.suggestions && calls };
+}
+
+/** Why an ended main turn makes no call; `lineDue` false with quips allowed is the cooldown. */
+export function skipReason(g: TurnGate): string {
+  if (!g.answered) return 'not an answered turn';
+  if (!g.interactive) return 'headless';
+  if (g.hidden) return 'hidden';
+  if (!g.quips && !g.suggestions) return 'quips and suggestions off';
+  if (g.quips && !g.bandSeen && !g.suggestions) return 'band never drawn';
+  return 'cooldown';
+}
+
 /**
  * The end-of-turn call's system prompt: the persona, the character rule when a
  * LINE is wanted, then the tagged lines to reply with, only those wanted. The persona voices the line and picks what
@@ -84,6 +115,34 @@ export function turnSystem(persona: string, wants: TurnWants): string {
 
 /** One main-thread turn: what the user asked Claude and what Claude answered. */
 export type Turn = { prompt: string; answer: string };
+
+/**
+ * The prompts given to the main chat, filed with the turn they start:
+ * `current` is the running (or next) turn's, `queued` the ones typed over a
+ * running turn, oldest first, each starting a later turn.
+ */
+export type PromptLedger = { current: string; queued: string[] };
+export const NO_PROMPTS: PromptLedger = { current: '', queued: [] };
+
+/**
+ * A submitted prompt: with no `turnId` (the session was idle) it is the next
+ * turn's; typed over the running turn `turnId`, it waits for that turn to end.
+ */
+export function submitPrompt(l: PromptLedger, text: string, turnId?: string): PromptLedger {
+  if (turnId === undefined) return { current: text, queued: [] };
+  return { current: l.current, queued: [...l.queued, text] };
+}
+
+/** A main-loop turn ended, in any way: the prompt it was given, and the ledger with the oldest waiting prompt as the next turn's. */
+export function endPromptTurn(l: PromptLedger): { prompt: string; ledger: PromptLedger } {
+  const [next = '', ...rest] = l.queued;
+  return { prompt: l.current, ledger: { current: next, queued: rest } };
+}
+
+/** A session end that leaves the process on a fresh conversation (`/clear`, a resume): the chat's window, its prompts and a pending line are the old one's. */
+export function endsConversation(reason: string): boolean {
+  return reason === 'clear' || reason === 'resume';
+}
 
 /** The window with `turn` added last, the oldest dropped past `size` turns (the contextTurns option); `turns` itself unchanged. */
 export function pushTurn(turns: readonly Turn[], turn: Turn, size = TURN_WINDOW): Turn[] {

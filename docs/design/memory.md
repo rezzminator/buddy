@@ -85,7 +85,7 @@ A stored record that is malformed keeps what still reads and says how many excha
 | [`src/memory.ts`](../../plugins/buddy/src/memory.ts) | `MEMORY_DEFAULT`, `MEMORY_MAX`, `MEMORY_TEXT_CAP`, `MEMORY_SESSIONS`, `MEMORY_KEY_PREFIX`, `Exchange`, `Book`, `Stored`, `storeKey`, `capText`, `remember`, `record`, `recall`, `render`, `bookOf`, `staleKeys` |
 | [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `questionPrompt`, `recentTurns`, `turnPrompt` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `heard`, `memoryFailed`, `ask`, `quip`, `proposeTurnNext` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `heard`, `memoryFailed`, `ask`, `turnCall`, `sayTurnLine`, `proposeTurnNext` |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `memory` |
 
 ## How it's tested

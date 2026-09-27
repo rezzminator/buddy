@@ -62,7 +62,7 @@
     "memory": {
       "type": "number",
       "title": "How many recent exchanges the buddy remembers (0 = off)",
-      "description": "Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), or one line the buddy said. They go into its next answer or quip, kept per session and per character; at most 30.",
+      "description": "Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), or one line the buddy said, or a next prompt it suggested that the prompt box showed. They go into its next answer or quip, kept per session and per character; at most 30.",
       "default": 6
     },
     "contextTurns": {

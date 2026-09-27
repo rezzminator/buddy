@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   ANSWER_MS, COMPLETE_DEADLINE_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
-  failAnswer, farewell, holdsAnswer, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
+  failAnswer, farewell, holdsAnswer, sayLine, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { raw } from './fixtures.ts';
@@ -207,6 +207,18 @@ describe('holdsAnswer', () => {
     expect(holdsAnswer(b)).toBe(true);
     b.talk = { text: 'a canned line', pose: null, until: b.now + BUBBLE_MS };
     expect(holdsAnswer(b)).toBe(false);
+  });
+  test('an end-of-turn line, or its failure, never holds against the next turn\'s line, yet a line nobody asked for waits behind it', () => {
+    const b = createBrain(char(), false);
+    expect(answer(b, 'Turn one.', 'yay', undefined, true)).toBe(true);
+    expect(holdsAnswer(b)).toBe(false);
+    sayLine(b, 'toolFail', 'oops', BUBBLE_MS, () => 0);
+    expect(b.talk?.text).toBe('Turn one.');
+    expect(b.after?.event).toBe('toolFail');
+    failAnswer(b, 'timeout', undefined, true);
+    expect(holdsAnswer(b)).toBe(false);
+    answer(b, 'A /buddy answer.');
+    expect(holdsAnswer(b)).toBe(true);
   });
 });
 

@@ -23,7 +23,8 @@ export const WORKING_LINE_CHANCE = 0.25;
 /** Lines nobody asked for: they never cover a held answer. */
 const AMBIENT: ReadonlySet<LineEvent> = new Set(['toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake']);
 
-export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean };
+/** `turn`: the end-of-turn line (or why there is none), held against lines nobody asked for, never against the next turn's line. */
+export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean; turn?: boolean };
 
 export type Brain = {
   character: Character;
@@ -237,23 +238,30 @@ function isAsker(b: Brain, askerId: string | undefined): boolean {
   return askerId === undefined || askerId === b.character.id;
 }
 
-/** The answer in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. */
-export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string): boolean {
+/**
+ * The answer in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now.
+ * `turn`: the end-of-turn line, which the next turn's line may replace (holdsAnswer ignores it).
+ */
+export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string, turn = false): boolean {
   if (!isAsker(b, askerId)) return false;
-  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true };
+  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}) };
   return true;
 }
 
-/** The failure in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. */
-export function failAnswer(b: Brain, reason: string, askerId?: string): boolean {
+/** The failure in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. `turn` as in `answer`. */
+export function failAnswer(b: Brain, reason: string, askerId?: string, turn = false): boolean {
   if (!isAsker(b, askerId)) return false;
-  b.talk = { text: lostThread(b.character.name, reason), pose: 'oops', until: b.now + ANSWER_MS, held: true };
+  b.talk = { text: lostThread(b.character.name, reason), pose: 'oops', until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}) };
   return true;
 }
 
-/** An answer, a failure or the thinking line holds the bubble: a line nobody asked for must not replace it yet. */
+/**
+ * A /buddy answer, its failure, a refusal or the thinking line holds the
+ * bubble: an end-of-turn line must not replace it yet. The end-of-turn line
+ * itself holds only against lines nobody asked for (`sayLine`).
+ */
 export function holdsAnswer(b: Brain): boolean {
-  return b.talk?.held === true && b.now < b.talk.until;
+  return b.talk?.held === true && b.talk.turn !== true && b.now < b.talk.until;
 }
 
 /** A /buddy question refused because the last one is still waiting. */

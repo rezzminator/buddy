@@ -76,8 +76,8 @@ describe('Logger', () => {
     L.log('info', 'fine');
     L.error('reading x', new Error('nope'));
     await expect(L.flush(io)).resolves.toBeUndefined();
-    expect(d.fallback[0]).toBe('buddy: the log /l/b.log lost 2 records to another writer at the same time');
-    expect(d.fallback[1]).toMatch(/^buddy: \{.*"event":"reading x"/);
+    expect(d.fallback[0]).toBe('the log /l/b.log lost 2 records to another writer at the same time');
+    expect(d.fallback[1]).toMatch(/^\{.*"event":"reading x"/);
     expect(d.fallback).toHaveLength(2);
   });
 
@@ -87,8 +87,8 @@ describe('Logger', () => {
     L.log('info', 'fine');
     L.error('reading x', new Error('nope'));
     await expect(L.flush(d.io)).resolves.toBeUndefined();
-    expect(d.fallback[0]).toBe('buddy: writing the log /l/b.log failed: EACCES: /l/b.log');
-    expect(d.fallback[1]).toMatch(/^buddy: \{.*"event":"reading x".*"message":"nope"/);
+    expect(d.fallback[0]).toBe('writing the log /l/b.log failed: EACCES: /l/b.log');
+    expect(d.fallback[1]).toMatch(/^\{.*"event":"reading x".*"message":"nope"/);
     expect(d.fallback).toHaveLength(2);
   });
 

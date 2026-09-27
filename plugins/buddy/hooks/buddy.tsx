@@ -14,7 +14,8 @@ import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, sta
 import { Logger, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { INHERIT, expandHome, logPath, resolveEffort, resolveModel, resolveOptions, type Effort, type Options } from '../src/options.ts';
 import {
-  QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, stillThinking, turnPrompt, turnSystem, type Turn, type TurnSummary, type TurnWants,
+  NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, requestTimeoutMs,
+  skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion } from '../src/suggest.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
@@ -80,16 +81,16 @@ type State = {
   hiddenGen: number;
   /** Saves of `hidden` in flight: a read of it landing meanwhile may hold the value before the save, and is dropped. */
   hiddenSaves: number;
-  /** Bumped at each turn's prompt suggestion: a suggestion from an earlier turn is stale and never proposed. */
-  suggestGen: number;
+  /** Bumped at every main-loop turn's end, however it ended, and at /clear: a line or suggestion from an earlier turn's call is stale, never shown. */
+  turnGen: number;
   /** The engine's own suggestion for this turn, held back while the buddy's end-of-turn call runs: shown if the buddy gives up. */
   harnessSuggestion: string | null;
   /** The buddy gave up on this turn's suggestion: the engine's own passes. */
   suggestGaveUp: boolean;
   /** The inherit reads (the main chat's model, its effort) that failed once and were logged; a later failure falls back in silence. */
   inheritFailed: Set<'model' | 'effort'>;
-  /** The user's prompt of the running main turn, from prompt.submit: an answered turn files it into `turns`. */
-  pendingPrompt: string;
+  /** The prompts given to the main chat, by the turn each starts (prompt.submit): an answered turn files its own into `turns`. */
+  prompts: PromptLedger;
   /** The main chat's last contextTurns answered turns, oldest first, read by the end-of-turn call and a question's completion. */
   turns: Turn[];
   /** The options' warnings were said: once, in the first greeting's bubble. */
@@ -136,14 +137,14 @@ function lgT($: EngineInterface, event: string, fields: LogFields = {}): void {
 
 /** Every failure: the debug log line as before, and an error record with its context and stack. */
 function log($: EngineInterface, what: string, error: unknown, fields: LogFields = {}): void {
-  $.ui.log(`buddy: ${what} failed: ${message(error)}`);
+  $.ui.log(`${what} failed: ${message(error)}`);
   L.error(what, error, fields);
   L.flush(logIO($)).catch(() => undefined);
 }
 
 /** A problem said in the debug log and the plugin log alike. */
 function warn($: EngineInterface, event: string, text: string, fields: LogFields = {}): void {
-  $.ui.log(`buddy: ${text}`);
+  $.ui.log(text);
   lg($, 'info', event, { ...fields, text });
 }
 
@@ -231,11 +232,8 @@ async function bookFor(st: State, $: EngineInterface): Promise<{ sessionId: stri
   const loaded = bookOf(await $.store.get(storeKey(sessionId)));
   if (loaded.error) memoryFailed(st, $, 'reading the memory', new Error(loaded.error));
   st.memory = { sessionId, book: loaded.book };
-  try {
-    await pruneMemory($, sessionId);
-  } catch (error) {
-    memoryFailed(st, $, "deleting old sessions' memory", error);
-  }
+  // Old sessions' memory is pruned beside this read, never on its path: it touches only other sessions' keys.
+  pruneMemory($, sessionId).catch((error) => memoryFailed(st, $, "deleting old sessions' memory", error));
   return st.memory;
 }
 
@@ -260,14 +258,15 @@ async function recollect(st: State, $: EngineInterface, c: Character): Promise<s
   const n = st.options.memory;
   if (n === 0) return '';
   let text = '';
-  st.memoryChain = st.memoryChain.then(async () => {
+  const read = st.memoryChain.then(async () => {
     try {
       text = render(recall((await bookFor(st, $)).book, c.id, n), c.name);
     } catch (error) {
       memoryFailed(st, $, 'reading the memory', error);
     }
   });
-  await st.memoryChain;
+  st.memoryChain = read;
+  await read;
   return text;
 }
 
@@ -488,31 +487,42 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
     // Only the main loop's end is the turn's end: a subagent's leaves the main turn's tally whole.
     if (!isMainLoop(e.agentId) || !st.b) return;
     wake(st.b, Math.random);
-    // Every answered turn of the main loop, tools or none; never an aborted one.
+    // A turn ended, however: an earlier turn's call still running is stale, its line and suggestion never shown.
+    const gen = ++st.turnGen;
+    // Every main turn uses up the prompt that started it; only an answered one files it into the window.
+    const ended = endPromptTurn(st.prompts);
+    st.prompts = ended.ledger;
     const answered = e.reason === 'answer' && !e.isAborted;
-    if (answered) {
-      st.turns = pushTurn(st.turns, { prompt: st.pendingPrompt, answer: e.answer }, st.options.contextTurns);
-      st.pendingPrompt = '';
-    }
-    const calls = answered && !st.hidden && st.interactive;
-    const { turn, lineDue } = endTurn(st.b, st.options.quips && calls, st.options.quipCooldownSec);
-    const wants: TurnWants = { line: lineDue, next: st.options.suggestions && calls };
+    if (answered) st.turns = pushTurn(st.turns, { prompt: ended.prompt, answer: e.answer }, st.options.contextTurns);
+    const gate: TurnGate = { answered, hidden: st.hidden, interactive: st.interactive, bandSeen: st.bandSeen, quips: st.options.quips, suggestions: st.options.suggestions };
+    const may = turnMay(gate);
+    const { turn, lineDue } = endTurn(st.b, may.line, st.options.quipCooldownSec);
+    const wants: TurnWants = { line: lineDue, next: may.next };
+    // The engine's own suggestion is held back only while this turn's call may still propose one.
+    st.harnessSuggestion = null;
+    st.suggestGaveUp = !wants.next;
     if (wants.line || wants.next) {
-      const gen = wants.next ? ++st.suggestGen : st.suggestGen;
-      if (wants.next) {
-        st.harnessSuggestion = null;
-        st.suggestGaveUp = false;
-      }
       lg($, 'info', 'turn.call', { line: wants.line, next: wants.next, tools: turn.tools.length });
-      turnCall(st, $, turn, gen, wants, Date.now()).catch((error) => log($, 'the end-of-turn call', error));
+      // The character drawn as the turn ended: a line arriving after a switch is never said by another.
+      turnCall(st, $, st.b.character, turn, gen, wants, Date.now()).catch((error) => log($, 'the end-of-turn call', error));
     } else {
-      const why = !answered ? 'not an answered turn' : !st.interactive ? 'headless' : st.hidden ? 'hidden' : !st.options.quips && !st.options.suggestions ? 'quips and suggestions off' : 'cooldown';
-      lg($, 'info', 'turn.skipped', { why });
+      lg($, 'info', 'turn.skipped', { why: skipReason(gate) });
     }
     refresh(st, $);
   } catch (error) {
     log($, 'the end of a turn', error);
   }
+}
+
+/** A /clear or a resume: the chat the buddy read is gone, so its window, its prompts, the turn's tally and any call in flight are dropped. */
+function forgetConversation(st: State, $: EngineInterface, reason: string): void {
+  st.turns = [];
+  st.prompts = NO_PROMPTS;
+  st.turnGen++;
+  st.harnessSuggestion = null;
+  st.suggestGaveUp = true;
+  if (st.b) endTurn(st.b, false, 0);
+  lg($, 'info', 'session.forget', { reason });
 }
 
 /**
@@ -549,31 +559,38 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
 /**
  * One call at a turn's end writes the buddy's line and the next-prompt
  * suggestion, those wanted: a quipModel completion on the main chat's last
- * contextTurns turns.
+ * contextTurns turns, in the voice of `c`, the character drawn as the turn ended.
+ * One deadline covers the memory read, the settings and the completion.
  * A timeout, a refusal, an empty reply or a throw fails the line as a quip
- * fails and gives the suggestion up; a late suggestion is stale by `gen`.
- * Every outcome logs `ms`, from `started` (the turn's end) to the reply.
+ * fails and gives the suggestion up; a reply after a later turn ended (or
+ * /clear) is stale by `gen`, its line and suggestion dropped.
+ * Every outcome logs `ms`, from `started` (the turn's end) to the reply; the
+ * call's usage goes on the line's outcome, else on the suggestion's.
  * Never throws.
  */
-async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: number, wants: TurnWants, started: number): Promise<void> {
-  const b = st.b;
-  if (!b) return;
+async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSummary, gen: number, wants: TurnWants, started: number): Promise<void> {
   // The window as this turn ended, before a later turn can move it.
   const turns = st.turns;
   let reply: { line: string | null; next: string | null } | null = null;
   let reason = '';
   let usage: Record<string, number> = {};
+  let late = false;
   try {
-    const memory = await recollect(st, $, b.character);
-    const prompt = turnPrompt(t, turns, memory);
-    lg($, 'debug', 'turn.prompt', { length: prompt.length });
-    const settings = await callSettings(st, $, 'turn.settings');
-    const r: ModelCompleteResult | 'timeout' = await within(
+    const r = await within(
       $,
-      $.model.complete({ ...settings, system: turnSystem(b.character.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }),
+      (async (): Promise<ModelCompleteResult | 'timeout'> => {
+        // The memory and the settings do not wait on each other.
+        const [memory, settings] = await Promise.all([recollect(st, $, c), callSettings(st, $, 'turn.settings')]);
+        // Past the deadline already: no completion is sent that nobody waits for.
+        if (late) return 'timeout' as const;
+        const prompt = turnPrompt(t, turns, memory);
+        lg($, 'debug', 'turn.prompt', { length: prompt.length });
+        return $.model.complete({ ...settings, system: turnSystem(c.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: requestTimeoutMs(TURN_DEADLINE_MS) });
+      })(),
       TURN_DEADLINE_MS,
     );
-    // What the call cost and how much it read from the prompt cache, logged on the line's outcome.
+    late = r === 'timeout';
+    // What the call cost and how much it read from the prompt cache.
     usage = r !== 'timeout' && 'usage' in r ? usageFields(r.usage) : {};
     if (r === 'timeout') reason = 'timeout';
     else if (!r.isAnswered) reason = r.reason;
@@ -586,10 +603,17 @@ async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: numb
     reason = message(error);
   }
   const ms = Date.now() - started;
-  if (wants.line) sayTurnLine(st, $, t, reply?.line ?? null, reason || 'no line in the reply', { ms, ...usage });
+  const lineFields = { ms, ...usage };
+  const nextFields = wants.line ? { ms } : { ms, ...usage };
+  if (gen !== st.turnGen) {
+    if (wants.line) lg($, 'info', 'quip.outcome', { outcome: 'stale', ...lineFields });
+    if (wants.next) lg($, 'info', 'suggest.outcome', { outcome: 'stale', ...nextFields });
+    return;
+  }
+  if (wants.line) sayTurnLine(st, $, c, t, reply?.line ?? null, reason || 'no line in the reply', lineFields);
   if (wants.next) {
     try {
-      await proposeTurnNext(st, $, gen, reply?.next ?? null, reason, b.character.id, ms);
+      await proposeTurnNext(st, $, gen, reply?.next ?? null, reason, c.id, nextFields);
     } catch (error) {
       log($, 'a prompt suggestion', error);
       await giveUpSuggestion(st, $, gen, ms).catch((e) => log($, 'showing the engine\'s own suggestion', e));
@@ -597,25 +621,29 @@ async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: numb
   }
 }
 
-/** The end-of-turn line in the bubble, or the failure why there is none; a held /buddy answer keeps the bubble. `usage`: the call's ms and usageFields, logged on the outcome. */
-function sayTurnLine(st: State, $: EngineInterface, t: TurnSummary, text: string | null, reason: string, usage: Record<string, number>): void {
+/**
+ * The end-of-turn line of `c` in the bubble, or the failure why there is none;
+ * a held /buddy answer keeps the bubble, a previous turn's line does not.
+ * Never said by another character drawn meanwhile. `fields`: ms and usage, logged on the outcome.
+ */
+function sayTurnLine(st: State, $: EngineInterface, c: Character, t: TurnSummary, text: string | null, reason: string, fields: Record<string, number>): void {
   const b = st.b;
   if (!b) return;
-  const c = b.character;
   try {
     if (text) {
       // Hidden by /buddy off while the model wrote it: never shown, so never remembered.
       // A held /buddy answer keeps the bubble until it ends: the line is never said over it, nor remembered.
       const held = !st.hidden && holdsAnswer(b);
-      const shown = !st.hidden && !held && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id);
+      const shown = !st.hidden && !held && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id, true);
       if (shown) keep(st, $, c.id, { kind: 'quip', text });
-      lg($, 'info', 'quip.outcome', { outcome: shown ? 'answered' : st.hidden ? 'hidden' : held ? 'held' : 'dropped', ...usage });
+      const outcome = shown ? 'answered' : st.hidden ? 'hidden' : held ? 'held' : 'dropped';
+      lg($, 'info', 'quip.outcome', { outcome, ...(outcome === 'dropped' ? { asker: c.id, drawn: b.character.id } : {}), ...fields });
     } else {
-      $.ui.log(`buddy: a quip got no answer: ${reason}`);
-      if (holdsAnswer(b)) lg($, 'info', 'quip.outcome', { outcome: 'held', reason, ...usage });
+      $.ui.log(`a quip got no answer: ${reason}`);
+      if (holdsAnswer(b)) lg($, 'info', 'quip.outcome', { outcome: 'held', reason, ...fields });
       else {
-        lg($, 'info', 'quip.outcome', { outcome: 'failed', reason, ...usage });
-        failAnswer(b, reason, c.id);
+        const shown = failAnswer(b, reason, c.id, true);
+        lg($, 'info', 'quip.outcome', { outcome: shown ? 'failed' : 'dropped', reason, ...fields });
       }
     }
   } catch (error) {
@@ -624,26 +652,26 @@ function sayTurnLine(st: State, $: EngineInterface, t: TurnSummary, text: string
   refresh(st, $);
 }
 
-/** The end-of-turn suggestion of character `characterId` into the prompt box, remembered once shown; none, or a failed call, gives this turn's up. `ms`: the turn's end to the reply, logged on the outcome. */
-async function proposeTurnNext(st: State, $: EngineInterface, gen: number, text: string | null, reason: string, characterId: string, ms: number): Promise<void> {
+/** The end-of-turn suggestion of character `characterId` into the prompt box, remembered once shown; none, or a failed call, gives this turn's up. `fields`: the turn's end to the reply (`ms`), and the usage when no line was wanted, logged on the outcome. */
+async function proposeTurnNext(st: State, $: EngineInterface, gen: number, text: string | null, reason: string, characterId: string, fields: Record<string, number>): Promise<void> {
   if (text === null) {
-    lg($, 'info', 'suggest.outcome', reason ? { outcome: 'failed', reason, ms } : { outcome: 'none', ms });
-    return giveUpSuggestion(st, $, gen, ms);
+    lg($, 'info', 'suggest.outcome', reason ? { outcome: 'failed', reason, ...fields } : { outcome: 'none', ...fields });
+    return giveUpSuggestion(st, $, gen, fields.ms ?? 0);
   }
-  // A later turn asked for its own, or /buddy off came meanwhile: this one is never proposed.
-  if (gen !== st.suggestGen || st.hidden) {
-    lg($, 'info', 'suggest.outcome', { outcome: 'stale', ms });
+  // A later turn ended, /clear, or /buddy off came meanwhile: this one is never proposed.
+  if (gen !== st.turnGen || st.hidden) {
+    lg($, 'info', 'suggest.outcome', { outcome: 'stale', ...fields });
     return;
   }
   const { isShown } = await $.prompt.suggest({ text });
-  lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'shown' : 'not-shown', length: text.length, ms });
+  lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'shown' : 'not-shown', length: text.length, ...fields });
   // Shown: the buddy remembers it suggested this, so it can say what it suggested last.
   if (isShown) keep(st, $, characterId, { kind: 'suggestion', text });
 }
 
 /** The buddy has no suggestion for turn `gen`: the engine's own, held back meanwhile, is shown, and a later one passes. `ms`: the turn's end to the reply, logged on the outcome. */
 async function giveUpSuggestion(st: State, $: EngineInterface, gen: number, ms: number): Promise<void> {
-  if (gen !== st.suggestGen) return;
+  if (gen !== st.turnGen) return;
   st.suggestGaveUp = true;
   const text = st.harnessSuggestion;
   st.harnessSuggestion = null;
@@ -730,7 +758,7 @@ async function backupSoul($: EngineInterface, src: ConfigSources, notes: string[
     const j = await readJson($, c.path, c.label);
     if (j.error) {
       skipped++;
-      $.ui.log(`buddy: skipping a backup: ${j.error}`);
+      $.ui.log(`skipping a backup: ${j.error}`);
       continue;
     }
     const s = companionOf(j.value);
@@ -766,7 +794,7 @@ async function rollOriginal($: EngineInterface, identity: string, soul: Soul, va
 async function findOriginals($: EngineInterface): Promise<Originals> {
   const config = await readConfig($);
   if ('error' in config) {
-    $.ui.log(`buddy: /${MENU_COMMAND}: ${config.error}`);
+    $.ui.log(`/${MENU_COMMAND}: ${config.error}`);
     return { kind: 'error', error: config.error };
   }
   const notes: string[] = [];
@@ -780,7 +808,7 @@ async function findOriginals($: EngineInterface): Promise<Originals> {
   const rolls: { variant: Variant; character?: Character; error?: string }[] = [];
   for (const variant of VARIANTS) {
     const r = await rollOriginal($, config.identity, soul, variant);
-    if (r.error) $.ui.log(`buddy: the ${variant} roll of your original companion will not draw: ${r.error}`);
+    if (r.error) $.ui.log(`the ${variant} roll of your original companion will not draw: ${r.error}`);
     rolls.push({ variant, ...r });
   }
   return from === undefined ? { kind: 'found', soul, notes, rolls } : { kind: 'found', soul, from, notes, rolls };
@@ -858,13 +886,13 @@ async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void
   if (!b || !menu) return;
   const c = item.character;
   if (!c) {
-    $.ui.log(`buddy: /${MENU_COMMAND}: can't pick ${item.label}: ${item.error}`);
+    $.ui.log(`/${MENU_COMMAND}: can't pick ${item.label}: ${item.error}`);
     return;
   }
   let note = '';
   if (item.pick.kind === 'original') {
     if (!menu.soul) {
-      $.ui.log(`buddy: /${MENU_COMMAND}: can't pick ${item.label}: its soul was not found`);
+      $.ui.log(`/${MENU_COMMAND}: can't pick ${item.label}: its soul was not found`);
       return;
     }
     st.original = { id: ORIGINAL_ID, source: 'original', character: c };
@@ -949,9 +977,19 @@ async function saveHidden(st: State, $: EngineInterface, hidden: boolean): Promi
   }
 }
 
-/** `p`, or 'timeout' once `ms` passed on the engine's clock first. */
+/** `p`, or 'timeout' once `ms` passed on the engine's clock first; the deadline's timer stops once either settles. */
 async function within<T>($: EngineInterface, p: Promise<T>, ms: number): Promise<T | 'timeout'> {
-  return Promise.race([p, $.clock.sleep(ms).then(() => 'timeout' as const)]);
+  const stop = new AbortController();
+  // Aborted once the race is decided: that rejection is the timer stopping, never an outcome.
+  const deadline = $.clock.sleep(ms, { signal: stop.signal }).then(
+    () => 'timeout' as const,
+    () => new Promise<never>(() => undefined),
+  );
+  try {
+    return await Promise.race([p, deadline]);
+  } finally {
+    stop.abort();
+  }
 }
 
 /** A model result as log fields: never the whole text. */
@@ -961,35 +999,42 @@ function shape(r: ModelCompleteResult | 'timeout'): LogFields {
 }
 
 /**
- * One /buddy question to its outcome, always visible: an answer, or
+ * One /buddy question of `c` to its outcome, always visible: an answer, or
  * "{name} couldn't answer: {reason}" in the bubble. The quip model answers
- * from persona, memory, the main chat's last contextTurns turns
- * (`recentTurns`) and question, whether or not the main turn is running.
- * `memory`: what the buddy remembered before this question; it goes before the question.
+ * from persona, memory (what `c` remembered before this question), the main
+ * chat's last contextTurns turns (`recentTurns`) and question, whether or not
+ * the main turn is running. One deadline, from the question's start, covers
+ * the memory read, the settings and the completion.
  */
-async function ask(st: State, $: EngineInterface, question: string, memory: string): Promise<void> {
+async function ask(st: State, $: EngineInterface, question: string, c: Character): Promise<void> {
   const b = st.b;
   if (!b) {
     st.asking = null;
     return;
   }
-  const c = b.character;
-  const started = Date.now();
+  const started = st.asking?.since ?? Date.now();
   let said = '';
   let reason = '';
   let usage: Record<string, number> = {};
   // The answer belongs to the one asked: a character switched in meanwhile never says it.
   let shown = true;
+  let late = false;
   try {
-    // A completion does not see the chat: the recent turns tell it where the chat stands.
-    const prompt = questionPrompt(question, memory, recentTurns(st.turns));
-    lg($, 'debug', 'ask.prompt', { length: prompt.length });
-    const settings = await callSettings(st, $, 'ask.settings');
     const r: ModelCompleteResult | 'timeout' = await within(
       $,
-      $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: COMPLETE_DEADLINE_MS }),
-      COMPLETE_DEADLINE_MS,
+      (async (): Promise<ModelCompleteResult | 'timeout'> => {
+        // The memory and the settings do not wait on each other.
+        const [memory, settings] = await Promise.all([recollect(st, $, c), callSettings(st, $, 'ask.settings')]);
+        // Past the deadline already: no completion is sent that nobody waits for.
+        if (late) return 'timeout' as const;
+        // A completion does not see the chat: the recent turns tell it where the chat stands.
+        const prompt = questionPrompt(question, memory, recentTurns(st.turns));
+        lg($, 'debug', 'ask.prompt', { length: prompt.length });
+        return $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: requestTimeoutMs(COMPLETE_DEADLINE_MS) });
+      })(),
+      Math.max(0, COMPLETE_DEADLINE_MS - (Date.now() - started)),
     );
+    late = r === 'timeout';
     lg($, 'debug', 'ask.result', shape(r));
     // What the call cost and how much it read from the prompt cache.
     usage = r !== 'timeout' && 'usage' in r ? usageFields(r.usage) : {};
@@ -1000,7 +1045,7 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
       shown = !st.hidden && answer(b, text, null, c.id);
     } else {
       reason = r === 'timeout' ? deadlineReason(COMPLETE_DEADLINE_MS) : r.isAnswered ? 'empty reply' : noAnswerReason(r);
-      $.ui.log(`buddy: a /buddy question got no answer: ${reason}`);
+      $.ui.log(`a /buddy question got no answer: ${reason}`);
       shown = failAnswer(b, reason, c.id);
     }
   } catch (error) {
@@ -1101,11 +1146,10 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         began = true;
         lg($, 'info', 'ask.start', { length: action.text.length });
         lg($, 'debug', 'ask.question', { question: action.text });
-        // What it remembers from before this question; the question joins it with its answer, in ask.
-        const memory = await recollect(st, $, c);
+        // The thinking line at once; ask reads the memory, the question joining it with its answer.
         beginQuestion(b, Math.random);
         refresh(st, $);
-        ask(st, $, action.text, memory).catch((error) => {
+        ask(st, $, action.text, c).catch((error) => {
           st.asking = null;
           log($, 'a /buddy question', error);
           endQuestion(b);
@@ -1156,11 +1200,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
     sharedAt: 0,
     hiddenGen: 0,
     hiddenSaves: 0,
-    suggestGen: 0,
+    turnGen: 0,
     harnessSuggestion: null,
     suggestGaveUp: false,
     inheritFailed: new Set(),
-    pendingPrompt: '',
+    prompts: NO_PROMPTS,
     turns: [],
     warned: false,
   };
@@ -1197,9 +1241,20 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   on('prompt.submit', async ($, e, next) => {
     try {
-      st.pendingPrompt = e.text;
+      // Typed over a running turn (turnId set), it waits for that turn to end: each turn keeps its own prompt.
+      st.prompts = submitPrompt(st.prompts, e.text, e.turnId);
     } catch (error) {
       log($, 'remembering the prompt', error);
+    }
+    return next(e);
+  });
+
+  // A /clear or a resume leaves the process on a fresh conversation, with no session.start: the old chat is forgotten.
+  on('session.end', async ($, e, next) => {
+    try {
+      if (endsConversation(e.reason)) forgetConversation(st, $, e.reason);
+    } catch (error) {
+      log($, 'forgetting the cleared conversation', error);
     }
     return next(e);
   });

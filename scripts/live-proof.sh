@@ -138,12 +138,12 @@ sleep 8
 s1=$(pane | grep -F -f "$RUN/default.rows"); sleep 2; s2=$(pane | grep -F -f "$RUN/default.rows"); sleep 2; s3=$(pane | grep -F -f "$RUN/default.rows")
 if [ -n "$s1" ] && { [ "$s1" != "$s2" ] || [ "$s2" != "$s3" ]; }; then add "(b) it walks" PASS "the band changed across samples"; else add "(b) it walks" FAIL "no change in 4 s"; fi
 
-out=$(command_out "/buddy")
+out=$(command_out "/buddy") || exit 2
 if grep -q -E ': [0-9]+ pets' <<<"$out"; then add "(c) /buddy pets" PASS "$out"; else add "(c) /buddy pets" FAIL "$out"; fi
 m=$(menu_mark c)
 if [ "$m" = "$DEFAULT" ]; then add "(c) /buddy-personality marks the current one" PASS "* $DEF_NAME ($DEFAULT)"; else add "(c) /buddy-personality marks the current one" FAIL "marked: ${m:-none}; pane in $RUN/menu-c.txt"; fi
 
-out=$(command_out "/buddy what is your favourite tool")
+out=$(command_out "/buddy what is your favourite tool") || exit 2
 got=$(answered); v=$?
 if [ $v -eq 0 ] && grep -q 'Asked' <<<"$out"; then add "(d) question before a reply" PASS "$got"; else add "(d) question before a reply" FAIL "$out / $got"; fi
 
@@ -159,7 +159,7 @@ done
 if [ -n "$seen" ]; then add "(e) a test pass shows a testPass line" PASS "$seen"; else add "(e) a test pass shows a testPass line" FAIL "no testPass line seen"; fi
 sleep 7
 
-out=$(command_out "/buddy what did we just run")
+out=$(command_out "/buddy what did we just run") || exit 2
 got=$(answered); v=$?
 [ $v -eq 0 ] && add "(f) question after a reply" PASS "$got" || add "(f) question after a reply" FAIL "$out / $got"
 
@@ -170,9 +170,9 @@ if [ "$m" = "$OTHER" ]; then add "(g) reopened, the menu marks $OTHER" PASS "* $
 menu_pick "$DEFAULT"
 if shows_any "$RUN/default.rows"; then add "(g) picking the default returns" PASS "$DEFAULT sprite row in the pane"; else add "(g) picking the default returns" FAIL "no $DEFAULT row"; fi
 
-out=$(command_out "/buddy off"); sleep 3
+out=$(command_out "/buddy off") || exit 2; sleep 3
 if ! shows_any "$RUN/default.rows"; then add "(h) /buddy off hides" PASS "$out"; else add "(h) /buddy off hides" FAIL "still drawn"; fi
-out=$(command_out "/buddy on"); sleep 3
+out=$(command_out "/buddy on") || exit 2; sleep 3
 if shows_any "$RUN/default.rows"; then add "(h) /buddy on shows" PASS "$out"; else add "(h) /buddy on shows" FAIL "not drawn"; fi
 
 # The menu lists characters/ sorted by id: Up from the default's row reaches cat.
@@ -181,7 +181,7 @@ grep -q -x "$PICK" <<<"$IDS" || { echo "ERROR no $PICK.json in $CHARS"; exit 2; 
 ups=$(( $(grep -n -x "$DEFAULT" <<<"$IDS" | cut -d: -f1) - $(grep -n -x "$PICK" <<<"$IDS" | cut -d: -f1) ))
 NEXT=$(grep -A1 -x "$DEFAULT" <<<"$IDS" | tail -1)
 rows_of "$PICK" | grep -v -x -F -f "$RUN/default.rows" > "$RUN/pick.rows"
-out=$(command_out "/buddy-personality"); sleep 3
+out=$(command_out "/buddy-personality") || exit 2; sleep 3
 pane > "$RUN/i-open.txt"
 if in_pane "* $DEF_NAME ($DEFAULT)" && in_pane "Shipped" && in_pane "Your folder" && in_pane "$(about_of "$DEFAULT")" && ! in_pane "$(persona_of "$DEFAULT")"; then
   add "(i) /buddy-personality opens the menu" PASS "$out"
@@ -207,11 +207,11 @@ if [ "$m" = "$PICK" ]; then add "(i) reopened, the menu marks $PICK" PASS "* $(n
 menu_pick "$DEFAULT"
 if shows_any "$RUN/default.rows"; then add "(i) picking the default returns" PASS "$DEFAULT sprite row in the pane"; else add "(i) picking the default returns" FAIL "no $DEFAULT row"; fi
 
-out=$(command_out "/buddy remember the word pineapple")
+out=$(command_out "/buddy remember the word pineapple") || exit 2
 got=$(answered); v=$?
 [ $v -eq 0 ] && grep -q 'Asked' <<<"$out" && add "(j) /buddy remember the word pineapple" PASS "$got" || add "(j) /buddy remember the word pineapple" FAIL "$out / $got"
 echo "$got" > "$RUN/j-first.txt"
-out=$(command_out "/buddy what word did I ask you to remember?")
+out=$(command_out "/buddy what word did I ask you to remember?") || exit 2
 got=$(answered); v=$?
 echo "$got" > "$RUN/j-second.txt"
 if [ $v -eq 0 ] && grep -q -i 'pineapple' <<<"$got"; then add "(j) the next answer remembers pineapple" PASS "$got"; else add "(j) the next answer remembers pineapple" FAIL "$out / $got"; fi
@@ -248,7 +248,7 @@ BLOG=$RUN/buddy.log
 if [ -s "$BLOG" ] && jq -e -s 'any(.[]; .event == "ask.start") and any(.[]; .event == "ask.outcome" and .outcome == "answered")' "$BLOG" >/dev/null 2>&1; then
   add "(l) the log holds the ask's start and outcome" PASS "$(jq -r -s '[.[] | select(.event == "ask.outcome")] | map("\(.outcome) \(.ms)ms") | join(", ")' "$BLOG")"
 else add "(l) the log holds the ask's start and outcome" FAIL "$(tail -c 200 "$BLOG" 2>&1)"; fi
-out=$(command_out "/buddy log")
+out=$(command_out "/buddy log") || exit 2
 if grep -q -F "Log: $BLOG" <<<"$out" && grep -q '"event":' <<<"$out"; then add "(l) /buddy log prints its path and lines" PASS "$(head -c 90 <<<"$out")"; else add "(l) /buddy log prints its path and lines" FAIL "$(head -c 200 <<<"$out")"; fi
 
 cp "$(transcript)" "$RUN/main.jsonl"

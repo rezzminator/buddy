@@ -177,3 +177,57 @@ describe('the end-of-turn call', () => {
     expect(suggestionText('y'.repeat(SUGGESTION_MAX_CHARS + 1))).toBeNull();
   });
 });
+import {
+  NO_PROMPTS, REQUEST_MARGIN_MS, endPromptTurn, endsConversation, requestTimeoutMs, skipReason, submitPrompt, turnMay, type TurnGate,
+} from '../plugins/buddy/src/prompts.ts';
+
+describe('the prompt ledger', () => {
+  test('an idle prompt is the next turn\'s; one typed over a running turn waits for that turn to end', () => {
+    let l = submitPrompt(NO_PROMPTS, 'P1');
+    l = submitPrompt(l, 'P2', 't1');
+    const one = endPromptTurn(l);
+    expect(one.prompt).toBe('P1');
+    const two = endPromptTurn(one.ledger);
+    expect(two.prompt).toBe('P2');
+    expect(endPromptTurn(two.ledger).prompt).toBe('');
+  });
+  test('an aborted turn uses up its prompt too, and an idle prompt clears what waited', () => {
+    let l = submitPrompt(submitPrompt(NO_PROMPTS, 'P1'), 'P2', 't1');
+    l = endPromptTurn(l).ledger;
+    expect(l).toEqual({ current: 'P2', queued: [] });
+    l = submitPrompt(submitPrompt(l, 'P3', 't2'), 'P4');
+    expect(l).toEqual({ current: 'P4', queued: [] });
+  });
+  test('/clear and a resume start a fresh conversation; an exit does not matter', () => {
+    expect(endsConversation('clear')).toBe(true);
+    expect(endsConversation('resume')).toBe(true);
+    expect(endsConversation('prompt_input_exit')).toBe(false);
+    expect(endsConversation('other')).toBe(false);
+  });
+});
+
+describe('the end-of-turn gate', () => {
+  const g: TurnGate = { answered: true, hidden: false, interactive: true, bandSeen: true, quips: true, suggestions: true };
+  test('a line only once the band has drawn; the suggestion regardless', () => {
+    expect(turnMay(g)).toEqual({ line: true, next: true });
+    expect(turnMay({ ...g, bandSeen: false })).toEqual({ line: false, next: true });
+    expect(turnMay({ ...g, answered: false })).toEqual({ line: false, next: false });
+    expect(turnMay({ ...g, interactive: false })).toEqual({ line: false, next: false });
+    expect(turnMay({ ...g, hidden: true })).toEqual({ line: false, next: false });
+  });
+  test('each skip names why', () => {
+    expect(skipReason({ ...g, answered: false })).toBe('not an answered turn');
+    expect(skipReason({ ...g, interactive: false })).toBe('headless');
+    expect(skipReason({ ...g, hidden: true })).toBe('hidden');
+    expect(skipReason({ ...g, quips: false, suggestions: false })).toBe('quips and suggestions off');
+    expect(skipReason({ ...g, bandSeen: false, suggestions: false })).toBe('band never drawn');
+    expect(skipReason(g)).toBe('cooldown');
+  });
+});
+
+describe('the request timeout', () => {
+  test('past the buddy\'s own deadline, so the deadline always decides first', () => {
+    expect(requestTimeoutMs(TURN_DEADLINE_MS)).toBe(TURN_DEADLINE_MS + REQUEST_MARGIN_MS);
+    expect(REQUEST_MARGIN_MS).toBeGreaterThan(0);
+  });
+});

@@ -56,7 +56,7 @@ server of its own.
   call, gets an "oops".
 - 💬 **Talks back, and remembers.** `/buddy why is this slow?` gets a
   one-line answer, in character, that says what you and Claude both
-  missed. It is one fast call that sees the chat's last 3 turns (`contextTurns`).
+  missed. It is one fast call that sees the chat's last `contextTurns` turns (default 3).
   It keeps your last few exchanges (the `memory` option) for its
   next answer.
 - 🐣 **Your own buddy, back.** `/buddy-personality` opens a menu with a
@@ -261,8 +261,11 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   prompt box's dim suggestion, Tab to take it. One call serves the line and
   the suggestion. Claude Code's own suggestion is
   held back meanwhile and shown only when the buddy has none (it answers
-  `NONE`, nothing, or not within 30 seconds); the next turn or `/buddy off`
-  drops a late one. `suggestions: false` leaves Claude Code's own alone;
+  `NONE`, nothing, or not within 30 seconds); a later turn's end (answered,
+  interrupted or failed), `/clear` or `/buddy off` drops a late one. Where
+  the band never draws (VS Code, mobile) the call writes the suggestion
+  alone, and no line is paid for. Each turn's line replaces the last
+  turn's at once; only a `/buddy` answer holds the bubble against it. `suggestions: false` leaves Claude Code's own alone;
   with it on, turning off Claude Code's own prompt suggestions saves paying
   for both.
 - **Errors are never silent.** A chosen character that is missing or invalid
@@ -314,8 +317,9 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 - `/buddy log` shows what each question cost: its `ask.outcome` record
   carries its tokens, `cacheRead` (input read from the prompt cache) and
   `cachePct` (that share of all its input) and `ms`; the end-of-turn call's
-  `quip.outcome` carries the same, and its `suggest.outcome` its `ms`, both
-  counted from the turn's end to the reply.
+  `quip.outcome` carries the same (its `suggest.outcome`, when the call
+  wrote no line), and its `suggest.outcome` its `ms`, both counted from the
+  turn's end to the reply.
 
 ## 🎨 Your own character
 
@@ -362,8 +366,8 @@ except a question are local. A question
 sends `quipModel`, at the `effort` level, the question, the character's
 persona, its memory and the ends of the chat's last `contextTurns` turns, never the rest
 of the conversation. Quips and prompt suggestions are on by default: one short
-`quipModel` call per answered turn, sent the ends of the chat's last 3
-turns and the turn's tally; `quips: false` and `suggestions: false`
+`quipModel` call per answered turn, sent its memory, the ends of the chat's
+last `contextTurns` turns (default 3) and the turn's tally; `quips: false` and `suggestions: false`
 turn them off, and with suggestions on, turning off Claude Code's own prompt
 suggestions saves paying for both.
 </details>

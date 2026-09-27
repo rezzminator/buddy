@@ -66,7 +66,8 @@ try {
 } catch (e) { recs = [{ level: 'error', event: 'log-unreadable', message: String(e) }]; }
 const last = (e) => recs.filter((r) => r.event === e).at(-1) ?? null;
 const q = last('quip.outcome'), s = last('suggest.outcome'), a = last('ask.outcome'), p = last('turn.prompt') ?? last('ask.prompt');
-const call = q ?? a;
+// A call that writes no line (quips off) logs its usage on suggest.outcome.
+const call = q ?? a ?? (s && typeof s.inTok === 'number' ? s : undefined);
 const end = endTs ? Date.parse(endTs) : NaN;
 const n = (v) => (typeof v === 'number' ? v : null);
 console.log(JSON.stringify({

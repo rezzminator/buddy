@@ -96,7 +96,7 @@ export class Logger {
 
   /** Writes every queued record through `io`, after every flush before; never throws or rejects. */
   flush(io: LogIO): Promise<void> {
-    for (const l of this.orphans.splice(0)) this.fallback(io, `buddy: ${l}`);
+    for (const l of this.orphans.splice(0)) this.fallback(io, l);
     if (this.pending.length === 0) return this.chain;
     // Never left rejected: a rejected chain would skip every later drain, the log dead in silence.
     this.chain = this.chain.then(() => this.drain(io)).catch(() => undefined);
@@ -120,11 +120,11 @@ export class Logger {
       for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
         if (await this.landed(io, file, await this.put(io, file, add))) return;
       }
-      this.fallback(io, `buddy: the log ${file} lost ${lines.length} records to another writer at the same time`);
+      this.fallback(io, `the log ${file} lost ${lines.length} records to another writer at the same time`);
     } catch (error) {
-      this.fallback(io, `buddy: writing the log ${file} failed: ${errorFields(error).message}`);
+      this.fallback(io, `writing the log ${file} failed: ${errorFields(error).message}`);
     }
-    for (const l of lines) if (l.includes('"level":"error"')) this.fallback(io, `buddy: ${l}`);
+    for (const l of lines) if (l.includes('"level":"error"')) this.fallback(io, l);
   }
 
   /** `line` to the fallback; a fallback that throws is swallowed, there being nowhere left to say it. */

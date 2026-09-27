@@ -7,7 +7,7 @@
 #   RUN     the run folder; LOG=$RUN/drive.log
 #   ID      the Claude session id; PROJECTS the config dir's projects/
 #   CHARS   the characters folder (rows_of, pool_of)
-# answered() reads $RUN/thinking.pool; command_out exits 2 when no row comes.
+# answered() reads $RUN/thinking.pool; command_out exits 2 when no row comes (inside $(…) its caller adds `|| exit 2`).
 
 # The claude binary (CLAUDE_BIN, else the native one behind a `claude` shell
 # wrapper), tmux and jq; exits 2 when one is missing.
