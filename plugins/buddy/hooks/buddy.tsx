@@ -415,8 +415,15 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     log($, 'reading the session id for the log', error);
   }
-  // The install directory's last segment is the installed version: a stale load after an update shows here.
-  lg($, 'info', 'session.start', { build: $.plugin.root.split('/').pop() ?? '', level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
+  // The version as loaded, from the plugin's own manifest: a stale load after an update shows here.
+  let build = 'unread';
+  try {
+    const manifest = JSON.parse(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`)) as { version?: unknown };
+    build = typeof manifest.version === 'string' ? manifest.version : 'no version';
+  } catch (error) {
+    lg($, 'debug', 'session.build-unread', { error: message(error) });
+  }
+  lg($, 'info', 'session.start', { build, model: st.options.quipModel, effort: st.options.effort, level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
