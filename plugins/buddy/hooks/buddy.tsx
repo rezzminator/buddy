@@ -7,7 +7,7 @@ import {
 import type { Character } from '../src/character.ts';
 import { USAGE, parseCommand } from '../src/command.ts';
 import {
-  MENU_COMMAND, MENU_PANE, MENU_TITLE, PREVIEW_MS, allItems, buildMenu, currentKeyOf, findItem, menuRows, previewOf, rowLabel,
+  MENU_COMMAND, MENU_PANE, MENU_TITLE, PREVIEW_MS, allItems, buildMenu, listWidth, currentKeyOf, findItem, menuRows, previewOf, rowLabel,
   type Item, type Menu, type Originals,
 } from '../src/menu.ts';
 import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, staleKeys, storeKey, type Book, type Exchange, type Stored } from '../src/memory.ts';
@@ -862,7 +862,7 @@ function drawMenu(Box: Component, Text: Component, Button: Component, m: MenuSta
     );
   return (
     <Box flexDirection="row" gap={3}>
-      <Box flexDirection="column" flexShrink={0}>{groups}</Box>
+      <Box flexDirection="column" flexShrink={0} width={listWidth(m.model)}>{groups}</Box>
       <Box flexDirection="column" flexGrow={1}>{preview}</Box>
     </Box>
   );

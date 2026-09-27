@@ -107,9 +107,28 @@ export function rowLabel(item: Item, current: string): string {
   return `${item.key === current ? '* ' : '  '}${item.label}`;
 }
 
-/** The rows the pane wants: every title, line and entry, a gap between groups. */
+/** The narrowest the entry list gets, so a notice under a short list still reads. */
+export const LIST_MIN_WIDTH = 24;
+
+/**
+ * The entry list's width: its widest title or entry row (with the current marker),
+ * never a notice line, which wraps inside it; a long notice widening the list
+ * squeezed the preview beside it to a few columns.
+ */
+export function listWidth(m: Menu): number {
+  let w = LIST_MIN_WIDTH;
+  for (const s of m.sections) {
+    w = Math.max(w, s.title.length);
+    for (const item of s.items) w = Math.max(w, `* ${item.label}`.length);
+  }
+  return w;
+}
+
+/** The rows the pane wants: every title, line (as wrapped in the list) and entry, a gap between groups. */
 export function menuRows(m: Menu): number {
-  const left = m.sections.reduce((n, s) => n + 1 + s.lines.length + s.items.length, 0) + m.sections.length - 1;
+  const w = listWidth(m);
+  const lineRows = (line: string) => Math.max(1, Math.ceil(line.length / w));
+  const left = m.sections.reduce((n, s) => n + 1 + s.lines.reduce((k, l) => k + lineRows(l), 0) + s.items.length, 0) + m.sections.length - 1;
   return Math.min(MENU_MAX_ROWS, Math.max(left, PREVIEW_ROWS));
 }
 

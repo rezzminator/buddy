@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import {
-  allItems, buildMenu, currentKeyOf, findItem, menuRows, moveKey, previewOf, rowLabel, type MenuInput, type Originals,
+  LIST_MIN_WIDTH, allItems, buildMenu, currentKeyOf, findItem, listWidth, menuRows, moveKey, previewOf, rowLabel, type MenuInput, type Originals,
 } from '../plugins/buddy/src/menu.ts';
 import { loadEntries, mergeRoster } from '../plugins/buddy/src/roster.ts';
 
@@ -81,5 +81,20 @@ describe('previewOf', () => {
     expect(previewOf(findItem(m, 'use:bad'), 0, 0)).toMatchObject({ kind: 'error', label: 'bad (invalid)' });
     expect(previewOf(findItem(m, 'original:npm'), 0, 0)).toEqual({ kind: 'error', label: 'Mochi — npm install', error: 'species/hats.json has no crown' });
     expect(previewOf(undefined, 0, 0)).toMatchObject({ kind: 'error' });
+  });
+});
+
+describe('listWidth', () => {
+  const menu = (lines: string[], labels: string[]) => ({ sections: [{ title: 'Shipped', lines: [], items: labels.map((l) => ({ key: `use:${l}`, label: l })) }, { title: 'Yours', lines, items: [] }] }) as never;
+  test('the widest entry or title sets it, with room for the marker; a long notice never widens it', () => {
+    const notice = 'No companion in $CLAUDE_CONFIG_DIR/.claude.json or its backups.';
+    expect(listWidth(menu([notice], ['Yellow Duck (yellow-duck)']))).toBe('* Yellow Duck (yellow-duck)'.length);
+    expect(listWidth(menu([], ['Cat (cat)']))).toBe(LIST_MIN_WIDTH);
+  });
+  test('menuRows counts the rows a notice wraps to inside the list', () => {
+    const notice = 'x'.repeat(LIST_MIN_WIDTH * 3);
+    const one = menuRows(menu([], Array.from({ length: 20 }, (_, i) => `c${i}`)));
+    const wrapped = menuRows(menu([notice], Array.from({ length: 20 }, (_, i) => `c${i}`)));
+    expect(wrapped - one).toBe(3);
   });
 });
