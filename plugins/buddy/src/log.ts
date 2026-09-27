@@ -168,6 +168,16 @@ export class Logger {
   }
 }
 
+/** Two calls' raw usage added key by key (numbers only), so a retried call logs what both cost. */
+export function sumUsage(a: unknown, b: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const u of [a, b]) {
+    if (typeof u !== 'object' || u === null) continue;
+    for (const [k, v] of Object.entries(u)) if (typeof v === 'number') out[k] = (out[k] ?? 0) + v;
+  }
+  return out;
+}
+
 /** A model call's usage as short log fields, with the share of its input read from the prompt cache; {} when there is none. */
 export function usageFields(usage: unknown): Record<string, number> {
   if (typeof usage !== 'object' || usage === null) return {};

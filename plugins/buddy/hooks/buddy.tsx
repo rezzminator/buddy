@@ -11,11 +11,11 @@ import {
   type Item, type Menu, type Originals,
 } from '../src/menu.ts';
 import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, MEMORY_WRITE_DEADLINE_MS, bookOf, recall, record, render, staleKeys, storeKey, type Book, type Exchange, type Stored } from '../src/memory.ts';
-import { Logger, notice, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
+import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, requestTimeoutMs,
+  NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, suggestOutcome } from '../src/suggest.ts';
@@ -1103,8 +1103,15 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
         const prompt = questionPrompt(question, memory, recentTurns(st.turns));
         lg($, 'debug', 'ask.prompt', { length: prompt.length });
         // Abandoned the margin past the deadline, however late it is sent.
-        const timeoutMs = requestTimeoutMs(ms, (await $.clock.now()) - t0);
-        return $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs });
+        const send = async (): Promise<ModelCompleteResult> =>
+          $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: requestTimeoutMs(ms, (await $.clock.now()) - t0) });
+        const first = await send();
+        const leftMs = ms - ((await $.clock.now()) - t0);
+        if (late || !retriesEmpty(first, leftMs)) return first;
+        // The model returned no words and the question is still open: asked once more, its outcome counting both calls.
+        lg($, 'debug', 'ask.retry', { reason: 'empty reply', leftMs });
+        const again = await send();
+        return { ...again, usage: sumUsage(first.usage, again.usage) } as ModelCompleteResult;
       })(),
       ms,
     );

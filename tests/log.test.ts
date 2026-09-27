@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, notice, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
+import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, notice, sumUsage, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
 
 function disk(refuse = false) {
   const files: Record<string, string> = {};
@@ -176,5 +176,12 @@ describe('usageFields', () => {
 describe('notice', () => {
   test('a transcript notice names the plugin: Claude Code states its name only for the debug log', () => {
     expect(notice('reading the memory failed: EIO')).toBe('buddy: reading the memory failed: EIO');
+  });
+});
+
+describe('sumUsage', () => {
+  test('adds two calls\' usage, key by key, so a retried question logs what both cost', () => {
+    expect(usageFields(sumUsage({ input_tokens: 600, output_tokens: 0 }, { input_tokens: 610, output_tokens: 30, cache_read_input_tokens: 5 }))).toEqual({ inTok: 1210, cacheRead: 5, cacheWrite: 0, outTok: 30, cachePct: 0 });
+    expect(sumUsage(undefined, { input_tokens: 1 })).toEqual({ input_tokens: 1 });
   });
 });

@@ -20,6 +20,13 @@ export const REQUEST_MARGIN_MS = 5_000;
 export function requestTimeoutMs(deadlineMs: number, elapsedMs: number): number {
   return Math.max(0, deadlineMs - elapsedMs) + REQUEST_MARGIN_MS;
 }
+/** The least of a question's deadline a retry of an empty reply needs left. */
+export const RETRY_MIN_MS = 10_000;
+/** A question's completion that came back with no words is asked once more while RETRY_MIN_MS of its deadline is left: the model returned nothing, the question is still open. */
+export function retriesEmpty(r: { isAnswered: boolean; reason?: string; text?: string }, leftMs: number): boolean {
+  if (leftMs < RETRY_MIN_MS) return false;
+  return r.isAnswered ? oneLine(r.text ?? '') === '' : r.reason === 'empty-reply';
+}
 /** How many of the main chat's latest turns a completion reads by default: the contextTurns option's default. */
 export const TURN_WINDOW = 3;
 /** The most of the main chat's latest turns a completion may read: the contextTurns option's ceiling. */

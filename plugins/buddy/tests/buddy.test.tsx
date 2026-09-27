@@ -439,14 +439,28 @@ describe('/buddy', () => {
     await ui.unmount();
   });
 
-  test('a completion with an empty reply fails as empty-reply', async ($, on) => {
+  test('a completion with an empty reply is asked once more, then fails as empty-reply', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: false, reason: 'empty-reply' } });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('you there?'));
     await w.clock.settle();
-    expect(w.completes).toHaveLength(1);
+    expect(w.completes).toHaveLength(2);
     expect(await shows(ui, /^Fixy couldn't answer: empty-reply$/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('an empty reply followed by words: the retry answers, and the outcome counts both calls', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: false, reason: 'empty-reply' }, { isAnswered: true, text: 'Tangerine, noted.' }] });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('remember the word tangerine'));
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(2);
+    expect(w.completes[1]?.prompt).toBe(w.completes[0]?.prompt);
+    expect(await shows(ui, /Tangerine, noted\./)).toBe(true);
+    const one = records(w).find((r) => r.event === 'ask.outcome');
+    expect(one).toMatchObject({ outcome: 'answered', inTok: 2, outTok: 2 });
     await ui.unmount();
   });
 

@@ -180,7 +180,7 @@ describe('the end-of-turn call', () => {
 import { createBrain, endTurn } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter } from '../plugins/buddy/src/character.ts';
 import {
-  NO_PROMPTS, endPromptTurn, endsConversation, isUserOrigin, requestTimeoutMs, skipReason, startPromptTurn, submitPrompt, turnMay, type TurnGate,
+  NO_PROMPTS, RETRY_MIN_MS, endPromptTurn, endsConversation, isUserOrigin, requestTimeoutMs, retriesEmpty, skipReason, startPromptTurn, submitPrompt, turnMay, type TurnGate,
 } from '../plugins/buddy/src/prompts.ts';
 import { raw } from './fixtures.ts';
 
@@ -278,5 +278,18 @@ describe('a turn not started by the user', () => {
     const w = recentTurns([{ prompt: 'hello from a peer', answer: 'Hi, peer.', from: 'peer' }]);
     expect(w).not.toContain('The user asked Claude');
     expect(w).toContain('Claude was sent, not by the user (peer):\nhello from a peer\n\nClaude answered:\nHi, peer.');
+  });
+});
+
+describe('an empty reply to a question', () => {
+  test('is asked once more while enough of the deadline is left', () => {
+    expect(retriesEmpty({ isAnswered: false, reason: 'empty-reply' }, 89_000)).toBe(true);
+    expect(retriesEmpty({ isAnswered: true, text: '  \n ' }, 89_000)).toBe(true);
+  });
+  test('never when too little is left, and never for a reply with words or another failure', () => {
+    expect(retriesEmpty({ isAnswered: false, reason: 'empty-reply' }, RETRY_MIN_MS - 1)).toBe(false);
+    expect(retriesEmpty({ isAnswered: true, text: 'Quack.' }, 89_000)).toBe(false);
+    expect(retriesEmpty({ isAnswered: false, reason: 'aborted' }, 89_000)).toBe(false);
+    expect(retriesEmpty({ isAnswered: false, reason: 'api-error' }, 89_000)).toBe(false);
   });
 });
