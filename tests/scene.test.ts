@@ -80,12 +80,12 @@ describe('buildScene', () => {
   test('an ambiguous-wide terminal: the sprite measured in cells', () => {
     const eyes: Character = { ...c, poses: { idle: [['(×)', '/|\\']] } };
     expect(buildScene({ ...base, character: eyes })!.rows).toEqual(['(×)', '/|\\']);
-    const s = buildScene({ ...base, character: eyes, ambiguousWide: true })!;
+    const s = buildScene({ ...base, character: eyes, ambiguousCharacterWidth: 'wide' })!;
     expect(s.rows).toEqual(['(×)', '/|\\ ']);
     expect(s.card!.left).toBe(5);
-    expect(buildScene({ ...base, character: eyes, cols: 50, bubble: 'hi', ambiguousWide: true })!.bubble!.width).toBe(42);
+    expect(buildScene({ ...base, character: eyes, cols: 50, bubble: 'hi', ambiguousCharacterWidth: 'wide' })!.bubble!.width).toBe(42);
     expect(buildScene({ ...base, character: eyes, cols: 5 })).not.toBeNull();
-    expect(buildScene({ ...base, character: eyes, cols: 5, ambiguousWide: true })).toBeNull();
+    expect(buildScene({ ...base, character: eyes, cols: 5, ambiguousCharacterWidth: 'wide' })).toBeNull();
   });
   test('confetti: 3 rows above him, skipped when narrow or short', () => {
     const s = buildScene({ ...base, confetti: { seed: 3, tick: 4 } })!;

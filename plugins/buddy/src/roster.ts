@@ -1,7 +1,7 @@
 import { validateCharacter, type Character } from './character.ts';
 import { ORIGINAL_ID } from './original.ts';
 
-// Every character the buddy knows: the built-ins, then the user's folder, an
+// Every character the buddy knows: the built-ins, then the user's customCharactersDir, an
 // id in both taken from the user's. An invalid file stays in the roster with
 // its first error, so /buddy-personality shows it rather than hiding it.
 

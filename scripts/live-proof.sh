@@ -5,8 +5,8 @@
 #   (a) the default character, the duck, is drawn above the prompt
 #   (b) it walks: the band changes between samples while nothing is said
 #   (c) /buddy pets it and counts; /buddy-personality marks it with *
-#   (d) a /buddy question before the first reply is answered: the quip
-#       model needs no turns to read
+#   (d) a /buddy question before the first reply is answered: `model`
+#       needs no turns to read
 #   (e) a Bash `npm test` run printing a test pass shows a testPass line
 #   (f) a /buddy question after a reply is answered
 #   (g) Enter on another character in /buddy-personality draws it, and the
@@ -17,9 +17,9 @@
 #       Enter on cat draws the cat and the reopened menu marks it; picking
 #       the duck returns. HOME stays real (a fake one logs the session out), so
 #       no row reads or prints the "Yours" group: hook tests prove that path.
-#   (j) memory: /buddy remember the word pineapple, then /buddy what word did I
+#   (j) rememberedExchanges: /buddy remember the word pineapple, then /buddy what word did I
 #       ask you to remember? is answered with pineapple; the plugin's store
-#       holds both as exchanges, no thinking filler (its memory:{session} key,
+#       holds both as exchanges, no thinking filler (its rememberedExchanges:{session} key,
 #       nothing else read)
 #   (k) a /buddy question while a main turn runs (`sleep 15` via Bash) is
 #       answered at once, before that turn ends, and a second immediate ask
@@ -183,7 +183,7 @@ NEXT=$(grep -A1 -x "$DEFAULT" <<<"$IDS" | tail -1)
 rows_of "$PICK" | grep -v -x -F -f "$RUN/default.rows" > "$RUN/pick.rows"
 out=$(command_out "/buddy-personality") || exit 2; sleep 3
 pane > "$RUN/i-open.txt"
-if in_pane "* $DEF_NAME ($DEFAULT)" && in_pane "Shipped" && in_pane "Your folder" && in_pane "$(about_of "$DEFAULT")" && ! in_pane "$(persona_of "$DEFAULT")"; then
+if in_pane "* $DEF_NAME ($DEFAULT)" && in_pane "Shipped" && in_pane "customCharactersDir" && in_pane "$(about_of "$DEFAULT")" && ! in_pane "$(persona_of "$DEFAULT")"; then
   add "(i) /buddy-personality opens the menu" PASS "$out"
 else add "(i) /buddy-personality opens the menu" FAIL "$out / pane in $RUN/i-open.txt"; fi
 $T send-keys -t proof Down; sleep 2
@@ -192,7 +192,7 @@ if in_pane "$(about_of "$NEXT")" && ! in_pane "$(about_of "$DEFAULT")"; then add
 else add "(i) Down moves the preview to $NEXT" FAIL "pane in $RUN/i-down.txt"; fi
 $T send-keys -t proof Escape; sleep 2
 pane > "$RUN/i-esc.txt"
-if ! in_pane "$(about_of "$NEXT")" && ! in_pane "Your folder" && shows_any "$RUN/default.rows"; then add "(i) Esc closes it, nothing changed" PASS "pane gone, $DEFAULT still drawn"
+if ! in_pane "$(about_of "$NEXT")" && ! in_pane "customCharactersDir" && shows_any "$RUN/default.rows"; then add "(i) Esc closes it, nothing changed" PASS "pane gone, $DEFAULT still drawn"
 else add "(i) Esc closes it, nothing changed" FAIL "pane in $RUN/i-esc.txt"; fi
 command_out "/buddy-personality" >/dev/null; sleep 3
 for ((k = 0; k < ups; k++)); do $T send-keys -t proof Up; sleep 0.5; done
@@ -200,7 +200,7 @@ sleep 1
 if in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi
 $T send-keys -t proof Enter; sleep 3
 pane > "$RUN/i-pick.txt"
-if [ "$pre" = ok ] && shows_any "$RUN/pick.rows" && ! in_pane "Your folder"; then add "(i) Enter on $PICK draws it, pane closed" PASS "$PICK sprite row in the pane"
+if [ "$pre" = ok ] && shows_any "$RUN/pick.rows" && ! in_pane "customCharactersDir"; then add "(i) Enter on $PICK draws it, pane closed" PASS "$PICK sprite row in the pane"
 else add "(i) Enter on $PICK draws it, pane closed" FAIL "$pre / pane in $RUN/i-pick.txt"; fi
 m=$(menu_mark i) || exit 2
 if [ "$m" = "$PICK" ]; then add "(i) reopened, the menu marks $PICK" PASS "* $(name_of "$PICK") ($PICK)"; else add "(i) reopened, the menu marks $PICK" FAIL "marked: ${m:-none}; pane in $RUN/menu-i.txt"; fi
@@ -217,13 +217,13 @@ echo "$got" > "$RUN/j-second.txt"
 if [ $v -eq 0 ] && grep -q -i 'pineapple' <<<"$got"; then add "(j) the next answer remembers pineapple" PASS "$got"; else add "(j) the next answer remembers pineapple" FAIL "$out / $got"; fi
 # This plugin's store (the --plugin-dir copy): only the key of this session is read.
 STORE=$(ls "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/plugins/store/buddy_inline-*.json 2>/dev/null | head -1)
-mem=$([ -n "$STORE" ] && jq -r --arg k "memory:$ID" --arg d "$DEFAULT" '.[$k].characters[$d][]? | if .kind == "question" then "question: \(.question) -> \(.answer // "(no answer)")" else "\(.kind): \(.text)" end' "$STORE" 2>&1)
-echo "$mem" > "$RUN/j-memory.txt"
+mem=$([ -n "$STORE" ] && jq -r --arg k "rememberedExchanges:$ID" --arg d "$DEFAULT" '.[$k].characters[$d][]? | if .kind == "question" then "question: \(.question) -> \(.answer // "(no answer)")" else "\(.kind): \(.text)" end' "$STORE" 2>&1)
+echo "$mem" > "$RUN/j-rememberedExchanges.txt"
 if grep -q -F 'question: remember the word pineapple -> ' <<<"$mem" && grep -q -F 'question: what word did I ask you to remember? -> ' <<<"$mem" && ! grep -q -F -f "$RUN/thinking.pool" <<<"$mem"; then
-  add "(j) the store holds this session's memory" PASS "$(grep -c . <<<"$mem") exchanges under memory:$ID, no thinking filler"
-else add "(j) the store holds this session's memory" FAIL "${STORE:-no buddy_inline store file}: $(head -c 80 <<<"$mem")"; fi
+  add "(j) the store holds this session's rememberedExchanges" PASS "$(grep -c . <<<"$mem") exchanges under rememberedExchanges:$ID, no thinking filler"
+else add "(j) the store holds this session's rememberedExchanges" FAIL "${STORE:-no buddy_inline store file}: $(head -c 80 <<<"$mem")"; fi
 
-# (k) Ask while a main turn runs: the quip model answers at once, the turn still running.
+# (k) Ask while a main turn runs: `model` answers at once, the turn still running.
 send "Run this Bash command: sleep 15. Then reply with exactly: K1"
 for _ in $(seq 1 40); do sleep 0.5; f=$(transcript); [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | select(.input.command? // "" | contains("sleep 15"))' "$f" >/dev/null 2>&1 && break; done
 # Both asks back to back, the second before the first's reply row is awaited.
@@ -234,7 +234,7 @@ for _ in $(seq 1 20); do sleep 1; [ "$(stdout_rows | wc -l)" -ge "$((before + 2)
 out=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 1p); out2=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 2p)
 got=$(answered); v=$?
 sleep 3
-mem=$([ -n "$STORE" ] && jq -r --arg k "memory:$ID" --arg d "$DEFAULT" '.[$k].characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$STORE" 2>&1)
+mem=$([ -n "$STORE" ] && jq -r --arg k "rememberedExchanges:$ID" --arg d "$DEFAULT" '.[$k].characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$STORE" 2>&1)
 a1=$(grep -F 'do you like yourself? -> ' <<<"$mem" | tail -1 | sed 's/.* -> //')
 route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "\($o.outcome // "none") in \($o.ms // "-") ms"' "$RUN/buddy.log" 2>&1)
 # The answer came before the main turn ended: by the log, its answered outcome
@@ -242,7 +242,7 @@ route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refuse
 for _ in $(seq 1 60); do jq -e -s 'any(.[]; .event == "turn.call" or .event == "turn.skipped")' "$RUN/buddy.log" >/dev/null 2>&1 && [ "$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then 0 else ([.[] | select((.event == "turn.call" or .event == "turn.skipped") and .ts > $a)] | length) end' "$RUN/buddy.log" 2>/dev/null)" -gt 0 ] && break; sleep 0.5; done
 ended=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then "no answer" elif any(.[]; (.event == "turn.call" or .event == "turn.skipped") and .ts > $a) then "no" else "yes" end' "$RUN/buddy.log" 2>&1)
 echo "$out / $out2 / $got / $a1 / turn ended first: $ended / $route" > "$RUN/k.txt"
-if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && [ "$ended" = no ] && grep -q '^answered' <<<"$route"; then add "(k) a question during a busy main turn: answered before the turn ends" PASS "$a1 ($route)"; else add "(k) a question during a busy main turn: answered before the turn ends" FAIL "$out / ${a1:-not in memory} / turn ended first: $ended / $route"; fi
+if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && [ "$ended" = no ] && grep -q '^answered' <<<"$route"; then add "(k) a question during a busy main turn: answered before the turn ends" PASS "$a1 ($route)"; else add "(k) a question during a busy main turn: answered before the turn ends" FAIL "$out / ${a1:-not in rememberedExchanges} / turn ended first: $ended / $route"; fi
 if grep -q 'still thinking about your last question' <<<"$out2" || { grep -q 'Asked' <<<"$out2" && [ $v -eq 0 ]; }; then add "(k) a second immediate ask: a visible outcome" PASS "$out2 / bubble: $got"; else add "(k) a second immediate ask: a visible outcome" FAIL "${out2:-no reply} / $got"; fi
 for _ in $(seq 1 60); do sleep 0.5; f=$(transcript); jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("K1"))' "$f" >/dev/null 2>&1 && break; done
 # (l) The plugin log: this run's file, the ask's start and outcome.

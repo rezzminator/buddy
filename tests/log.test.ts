@@ -175,7 +175,7 @@ describe('usageFields', () => {
 
 describe('notice', () => {
   test('a transcript notice names the plugin: Claude Code states its name only for the debug log', () => {
-    expect(notice('reading the memory failed: EIO')).toBe('buddy: reading the memory failed: EIO');
+    expect(notice('reading the rememberedExchanges failed: EIO')).toBe('buddy: reading the rememberedExchanges failed: EIO');
   });
 });
 

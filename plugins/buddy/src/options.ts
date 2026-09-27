@@ -4,8 +4,9 @@
 import { isMainLoop } from './brain.ts';
 import { configDir, type ConfigEnv } from './config-source.ts';
 import { LOG_LEVELS, type LogLevel } from './log.ts';
-import { MEMORY_DEFAULT, MEMORY_MAX } from './memory.ts';
-import { TURN_WINDOW, TURN_WINDOW_MAX } from './prompts.ts';
+import { REMEMBERED_EXCHANGES_DEFAULT, REMEMBERED_EXCHANGES_MAX } from './rememberedExchanges.ts';
+import { CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX } from './prompts.ts';
+import { AMBIGUOUS_CHARACTER_WIDTHS, type AmbiguousCharacterWidth } from './width.ts';
 
 /** How hard the buddy's model thinks: the engine's ModelEffort values. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -14,33 +15,31 @@ export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'ma
 export const INHERIT = 'inherit';
 /** The model an inherited model falls back to when the main chat's cannot be read. */
 export const INHERIT_FALLBACK_MODEL = 'opus';
-export type AmbiguousWidth = 'narrow' | 'wide';
-export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
 
 export type Options = {
   character: string;
   customCharactersDir: string;
   walkOverPromptBar: boolean;
-  /** The end-of-turn call writes the buddy's line, shown in the bubble. */
+  /** The end-of-turn call writes the buddy's commentAfterEachTurn, shown in the bubble. */
   commentAfterEachTurn: boolean;
-  /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and every /buddy question; 'inherit' = the main chat's (resolveModel). */
+  /** The model of commentAfterEachTurn, suggestNextPrompt and every /buddy question: the end-of-turn call and every /buddy question; 'inherit' = the main chat's (resolveModel). */
   model: string;
   /** How hard model thinks on each of those calls; 'inherit' = the main chat's (resolveEffort). */
   effort: Effort | typeof INHERIT;
-  /** The least seconds between two lines; 0 = every answered turn. */
+  /** The least seconds between two commentAfterEachTurn; 0 = every answered turn. */
   secondsBetweenComments: number;
-  /** The end-of-turn call writes the next-prompt suggestion, and the harness's own is held back, shown only when the buddy has none. */
+  /** The end-of-turn call writes suggestNextPrompt, and the harness's own suggestion is held back, shown only when the buddy has none. */
   suggestNextPrompt: boolean;
   /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
   rememberedExchanges: number;
-  /** How many of the main chat's latest answered turns a completion reads, 1 to TURN_WINDOW_MAX: questions and the end-of-turn call. */
+  /** How many of the main chat's latest answered turns a completion reads, 1 to CHAT_TURNS_TO_READ_MAX: questions and the end-of-turn call. */
   chatTurnsToRead: number;
   /** The plugin log's level: error, info or debug. */
   logLevel: LogLevel;
   /** The plugin log's file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = no log file (errors still go to the debug log). */
   logFile: string;
   /** How many columns an East Asian ambiguous-width character takes: narrow 1, wide 2. */
-  ambiguousCharacterWidth: AmbiguousWidth;
+  ambiguousCharacterWidth: AmbiguousCharacterWidth;
   errors: string[];
 };
 
@@ -53,8 +52,8 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   effort: 'low',
   secondsBetweenComments: 0,
   suggestNextPrompt: true,
-  rememberedExchanges: MEMORY_DEFAULT,
-  chatTurnsToRead: TURN_WINDOW,
+  rememberedExchanges: REMEMBERED_EXCHANGES_DEFAULT,
+  chatTurnsToRead: CHAT_TURNS_TO_READ_DEFAULT,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
   ambiguousCharacterWidth: 'narrow',
@@ -111,16 +110,16 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
   }
   if (rememberedExchanges !== undefined && rememberedExchanges !== '') {
     const n = typeof rememberedExchanges === 'number' ? rememberedExchanges : typeof rememberedExchanges === 'string' ? Number(rememberedExchanges) : NaN;
-    if (!Number.isInteger(n) || n < 0) bad('rememberedExchanges', `${JSON.stringify(rememberedExchanges)} is not a whole number of exchanges; remembering ${MEMORY_DEFAULT}`);
-    else if (n > MEMORY_MAX) {
-      o.rememberedExchanges = MEMORY_MAX;
-      o.errors.push(`option rememberedExchanges capped: ${n} is above ${MEMORY_MAX}; remembering ${MEMORY_MAX}`);
+    if (!Number.isInteger(n) || n < 0) bad('rememberedExchanges', `${JSON.stringify(rememberedExchanges)} is not a whole number of exchanges; remembering ${REMEMBERED_EXCHANGES_DEFAULT}`);
+    else if (n > REMEMBERED_EXCHANGES_MAX) {
+      o.rememberedExchanges = REMEMBERED_EXCHANGES_MAX;
+      o.errors.push(`option rememberedExchanges capped: ${n} is above ${REMEMBERED_EXCHANGES_MAX}; remembering ${REMEMBERED_EXCHANGES_MAX}`);
     } else o.rememberedExchanges = n;
   }
   if (chatTurnsToRead !== undefined && chatTurnsToRead !== '') {
     const n = typeof chatTurnsToRead === 'number' ? chatTurnsToRead : typeof chatTurnsToRead === 'string' ? Number(chatTurnsToRead) : NaN;
-    if (Number.isInteger(n) && n >= 1 && n <= TURN_WINDOW_MAX) o.chatTurnsToRead = n;
-    else bad('chatTurnsToRead', `${JSON.stringify(chatTurnsToRead)} is not a whole number from 1 to ${TURN_WINDOW_MAX}; reading ${TURN_WINDOW}`);
+    if (Number.isInteger(n) && n >= 1 && n <= CHAT_TURNS_TO_READ_MAX) o.chatTurnsToRead = n;
+    else bad('chatTurnsToRead', `${JSON.stringify(chatTurnsToRead)} is not a whole number from 1 to ${CHAT_TURNS_TO_READ_MAX}; reading ${CHAT_TURNS_TO_READ_DEFAULT}`);
   }
   if (logLevel !== undefined && logLevel !== '') {
     const l = typeof logLevel === 'string' ? logLevel.trim().toLowerCase() : '';
@@ -129,7 +128,7 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
   }
   if (ambiguousCharacterWidth !== undefined && ambiguousCharacterWidth !== '') {
     const w = typeof ambiguousCharacterWidth === 'string' ? ambiguousCharacterWidth.trim().toLowerCase() : '';
-    if ((AMBIGUOUS_WIDTHS as readonly string[]).includes(w)) o.ambiguousCharacterWidth = w as AmbiguousWidth;
+    if ((AMBIGUOUS_CHARACTER_WIDTHS as readonly string[]).includes(w)) o.ambiguousCharacterWidth = w as AmbiguousCharacterWidth;
     else bad('ambiguousCharacterWidth', `${JSON.stringify(ambiguousCharacterWidth)} is not narrow or wide`);
   }
   // Unlike the others, an empty logFile means something: no log file.

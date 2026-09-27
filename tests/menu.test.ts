@@ -18,12 +18,12 @@ const v = validateCharacter(JSON.parse(char('original', 'Mochi', { lines: {} }))
 if (!v.ok) throw new Error(v.error);
 const mochi: Character = { ...v.character, card: { subtitle: 'blob · ★★★ rare', rows: ['SNARK     ████████░░ 81', 'hatched 2026-04-01'] } };
 const found: Originals = { kind: 'found', soul: { name: 'Mochi', personality: 'Round.' }, notes: [], rolls: [{ variant: 'native', character: mochi }, { variant: 'npm', error: 'species/hats.json has no crown' }] };
-const input = (o: Partial<MenuInput> = {}): MenuInput => ({ roster, folder: { isSet: true }, originals: found, ...o });
+const input = (o: Partial<MenuInput> = {}): MenuInput => ({ roster, customCharactersDir: { isSet: true }, originals: found, ...o });
 
 describe('buildMenu', () => {
-  test('three titled groups: shipped, yours (both rolls), your folder', () => {
+  test('three titled groups: shipped, yours (both rolls), customCharactersDir', () => {
     const m = buildMenu(input());
-    expect(m.sections.map((s) => s.title)).toEqual(['Shipped', 'Yours', 'Your folder']);
+    expect(m.sections.map((s) => s.title)).toEqual(['Shipped', 'Yours', 'customCharactersDir']);
     expect(m.sections[0]!.items.map((i) => i.label)).toEqual(['bad (invalid)', 'Cat (cat)', 'Duck (duck)']);
     expect(m.sections[1]!.items.map((i) => [i.key, i.label])).toEqual([['original:native', 'Mochi — native install'], ['original:npm', 'Mochi — npm install']]);
     expect(m.sections[1]!.items[1]!.error).toBe('species/hats.json has no crown');
@@ -32,14 +32,14 @@ describe('buildMenu', () => {
   });
 
   test('a failure to look is a line in its group, never an empty group', () => {
-    const m = buildMenu(input({ originals: { kind: 'error', error: "couldn't read ~/.claude.json: EACCES" }, shippedError: "couldn't read /x/characters: gone", folder: { isSet: true, error: "couldn't read ~/chars: gone" } }));
+    const m = buildMenu(input({ originals: { kind: 'error', error: "couldn't read ~/.claude.json: EACCES" }, shippedError: "couldn't read /x/characters: gone", customCharactersDir: { isSet: true, error: "couldn't read ~/chars: gone" } }));
     expect(m.sections.map((s) => s.lines)).toEqual([["couldn't read /x/characters: gone"], ["couldn't read ~/.claude.json: EACCES"], ["couldn't read ~/chars: gone"]]);
     expect(m.sections[1]!.items).toEqual([]);
   });
 
   test('nothing there says so in one line; a backup is named', () => {
-    const none = buildMenu(input({ originals: { kind: 'none', notes: [] }, folder: { isSet: false }, roster: mergeRoster([], []) }));
-    expect(none.sections.map((s) => s.lines)).toEqual([['No shipped characters found.'], ['No companion in ~/.claude.json or its backups.'], ['No folder set: the customCharactersDir option names one.']]);
+    const none = buildMenu(input({ originals: { kind: 'none', notes: [] }, customCharactersDir: { isSet: false }, roster: mergeRoster([], []) }));
+    expect(none.sections.map((s) => s.lines)).toEqual([['No shipped characters found.'], ['No companion in ~/.claude.json or its backups.'], ['customCharactersDir is not set: point it at your own character files.']]);
     const backup = buildMenu(input({ originals: { ...found, from: '~/.claude.json.backup' } as Originals }));
     expect(backup.sections[1]!.lines).toEqual(['From the backup ~/.claude.json.backup.']);
   });

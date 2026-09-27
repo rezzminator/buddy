@@ -1,6 +1,6 @@
-// Prompt suggestions (the `suggestNextPrompt` option): with it on, the buddy's
-// end-of-turn call proposes the next prompt, and the engine's own guess is
-// held back so it never covers the buddy's; when the buddy gives up, the
+// `suggestNextPrompt`: with it on, the buddy's end-of-turn call writes the
+// suggestNextPrompt, and the engine's own suggestion is held back so it never
+// covers the buddy's; when the buddy gives up, the
 // engine's own is shown after all.
 
 /** Who proposes a prompt suggestion: `suggestion` is the engine's own guess, `plugin` a plugin's. */
@@ -11,8 +11,8 @@ export function dropsHarnessSuggestion(origin: SuggestionOrigin, enabled: boolea
   return origin.kind === 'suggestion' && enabled && !hidden && !gaveUp;
 }
 
-/** How a suggestion of the buddy's ended: shown, not shown by the engine, or not shown because a later turn had started (`overtaken`), which is stale. */
-export function suggestOutcome(isShown: boolean, overtaken: boolean): 'shown' | 'not-shown' | 'stale' {
+/** How the buddy's suggestNextPrompt ended: shown, not shown by the engine, or not shown because a later turn had started (`overtaken`), which is stale. */
+export function suggestNextPromptOutcome(isShown: boolean, overtaken: boolean): 'shown' | 'not-shown' | 'stale' {
   if (isShown) return 'shown';
   return overtaken ? 'stale' : 'not-shown';
 }

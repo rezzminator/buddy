@@ -5,9 +5,13 @@
 // the terminal's font decides. Printable ASCII is one cell each, so ASCII text
 // measures exactly its `.length`. Pure.
 
+/** The ambiguousCharacterWidth option's values: how many cells an East Asian Ambiguous character takes, narrow 1, wide 2. */
+export type AmbiguousCharacterWidth = 'narrow' | 'wide';
+export const AMBIGUOUS_CHARACTER_WIDTHS: readonly AmbiguousCharacterWidth[] = ['narrow', 'wide'];
+
 export type WidthOptions = {
-  /** The terminal draws East Asian Ambiguous characters two cells wide, as a CJK locale's font does. Default: one. */
-  ambiguousWide?: boolean;
+  /** 'wide': the terminal draws East Asian Ambiguous characters two cells wide, as a CJK locale's font does. Default: narrow, one. */
+  ambiguousCharacterWidth?: AmbiguousCharacterWidth;
 };
 
 // Inclusive [first, last] code point pairs from Unicode 16.0 EastAsianWidth.txt,
@@ -83,7 +87,7 @@ export function charWidth(ch: string, o: WidthOptions = {}): number {
   if (cp >= 0x20 && cp < 0x7f) return 1;
   if (ZERO.test(ch)) return 0;
   if (inRanges(WIDE, cp)) return 2;
-  if (o.ambiguousWide === true && (inRanges(AMBIGUOUS, cp) || AMBIGUOUS_TOO.has(cp))) return 2;
+  if (o.ambiguousCharacterWidth === 'wide' && (inRanges(AMBIGUOUS, cp) || AMBIGUOUS_TOO.has(cp))) return 2;
   return 1;
 }
 

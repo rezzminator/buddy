@@ -34,7 +34,7 @@ A missing pose draws the next one along its chain (`POSE_FALLBACK`), so three po
 | `walkLeft` | no | `walkRight` | walking left |
 | `rest` | no | `idle` | a pause in the walk |
 | `oops` | no | `idle` | a tool or a test failed; a question failed |
-| `yay` | no | `idle` | a test passed; a quip on a turn with no failures |
+| `yay` | no | `idle` | a test passed; a `commentAfterEachTurn` on a turn with no failures |
 | `thinking` | no | `idle` | a question is running |
 | `petted` | no | `yay` | `/buddy` |
 | `working` | no | `idle` | Claude is working |
@@ -54,11 +54,11 @@ flowchart LR
 | Source | Where | Marked |
 | --- | --- | --- |
 | Shipped (`builtin`) | the plugin's `characters/`: `cat`, `dragon`, `duck`, `ghost`, `professor`, `robot`, `yellow-duck` | |
-| Your folder (`user`) | the folder the `customCharactersDir` option names; `~` expands to HOME | the menu's Your folder group |
-| Original (`original`) | built from the account's roll and a species template, id `original`, reserved: a character file with that id is refused with an error naming the file, said in the menu's Your folder group, the log, and the bubble at each session start and `/buddy reload` (`mergeRoster`, `startWarning`) | [Original companion](./original-companion.md) |
+| `customCharactersDir` (`user`) | the folder the `customCharactersDir` option names; `~` expands to HOME | the menu's `customCharactersDir` group |
+| Original (`original`) | built from the account's roll and a species template, id `original`, reserved: a character file with that id is refused with an error naming the file, said in the menu's `customCharactersDir` group, the log, and the bubble at each session start and `/buddy reload` (`mergeRoster`, `startWarning`) | [Original companion](./original-companion.md) |
 
 A file is a candidate when it is a visible `.json` entry that is not a folder (`isCharacterFile`).
-The roster keeps every candidate, valid or not, sorted by id; an id in both folders is taken from yours.
+The roster keeps every candidate, valid or not, sorted by id; an id in both `characters/` and `customCharactersDir` is taken from `customCharactersDir`.
 An invalid file stays in the roster with its first error, so `/buddy-personality` lists it as `{id} (invalid)`, its preview naming the error, rather than hiding it.
 A folder that cannot be listed is logged, named in the menu's group, and said in the bubble at each session start and `/buddy reload` (`startWarning`).
 The roster loads at session start and again on `/buddy reload`.
@@ -90,7 +90,7 @@ An original companion's pools come from its species template, with `{name}` fill
 ## How a contributor adds one
 
 1. Write `{id}.json` in a folder of your own; [`CONTRIBUTING.md`](../../CONTRIBUTING.md) has a working example.
-2. Point `customCharactersDir` at the folder and start a session. `/buddy-personality` lists it under Your folder, or as `{id} (invalid)` with the first error in its preview.
+2. Point `customCharactersDir` at the folder and start a session. `/buddy-personality` lists it under `customCharactersDir`, or as `{id} (invalid)` with the first error in its preview.
 3. Enter on it in the menu draws it. Edit, save, `/buddy reload`. Try a narrow window too.
 4. To ship it: add it to `plugins/buddy/characters/` with the relative `$schema`, add a row to the README's Characters table, run the checks, and open a pull request against `develop`.
 

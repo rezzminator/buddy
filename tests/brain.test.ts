@@ -121,23 +121,23 @@ describe('brain', () => {
     expect(b.motion.x).toBe(0);
     expect(b.sleeping).toBe(false);
   });
-  test('the turn\'s summary at every end, tools or none; the line due only with commentAfterEachTurn on and past the cooldown', () => {
+  test('the turn\'s summary at every end, tools or none; commentAfterEachTurn due only when on and past secondsBetweenComments', () => {
     const b = createBrain(char(), true);
     const read = () => react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: [], failures: 0, lastBash: '' }, lineDue: true });
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: [], failures: 0, lastBash: '' }, commentAfterEachTurnDue: true });
     read();
-    expect(endTurn(b, false, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, lineDue: false });
+    expect(endTurn(b, false, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, commentAfterEachTurnDue: false });
     expect(b.turn.tools).toEqual([]);
     read();
-    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, lineDue: false });
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, commentAfterEachTurnDue: false });
     ticks(b, 45000 / 200);
-    expect(endTurn(b, true, 45).lineDue).toBe(true);
+    expect(endTurn(b, true, 45).commentAfterEachTurnDue).toBe(true);
   });
-  test('cooldown 0: the line is due at every turn\'s end', () => {
+  test('secondsBetweenComments 0: commentAfterEachTurn is due at every turn\'s end', () => {
     const b = createBrain(char(), true);
-    expect(endTurn(b, true, 0).lineDue).toBe(true);
-    expect(endTurn(b, true, 0).lineDue).toBe(true);
-    expect(endTurn(b, true, 0).lineDue).toBe(true);
+    expect(endTurn(b, true, 0).commentAfterEachTurnDue).toBe(true);
+    expect(endTurn(b, true, 0).commentAfterEachTurnDue).toBe(true);
+    expect(endTurn(b, true, 0).commentAfterEachTurnDue).toBe(true);
   });
   test('a new pose starts at its first frame and steps through every frame in order', () => {
     const b = createBrain(char({ poses: { idle: [['1'], ['2'], ['3'], ['2']], walkRight: [['a'], ['b']] }, motion: { walk: false } }), true);
@@ -208,7 +208,7 @@ describe('holdsAnswer', () => {
     b.talk = { text: 'a canned line', pose: null, until: b.now + BUBBLE_MS };
     expect(holdsAnswer(b)).toBe(false);
   });
-  test('an end-of-turn line, or its failure, never holds against the next turn\'s line, yet a line nobody asked for waits behind it', () => {
+  test('a commentAfterEachTurn, or its failure, never holds against the next turn\'s commentAfterEachTurn, yet a line nobody asked for waits behind it', () => {
     const b = createBrain(char(), false);
     expect(answer(b, 'Turn one.', 'yay', undefined, true)).toBe(true);
     expect(holdsAnswer(b)).toBe(false);
@@ -223,7 +223,7 @@ describe('holdsAnswer', () => {
 });
 
 describe('a question\'s deadline and failures', () => {
-  test('a question gets 90 s on the quip model; the bubble names the deadline that passed', () => {
+  test('a question gets 90 s on `model`; the bubble names the deadline that passed', () => {
     expect(COMPLETE_DEADLINE_MS).toBe(90_000);
     expect(deadlineReason(COMPLETE_DEADLINE_MS)).toBe('no answer in 90 s');
   });

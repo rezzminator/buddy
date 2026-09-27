@@ -10,8 +10,8 @@ Characters are JSON files, seven shipped and any number of your own, and `/buddy
 | --- | --- |
 | [Engine](./engine.md) | the band above the prompt, the tick, motion, the brain's states, particles, the speech bubble |
 | [Characters](./characters.md) | the character contract, where characters come from, the line events, adding one |
-| [Voice](./voice.md) | questions (a completion on the chat's last turns), quips, the one-line rule and token caps, the quip model |
-| [Memory](./memory.md) | the short memory of recent exchanges, kept per session and per character, fed into every prompt |
+| [Voice](./voice.md) | questions (a completion on the chat's last turns), `commentAfterEachTurn`, the one-line rule and token caps, `model` |
+| [rememberedExchanges](./rememberedExchanges.md) | `rememberedExchanges`: the recent exchanges, kept per session and per character, fed into every prompt |
 | [Original companion](./original-companion.md) | recomputing the companion Claude Code hatched: identity, hash, PRNG, bones, species art, privacy, legal |
 | [Personality menu](./personality-menu.md) | `/buddy-personality`: the groups, the live preview, Enter and Esc, persistence, error lines |
 | [Verification](./verification.md) | every gate and its broken state, the live proof row by row, the bugs the gates caught |
@@ -32,7 +32,7 @@ flowchart LR
   R["roster: characters/, customCharactersDir"] --> A
   O["original: hatch.ts, original.ts, species/"] --> R
   A --> M["menu pane: src/menu.ts"]
-  A --> V["voice + memory: src/prompts.ts"]
+  A --> V["voice + rememberedExchanges: src/prompts.ts"]
   V --> Model["$.model.complete"]
 ```
 
@@ -40,7 +40,7 @@ flowchart LR
 - The brain changes state; the adapter asks it for the scene and redraws only when the scene differs from the last one drawn.
 - Characters reach the brain through the roster. The original companion is one more roster entry, built from the account's roll and a species template.
 - The personality menu is a second surface over the same roster.
-- Voice and memory are the only paths that call a model.
+- Voice and rememberedExchanges are the only paths that call a model.
 
 ## Rules every design keeps
 
@@ -61,6 +61,6 @@ flowchart LR
 | `hidden` | `true` while hidden | `/buddy off`, `/buddy on` |
 | `pets` | the pet count | `/buddy` |
 | `original` | the picked original's roll (`native` or `npm`) and its soul | Enter on a "Yours" row in the menu |
-| the memory's keys | recent exchanges, per session and character | see [Memory](./memory.md) |
+| the `rememberedExchanges` keys | recent exchanges, per session and character | see [rememberedExchanges](./rememberedExchanges.md) |
 
 Every session shares one store, and Claude Code raises no event when it changes, so a session reads back what another may have written: `/buddy` counts on from the stored `pets`, and `hidden` is read back while the band draws ([Engine](./engine.md#the-tick)).

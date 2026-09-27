@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { cellWidth, padEndCells, sliceCells, wrapCells } from '../plugins/buddy/src/width.ts';
 
-const wide = { ambiguousWide: true };
+const wide = { ambiguousCharacterWidth: 'wide' } as const;
 
 describe('cellWidth', () => {
   test('ASCII: one cell a character, exactly .length', () => {
@@ -65,7 +65,7 @@ describe('wrapCells', () => {
   test('at most maxLines, the last one cut with …', () => {
     expect(wrapCells('one two three four five', 9, { maxLines: 2 })).toEqual(['one two', 'three…']);
     expect(wrapCells('abcdefghij', 4, { maxLines: 1 })).toEqual(['abc…']);
-    expect(wrapCells('abcdefghij', 4, { maxLines: 1, ambiguousWide: true })).toEqual(['ab…']);
+    expect(wrapCells('abcdefghij', 4, { maxLines: 1, ambiguousCharacterWidth: 'wide' })).toEqual(['ab…']);
     const lines = wrapCells('word '.repeat(48).trim(), 21, { maxLines: 4 });
     expect(lines).toHaveLength(4);
     for (const l of lines) expect(cellWidth(l)).toBeLessThanOrEqual(21);

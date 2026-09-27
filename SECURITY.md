@@ -32,14 +32,14 @@ Useful when judging impact:
 - It reads the character JSON files in the folder the `customCharactersDir` option
   names.
 - It makes model calls only through Claude Code itself: a `/buddy` question,
-  and one short call at the end of each answered turn for the buddy's line
-  and the prompt suggestion, on `model` (default `opus`) at `effort`
-  (default `low`) and sent its memory and the chat's last `chatTurnsToRead` turns (default 3) (`commentAfterEachTurn` and `suggestNextPrompt`, on by default; turn
+  and one short call at the end of each answered turn for `commentAfterEachTurn`
+  and `suggestNextPrompt`, on `model` (default `opus`) at `effort`
+  (default `low`) and sent its `rememberedExchanges` and the chat's last `chatTurnsToRead` turns (default 3) (`commentAfterEachTurn` and `suggestNextPrompt`, on by default; turn
   both off for none). There is no buddy server.
 
 It writes two things, and nothing else:
 
-- **Its own Claude Code plugin store:** the memory of the last 20 sessions
+- **Its own Claude Code plugin store:** the `rememberedExchanges` of the last 20 sessions
   (per character, its recent exchanges: a `/buddy` question with its
   answer, or the question alone if it got none, or one line it said;
   nothing when `rememberedExchanges` is 0), the picked character, the picked
@@ -51,7 +51,7 @@ It writes two things, and nothing else:
   per record, with one rotation, `buddy.log.1`, past 1 MB.
   One JSON line per record: every failure with its message and stack; at
   `info` (the default) also session starts, commands (their kind and length,
-  never their text), each question's outcome, quips and menu picks; at
+  never their text), each question's outcome, `commentAfterEachTurn` and menu picks; at
   `debug` also the question text, the first 80 characters of each model
   answer, and band decisions. It never holds your account identity or any
   content of `~/.claude.json`.

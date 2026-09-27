@@ -107,9 +107,9 @@ describe('originalCharacter', () => {
   test('the card is measured in cells: ★ █ ░ · count twice on an ambiguous-wide terminal', () => {
     const input = { character: original(bones({ shiny: true })), pose: 'idle', frame: 0, x: 0, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0, stats: { pets: 2, questions: 1 }, now: 0 } as const;
     expect(buildScene(input)!.card!.width).toBe(34);
-    const wide = buildScene({ ...input, ambiguousWide: true })!;
+    const wide = buildScene({ ...input, ambiguousCharacterWidth: 'wide' })!;
     expect(wide.card!.width).toBe(37);
-    for (const line of wide.card!.lines) expect(cellWidth(line, { ambiguousWide: true })).toBeLessThanOrEqual(wide.card!.width - 4);
+    for (const line of wide.card!.lines) expect(cellWidth(line, { ambiguousCharacterWidth: 'wide' })).toBeLessThanOrEqual(wide.card!.width - 4);
   });
 });
 

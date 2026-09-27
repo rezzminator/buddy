@@ -35,7 +35,7 @@ export type MenuInput = {
   /** Why the plugin's characters/ could not be listed, if it could not. */
   shippedError?: string;
   /** Whether a customCharactersDir is set, and why it could not be listed. */
-  folder: { isSet: boolean; error?: string };
+  customCharactersDir: { isSet: boolean; error?: string };
   originals: Originals;
 };
 
@@ -68,15 +68,15 @@ export function buildMenu(i: MenuInput): Menu {
   const shipped = i.roster.entries.filter((e) => e.source === 'builtin').map(entryItem);
   const mine = i.roster.entries.filter((e) => e.source === 'user').map(entryItem);
   const shippedLines = i.shippedError ? [i.shippedError] : shipped.length === 0 ? ['No shipped characters found.'] : [];
-  // A roster error that is not a listing failure: a file taking a reserved id, said in the folder's group.
-  const listing = new Set([i.shippedError, i.folder.error]);
+  // A roster error that is not a listing failure: a file taking a reserved id, said in the customCharactersDir group.
+  const listing = new Set([i.shippedError, i.customCharactersDir.error]);
   const refused = i.roster.errors.filter((e) => !listing.has(e));
-  const folderLines = [...(!i.folder.isSet ? ['No folder set: the customCharactersDir option names one.'] : i.folder.error ? [i.folder.error] : mine.length === 0 ? ['No character files in your folder.'] : []), ...refused];
+  const customCharactersDirLines = [...(!i.customCharactersDir.isSet ? ['customCharactersDir is not set: point it at your own character files.'] : i.customCharactersDir.error ? [i.customCharactersDir.error] : mine.length === 0 ? ['No character files in customCharactersDir.'] : []), ...refused];
   return {
     sections: [
       { title: 'Shipped', lines: shippedLines, items: shipped },
       yours(i.originals),
-      { title: 'Your folder', lines: folderLines, items: mine },
+      { title: 'customCharactersDir', lines: customCharactersDirLines, items: mine },
     ],
   };
 }

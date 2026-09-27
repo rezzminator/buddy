@@ -49,7 +49,7 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (g) picking the default returns | the menu, Down to the duck, Enter | the duck's rows are back |
 | (h) `/buddy off` hides | `/buddy off` | no duck row in the pane |
 | (h) `/buddy on` shows | `/buddy on` | the duck's rows are back |
-| (i) the menu opens | `/buddy-personality` | `* Quack (duck)`, `Shipped`, `Your folder` and the duck's description in the pane, never its persona prompt |
+| (i) the menu opens | `/buddy-personality` | `* Quack (duck)`, `Shipped`, `customCharactersDir` and the duck's description in the pane, never its persona prompt |
 | (i) Down moves the preview | Down | the preview shows the next entry, `ghost` |
 | (i) Esc closes it, nothing changed | Esc | the preview and the groups are gone; the duck is still drawn |
 | (i) Enter on `cat` draws it | the menu again, Up to `cat`, Enter | `cat`'s preview showed first; its art is in the band; the pane is gone |
@@ -57,7 +57,7 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (i) picking the default returns | the menu, Down to the duck, Enter | the duck's rows are back |
 | (j) `/buddy remember the word pineapple` | that question | the reply says `Asked`, and the bubble holds an answer |
 | (j) the next answer remembers `pineapple` | `/buddy what word did I ask you to remember?` | the answer holds `pineapple` |
-| (j) the store holds this session's memory | nothing; the plugin's store file is read | its `memory:{session}` record holds the exchanges under `characters.duck`, no `thinking` filler |
+| (j) the store holds this session's rememberedExchanges | nothing; the plugin's store file is read | its `rememberedExchanges:{session}` record holds the exchanges under `characters.duck`, no `thinking` filler |
 | (k) a question during a busy main turn | a prompt that runs `sleep 8` via Bash, then replies `K1`; `/buddy do you like yourself?` during it | the reply says `Asked`; the answer arrives before the main turn's `K1` reply, and the last outcome in the log is `answered` |
 | (k) a second immediate ask | `/buddy say ack` right after | its reply refuses out loud (`still thinking about your last question`) or says `Asked` |
 | (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start` and an `ask.outcome` answered |
@@ -78,15 +78,15 @@ Each session sends two prompts (one running `ls` via Bash, one plain reply), wai
 
 | Session | Options | Passes when |
 | --- | --- | --- |
-| S1 | the defaults | after each turn a line shows in the bubble (`quip.outcome` answered, its stored text in the pane) and the suggestion in the prompt box (`suggest.outcome` shown, its stored text in the pane); `/buddy remember the word tangerine` is answered, and `/buddy what word did I ask you to remember?` answers `tangerine` from memory |
-| S2 | `commentAfterEachTurn: false` | no `quip.outcome` after a turn; a suggestion is shown |
-| S3 | `suggestNextPrompt: false`, `rememberedExchanges: 0` | a line shows after each turn; no `suggest.outcome`; the store holds nothing under `memory:{session}` |
+| S1 | the defaults | after each turn `commentAfterEachTurn` shows in the bubble (`commentAfterEachTurn.outcome` answered, its stored text in the pane) and `suggestNextPrompt` in the prompt box (`suggestNextPrompt.outcome` shown, its stored text in the pane); `/buddy remember the word tangerine` is answered, and `/buddy what word did I ask you to remember?` answers `tangerine` from `rememberedExchanges` |
+| S2 | `commentAfterEachTurn: false` | no `commentAfterEachTurn.outcome` after a turn; a `suggestNextPrompt` is shown |
+| S3 | `suggestNextPrompt: false`, `rememberedExchanges: 0` | `commentAfterEachTurn` shows after each turn; no `suggestNextPrompt.outcome`; the store holds nothing under `rememberedExchanges:{session}` |
 | S4 | the defaults, headless | `claude -p`, then `claude -p --resume`: two `turn.skipped` with `why: headless`, and no `turn.call`, `turn.settings`, `turn.prompt`, `ask.settings` or `ask.start` |
 | S5 | `customCharactersDir` holding one invalid `broken.json`, `character: broken` | the duck is drawn with a bubble naming the error (`Couldn't load broken: …; /buddy-personality picks another`); the error holds the bubble 10 s from the session's start, part of it behind the trust dialog, so when it is gone by the prompt `/buddy reload` says it again, and the row names which |
 
-A suggestion check also passes on `suggest.outcome` none: the model answered `NEXT: NONE`, which by design hands the prompt box back to Claude Code's own suggestion, and the row says so.
-Per turn the report reads, from the log: `quip.outcome` and `suggest.outcome` with their `ms` (the turn's end to the reply, as the plugin measures it) and the call's `inTok`, `outTok`, `cacheRead` and `cacheWrite`; from the transcript, the reply's timestamp, so `end→line ms` is the `quip.outcome` record's time minus the main turn's end; the number of model calls (`turn.settings`, `ask.settings`); and every error record.
-One pane sample a second after the outcome confirms the bubble: an answered line's stored text is in it, a failure reads `couldn't answer`.
+A `suggestNextPrompt` check also passes on `suggestNextPrompt.outcome` none: the model answered `SUGGEST_NEXT_PROMPT: NONE`, which by design hands the prompt box back to Claude Code's own suggestion, and the row says so.
+Per turn the report reads, from the log: `commentAfterEachTurn.outcome` and `suggestNextPrompt.outcome` with their `ms` (the turn's end to the reply, as the plugin measures it) and the call's `inTok`, `outTok`, `cacheRead` and `cacheWrite`; from the transcript, the reply's timestamp, so `end→commentAfterEachTurn ms` is the `commentAfterEachTurn.outcome` record's time minus the main turn's end; the number of model calls (`turn.settings`, `ask.settings`); and every error record.
+One pane sample a second after the outcome confirms the bubble: an answered `commentAfterEachTurn`'s stored text is in it, a failure reads `couldn't answer`.
 A metric no record carried is `unread`, never a zero. The run folder `/tmp/buddy/configs-{timestamp}/` keeps `report.md`, `report.json`, and per session the log, the drive log, every pane capture and a copy of the transcript.
 
 ## Logging
@@ -99,7 +99,7 @@ A failed write goes to the transcript (`$.ui.log`, its default target) with ever
 | Level | Adds |
 | --- | --- |
 | `error` | every failure: what failed, its ids, the message and stack |
-| `info` | session start, roster loads and invalid characters, option warnings, commands (kind and argument length, never the text), menu open, pick and close, character switches, each ask's start and outcome (`answered`, `refused`, `failed`, `dropped`, `hidden`, with reason and ms), another session's `/buddy off` or `/buddy on` read back, a menu pane found gone, each end-of-turn call made or skipped and why (`turn.call`, `turn.skipped`), its line (`quip.outcome`, with usage and ms) and its suggestion (`suggest.outcome`, with ms, and usage too on a no-line call); an end-of-turn outcome's ms counts from the turn's end to the reply |
+| `info` | session start, roster loads and invalid characters, option warnings, commands (kind and argument length, never the text), menu open, pick and close, character switches, each ask's start and outcome (`answered`, `refused`, `failed`, `dropped`, `hidden`, with reason and ms), another session's `/buddy off` or `/buddy on` read back, a menu pane found gone, each end-of-turn call made or skipped and why (`turn.call`, `turn.skipped`), its `commentAfterEachTurn` (`commentAfterEachTurn.outcome`, with usage and ms) and its `suggestNextPrompt` (`suggestNextPrompt.outcome`, with ms, and usage too on a call without `commentAfterEachTurn`); an end-of-turn outcome's ms counts from the turn's end to the reply |
 | `debug` | the question text, prompt lengths, each model result's shape (`isAnswered`, reason, length, first 80 characters), band scenes and clock ticks, at most one per second per event |
 
 The identity and `~/.claude.json` never reach the log at any level; the hook test for the original companion checks the log file for the account id.
@@ -114,7 +114,7 @@ The identity and `~/.claude.json` never reach the log at any level; the hook tes
 
 Named here, so none reads as a pass:
 
-- The live proof runs with `commentAfterEachTurn: false`; quips and suggestions are proven live by the live configuration proof.
+- The live proof runs with `commentAfterEachTurn: false`; `commentAfterEachTurn` and `suggestNextPrompt` are proven live by the live configuration proof.
 - Sleep is proven in unit tests only; the live proof would have to run after midnight.
 - The hover card needs a terminal that reports the mouse; it is unit-tested, not tried live.
 - "Yours" is proven by hook tests only (no fake HOME, above).

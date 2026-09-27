@@ -75,7 +75,7 @@ Hidden is the adapter's state, not the brain's: the band yields and the clock st
 | session start, a switch, `/buddy reload` | `setCharacter` | the new character greets (6 s); at a session start or `/buddy reload` the choice's load error and the roster's errors (a folder that could not be listed, a file taking the reserved id `original`) show instead (10 s), and at the session's first greeting so does every ignored or capped option, once (`startWarning`) |
 | `/buddy on` | `wake`, `greet` | the greeting |
 | a finished tool call | `react` | wakes, adds the call to the turn's tally, reacts per the table below |
-| a turn ends | `wake`, `endTurn` | the tally resets; a quip is due or not ([Voice](./voice.md)) |
+| a turn ends | `wake`, `endTurn` | the tally resets; a `commentAfterEachTurn` is due or not ([Voice](./voice.md)) |
 | `/buddy` | `pet` | `petted` pose and line, one more pet |
 | `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's deadline (90 s), then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
 | the band draws | `observeBand` | width, height, and work starting or stopping |
@@ -151,6 +151,6 @@ The card opens on the side away from the bubble, or not at all when neither side
 
 ## How it's tested
 
-- Unit: [`tests/brain.test.ts`](../../tests/brain.test.ts) (greeting then walking, sleep hours, work, reactions, quips, frame order, the pushed column), [`tests/motion.test.ts`](../../tests/motion.test.ts), [`tests/scene.test.ts`](../../tests/scene.test.ts), [`tests/particles.test.ts`](../../tests/particles.test.ts), [`tests/reactions.test.ts`](../../tests/reactions.test.ts).
+- Unit: [`tests/brain.test.ts`](../../tests/brain.test.ts) (greeting then walking, sleep hours, work, reactions, `commentAfterEachTurn`, frame order, the pushed column), [`tests/motion.test.ts`](../../tests/motion.test.ts), [`tests/scene.test.ts`](../../tests/scene.test.ts), [`tests/particles.test.ts`](../../tests/particles.test.ts), [`tests/reactions.test.ts`](../../tests/reactions.test.ts).
 - Hooks: the `the band` and `reactions` groups of [`plugins/buddy/tests/buddy.test.tsx`](../../plugins/buddy/tests/buddy.test.tsx) draw the real adapter on a mock clock.
 - Live: rows (a), (b), (e) and (h) of the live proof ([Verification](./verification.md)).

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { STILL_FRAME_MS, STILL_PERIOD_MS, initialMotion, maxX, periodMs, tickMotion, type MotionState, type TickInput } from '../plugins/buddy/src/motion.ts';
 
-const base: TickInput = { now: 0, cols: 20, width: 4, walk: true, still: false, restChance: 0, restTicks: 3 };
+const base: TickInput = { now: 0, cols: 20, width: 4, walkOverPromptBar: true, still: false, restChance: 0, restTicks: 3 };
 const never = () => 0.99;
 
 function run(s: MotionState, n: number, over: Partial<TickInput> = {}, rand = never): MotionState {
@@ -29,7 +29,7 @@ describe('motion', () => {
     expect(run(s, 1).x).toBe(2);
   });
   test('held still (bubble, work, sleep) or not walking: no step, frames every 900 ms', () => {
-    for (const over of [{ still: true }, { walk: false }]) {
+    for (const over of [{ still: true }, { walkOverPromptBar: false }]) {
       let s = initialMotion();
       s = tickMotion(s, { ...base, ...over, now: STILL_FRAME_MS - 1 }, never).state;
       expect(s).toMatchObject({ x: 0, stillFrame: 0 });

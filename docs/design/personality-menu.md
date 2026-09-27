@@ -45,12 +45,12 @@ The row drawn now carries `autoFocus`, so the menu opens on it.
 | --- | --- | --- |
 | Shipped | the plugin's `characters/`, by id | `No shipped characters found.`, or why the folder could not be read |
 | Yours | your original companion, twice: `{name} — native install`, `{name} — npm install` | `No companion in {config} or its backups.`, or why the file could not be read; `{config}` is `~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json` when that is set |
-| Your folder | the files in `customCharactersDir`, by id | `No folder set: the customCharactersDir option names one.`, `No character files in your folder.`, or why the folder could not be read |
+| `customCharactersDir` | the files in `customCharactersDir`, by id | `customCharactersDir is not set: point it at your own character files.`, `No character files in customCharactersDir.`, or why `customCharactersDir` could not be read |
 
 `*` marks the row drawn now (`rowLabel`, `currentKeyOf`); for your original, the roll you picked.
 An invalid file is still a row, `{id} (invalid)`.
-A character file taking the reserved id `original` is no row: its error, naming the file, is a line in Your folder (`buildMenu`).
-A shipped id your folder overrides appears once, under Your folder.
+A character file taking the reserved id `original` is no row: its error, naming the file, is a line in `customCharactersDir` (`buildMenu`).
+A shipped id your `customCharactersDir` overrides appears once, under `customCharactersDir`.
 "Yours" is read afresh at every open (`findOriginals`), and a companion found in a backup adds `From the backup {name}.` above its rows ([Original companion](./original-companion.md)).
 
 ## The live preview
@@ -95,7 +95,7 @@ Every failure to look is a line where the missing rows would be, and every entry
 | its companion is malformed | `{config} has a companion, but {why}` |
 | a place for backups cannot be listed, or backups would not parse | a note under Yours: `Couldn't list {place} to look for backups: {why}`, `Skipped {n} backups that did not read or parse.` |
 | an invalid character file | the row `{id} (invalid)`; the preview `Can't draw it: {error}` |
-| a character file takes the reserved id `original` | `original.json ({source}): "original" is reserved for your original companion; rename the file and its id` in Your folder; the band's bubble says it too, for 10 s, at each session start and `/buddy reload`, ending `; /buddy-personality lists your characters` |
+| a character file takes the reserved id `original` | `original.json ({source}): "original" is reserved for your original companion; rename the file and its id` in `customCharactersDir`; the band's bubble says it too, for 10 s, at each session start and `/buddy reload`, ending `; /buddy-personality lists your characters` |
 | an original whose art will not draw | its row; the preview `Can't draw it: {why}`, such as a hat `species/hats.json` lacks |
 | nothing highlighted | `Nothing to preview`: `no entry is highlighted` |
 | the pane could not open | the reply `/buddy-personality couldn't open its pane: {why}` |

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { dropsHarnessSuggestion, suggestOutcome } from '../plugins/buddy/src/suggest.ts';
+import { dropsHarnessSuggestion, suggestNextPromptOutcome } from '../plugins/buddy/src/suggestNextPrompt.ts';
 
 describe('dropsHarnessSuggestion', () => {
   const harness = { kind: 'suggestion' } as const;
@@ -8,7 +8,7 @@ describe('dropsHarnessSuggestion', () => {
     expect(dropsHarnessSuggestion(harness, false, false, false)).toBe(false);
     expect(dropsHarnessSuggestion(harness, true, true, false)).toBe(false);
   });
-  test('once the buddy gave up on this turn\'s suggestion, the engine\'s own passes', () => {
+  test('once the buddy gave up on this turn\'s suggestNextPrompt, the engine\'s own suggestion passes', () => {
     expect(dropsHarnessSuggestion(harness, true, false, true)).toBe(false);
   });
   test('a plugin\'s proposal, the buddy\'s own or another\'s, always passes', () => {
@@ -17,10 +17,10 @@ describe('dropsHarnessSuggestion', () => {
   });
 });
 
-describe('suggestOutcome', () => {
+describe('suggestNextPromptOutcome', () => {
   test('shown; not shown by the engine; not shown because a later turn had started, which is stale', () => {
-    expect(suggestOutcome(true, false)).toBe('shown');
-    expect(suggestOutcome(false, false)).toBe('not-shown');
-    expect(suggestOutcome(false, true)).toBe('stale');
+    expect(suggestNextPromptOutcome(true, false)).toBe('shown');
+    expect(suggestNextPromptOutcome(false, false)).toBe('not-shown');
+    expect(suggestNextPromptOutcome(false, true)).toBe('stale');
   });
 });

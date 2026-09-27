@@ -15,7 +15,7 @@ makes the file invalid.
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in built-ins |
-| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the Your folder group of `/buddy-personality` and in the bubble at a session's start and after `/buddy reload`; the id `/buddy-personality` stores |
+| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the `customCharactersDir` group of `/buddy-personality` and in the bubble at a session's start and after `/buddy reload`; the id `/buddy-personality` stores |
 | `name` | string ≤ 40 | yes | display name |
 | `description` | string ≤ 100 | yes | one line for the menu's preview and the hover card |
 | `author` | string ≤ 60 | no | credit |
@@ -82,9 +82,9 @@ voice.
 ### Persona
 
 `persona` is the prompt a model answers in when you ask a question, and at
-the end of every answered turn, when it voices the buddy's line (`commentAfterEachTurn`) and
-decides what the prompt suggestion nudges toward (`suggestNextPrompt`), though the
-suggestion itself is written in the user's words. Write it in the second person ("You are …"): who
+the end of every answered turn, when it voices `commentAfterEachTurn` and
+decides what `suggestNextPrompt` nudges toward, though
+`suggestNextPrompt` itself is written in the user's words. Write it in the second person ("You are …"): who
 the character is, how it talks, a phrase or two it likes. The engine puts
 its character rule (`CHARACTER_RULE`) right after the persona: become the
 character completely and say one useful thing that both the user and Claude
@@ -140,7 +140,7 @@ Every pose it leaves out falls back as the table above says: `oops`,
 2. Point the `customCharactersDir` option at that folder: through `/plugin configure`, or in
    `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersDir`.
    Start a new session.
-3. `/buddy-personality` lists it under Your folder, or as `blob (invalid)`
+3. `/buddy-personality` lists it under `customCharactersDir`, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.
 4. Enter on it draws it.
 5. Edit the file, save, and run `/buddy reload` to see the change. Try a
