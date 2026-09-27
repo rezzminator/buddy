@@ -193,3 +193,15 @@ describe('expandHome', () => {
     expect(o.errors).toEqual(['option ambiguousWidth ignored: "double" is not narrow or wide']);
   });
 });
+
+describe('config.example.json', () => {
+  test('lists every option of the manifest at its default, under the installed plugin id', async () => {
+    const { readFileSync } = await import('node:fs');
+    const read = (p: string) => JSON.parse(readFileSync(new URL(p, import.meta.url), 'utf8'));
+    const example = read('../config.example.json');
+    const manifest = read('../plugins/buddy/.claude-plugin/plugin.json');
+    const defaults = Object.fromEntries(Object.entries(manifest.userConfig as Record<string, { default: unknown }>).map(([k, v]) => [k, v.default]));
+    expect(example.pluginConfigs['buddy@buddy'].options).toEqual(defaults);
+    expect(example.env.CLAUDE_CODE_ENABLE_FUNCTION_HOOKS).toBe('1');
+  });
+});

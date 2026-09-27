@@ -60,7 +60,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 
 - A built-in character carries `"$schema": "../schema/character.schema.json"`, validates against it, and its art and persona are original.
 - A missing line pool falls back to the engine's neutral pool, in no character's voice.
-- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit.
+- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit; an option's also moves `config.example.json`.
 
 ### Branches and releases
 

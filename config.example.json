@@ -1,0 +1,22 @@
+{
+  "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
+  "pluginConfigs": {
+    "buddy@buddy": {
+      "options": {
+        "character": "duck",
+        "characterDir": "",
+        "motion": true,
+        "quips": true,
+        "quipModel": "opus",
+        "effort": "low",
+        "quipCooldownSec": 0,
+        "suggestions": true,
+        "memory": 6,
+        "contextTurns": 3,
+        "logLevel": "info",
+        "logFile": "$CLAUDE_CONFIG_DIR/buddy/buddy.log",
+        "ambiguousWidth": "narrow"
+      }
+    }
+  }
+}

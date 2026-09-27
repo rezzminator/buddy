@@ -310,6 +310,8 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 }
 ```
 
+[`config.example.json`](config.example.json) lists every option at its default, ready to merge into your `settings.json`.
+
 ### Speed and context
 
 - A question and the end-of-turn call each read the last `contextTurns`
