@@ -45,7 +45,8 @@ const FILES: Record<string, string> = {
   'notes.txt': 'not a character',
 };
 
-type Answer = { isAnswered: boolean; text?: string; reason?: string; status?: number | null; usage?: object };
+/** `delayMs`: this answer alone comes that long later; `error`: the completion rejects with it instead. */
+type Answer = { isAnswered: boolean; text?: string; reason?: string; status?: number | null; usage?: object; delayMs?: number; error?: string };
 /** Files by absolute path (with their mtimes), whether listing the home folder is refused, a store key prefix whose writes are refused, character files shipped beside FILES. */
 type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseStore?: string; env?: Record<string, string>; builtins?: Record<string, string> };
 
@@ -67,7 +68,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
   const focuses: string[] = [];
   const gets: string[] = [];
   /** A read of `hidden` answers what the store held when asked, this long later: a read in flight; a write of it lands this long later. */
-  const slow = { hiddenMs: 0, setHiddenMs: 0, sessionIdMs: 0, keysMs: 0 };
+  const slow = { hiddenMs: 0, setHiddenMs: 0, sessionIdMs: 0, keysMs: 0, rememberedGetMs: 0, rememberedSetMs: 0 };
   /** The texts that reached the prompt box's suggestion beneath the plugin, and who proposed each. */
   const suggested: string[] = [];
   const origins: string[] = [];
@@ -86,7 +87,11 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     focuses.push(String(call.element ?? call.key));
     return (call.key !== undefined ? { value: {} } : {}) as never;
   });
-  on('turn.complete', async () => ({ text: '' }));
+  // A lower turn.complete hook that throws, for the turn id `boom`.
+  on('turn.complete', async (_$, e) => {
+    if (e.turnId === 'boom') throw new Error('a lower turn.complete hook failed');
+    return { text: '' };
+  });
   /** Prompts a hook beneath the plugin drops: the engine never enters them. */
   const submit = { drop: new Set<string>() };
   on('prompt.submit', async (_$, e) => (submit.drop.has(e.text) ? { drop: 'dropped beneath' } : { text: e.text }));
@@ -110,11 +115,15 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     gets.push(e.key);
     const value = saved.get(e.key);
     if (e.key === 'hidden' && slow.hiddenMs > 0) await clock.sleep(slow.hiddenMs);
+    // A rememberedExchanges read in flight answers what the store held when asked.
+    if (e.key.startsWith('rememberedExchanges:') && slow.rememberedGetMs > 0) await clock.sleep(slow.rememberedGetMs);
     return { value };
   });
   on('store.set', async (_$, e) => {
     if (disk.refuseStore && e.key.startsWith(disk.refuseStore)) throw new Error(`EACCES: not allowed to write ${e.key}`);
     if (e.key === 'hidden' && slow.setHiddenMs > 0) await clock.sleep(slow.setHiddenMs);
+    // A rememberedExchanges write in flight lands that long later.
+    if (e.key.startsWith('rememberedExchanges:') && slow.rememberedSetMs > 0) await clock.sleep(slow.rememberedSetMs);
     saved.set(e.key, e.value);
     return { value: undefined };
   });
@@ -163,8 +172,12 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
   });
   on('model.complete', async (_$, e) => {
     completes.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt, timeoutMs: e.timeoutMs });
-    if (answers.completeDelayMs) await clock.sleep(answers.completeDelayMs);
-    return { value: { usage, ...(queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' }) } } as never;
+    const a = queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' };
+    const delayMs = a.delayMs ?? answers.completeDelayMs;
+    if (delayMs) await clock.sleep(delayMs);
+    if (a.error !== undefined) throw new Error(a.error);
+    const { delayMs: _d, error: _e, ...answer } = a;
+    return { value: { usage, ...answer } } as never;
   });
   return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins, submit };
 }
@@ -1581,6 +1594,195 @@ describe('the re-audit fixes', () => {
     expect(w.suggested).toEqual([]);
     expect(ring(w, 'fixy')).not.toContainEqual({ kind: 'commentAfterEachTurn', text: 'Unseen line.' });
     expect(records(w).filter((r) => r.event === 'commentAfterEachTurn.outcome' || r.event === 'suggestNextPrompt.outcome').map((r) => r.outcome)).toEqual(['hidden', 'stale']);
+    await ui.unmount();
+  });
+});
+
+describe('the round-3 audit fixes', () => {
+  test('a write queued behind a hung read is never said failed while it waits, and lands once the read is abandoned', { timeoutMs: 20_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await w.clock.settle();
+    w.slow.sessionIdMs = 1_000_000;
+    void $.command.run(run('what is up'));
+    await w.clock.settle();
+    w.slow.sessionIdMs = 0;
+    await $.command.run(run(''));
+    await w.clock.advance(31_000);
+    await w.clock.settle();
+    expect(w.logs.filter((l) => /remembering the line failed/.test(l))).toEqual([]);
+    await w.clock.advance(60_000);
+    await w.clock.settle();
+    expect(ring(w, 'fixy')).toContainEqual({ kind: 'line', text: 'Fixy purrs.' });
+    expect(w.logs.filter((l) => /remembering the line failed/.test(l))).toEqual([]);
+    await ui.unmount();
+  });
+
+  test('a rememberedExchanges read abandoned at its deadline and landing late never replaces the book a later write stored', { timeoutMs: 20_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    // The greeting's write is the session's first load: it hangs, is abandoned at 30 s, and lands at 60 s.
+    w.slow.rememberedGetMs = 60_000;
+    const ui = await band($);
+    await w.clock.settle();
+    await w.clock.advance(31_000);
+    await w.clock.settle();
+    w.slow.rememberedGetMs = 0;
+    await $.command.run(run('what is up'));
+    await w.clock.settle();
+    expect(ring(w, 'fixy')).toContainEqual(expect.objectContaining({ kind: 'question', question: 'what is up' }));
+    await w.clock.advance(30_000);
+    await w.clock.settle();
+    expect(ring(w, 'fixy')).toContainEqual(expect.objectContaining({ kind: 'question', question: 'what is up' }));
+    await ui.unmount();
+  });
+
+  test('a rememberedExchanges write abandoned at its deadline and landing late never overwrites a later one', { timeoutMs: 20_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await w.clock.settle();
+    w.slow.rememberedSetMs = 50_000;
+    await $.command.run(run(''));
+    await w.clock.advance(31_000);
+    await w.clock.settle();
+    w.slow.rememberedSetMs = 0;
+    await $.command.run(run('what is up'));
+    await w.clock.advance(25_000);
+    await w.clock.settle();
+    expect(ring(w, 'fixy')).toContainEqual({ kind: 'line', text: 'Fixy purrs.' });
+    expect(ring(w, 'fixy')).toContainEqual(expect.objectContaining({ kind: 'question', question: 'what is up' }));
+    await ui.unmount();
+  });
+
+  test('a /buddy question whose completion throws after /clear is dropped and never remembered', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, error: 'the request was refused', delayMs: 5_000 } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('what did we do'));
+    await w.clock.settle();
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(ring(w, 'fixy').filter((x: { kind: string }) => x.kind === 'question')).toEqual([]);
+    expect(records(w).find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'dropped', reason: 'the conversation it was asked in ended' });
+    await ui.unmount();
+  });
+
+  test('an empty reply retried past the deadline: ask.outcome still carries the first call\'s usage', { timeoutMs: 20_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: '' }, { isAnswered: true, text: 'Too late.', delayMs: 200_000 }] });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('you there'));
+    await w.clock.advance(90_000);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(2);
+    expect(records(w).find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', inTok: 1, outTok: 1 });
+    await ui.unmount();
+  });
+
+  test('an empty reply whose retry throws: ask.outcome still carries the first call\'s usage', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: '' }, { isAnswered: true, error: 'the request was refused' }] });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('you there'));
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(2);
+    expect(records(w).find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', inTok: 1, outTok: 1 });
+    await ui.unmount();
+  });
+
+  test('a turn that ends before the character is loaded clears the running-turn marker: the next turn\'s suggestNextPrompt is shown, not stale', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nSUGGEST_NEXT_PROMPT: run the tests' } });
+    await $.turn.start({ text: 'early', turnId: 't0' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Early.', isAborted: false, turnId: 't0' } as never);
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['run the tests']);
+    await ui.unmount();
+  });
+
+  test('a turn whose lower turn.complete hook throws still clears the running-turn marker', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nSUGGEST_NEXT_PROMPT: run the tests' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'first', 'boom');
+    await $.turn.complete({ reason: 'answer', answer: 'First.', isAborted: false, turnId: 'boom' } as never).catch(() => undefined);
+    await w.clock.settle();
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toContain('run the tests');
+    await ui.unmount();
+  });
+
+  test('turn.start then turn.complete: the turn\'s own suggestNextPrompt is shown, never stale', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nSUGGEST_NEXT_PROMPT: run the tests' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'build it', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Built.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['run the tests']);
+    expect(records(w).find((r) => r.event === 'suggestNextPrompt.outcome')).toMatchObject({ outcome: 'shown' });
+    await ui.unmount();
+  });
+
+  test('a turn.start whose text differs from its submission is filed with its own text, of unknown origin, never as not the user\'s', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.start({ text: 'the expanded skill text', turnId: 't1' } as never);
+    await $.prompt.submit({ text: '/skill', origin: { kind: 'composer' } } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Skilled.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    const last = w.completes.at(-1)!.prompt;
+    expect(last).toContain('Claude was sent, from an unknown origin:\nthe expanded skill text');
+    expect(last).not.toContain('not by the user');
+    await ui.unmount();
+  });
+
+  test('the owner\'s Slack ping is filed as the user\'s', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.start({ text: 'check the build', turnId: 't1' } as never);
+    await $.prompt.submit({ text: 'check the build', origin: { kind: 'slack-ping' } } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Green.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes.at(-1)!.prompt).toContain('The user asked Claude:\ncheck the build');
+    await ui.unmount();
+  });
+
+  test('the engine\'s held suggestion, beaten by the buddy\'s shown one, is logged replaced at once, never stale later', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nSUGGEST_NEXT_PROMPT: run the tests' }, completeDelayMs: 5_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await $.prompt.suggest({ text: 'commit', origin: { kind: 'suggestion' } } as never);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['run the tests']);
+    await $.turn.start({ text: 'next', turnId: 't2' } as never);
+    await w.clock.settle();
+    const outcomes = records(w).filter((r) => r.event === 'suggestNextPrompt.outcome').map((r) => r.outcome);
+    expect(outcomes).toEqual(['shown', 'harness-replaced']);
+    await ui.unmount();
+  });
+
+  test('the engine\'s held suggestion released while the buddy is hidden is logged, never dropped in silence', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nSUGGEST_NEXT_PROMPT: NONE' }, completeDelayMs: 5_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await $.prompt.suggest({ text: 'commit', origin: { kind: 'suggestion' } } as never);
+    await $.command.run(run('off'));
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(w.suggested).toEqual([]);
+    expect(records(w).filter((r) => r.event === 'suggestNextPrompt.outcome').map((r) => r.outcome)).toContain('harness-hidden');
     await ui.unmount();
   });
 });

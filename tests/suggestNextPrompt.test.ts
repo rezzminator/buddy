@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { dropsHarnessSuggestion, suggestNextPromptOutcome } from '../plugins/buddy/src/suggestNextPrompt.ts';
+import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../plugins/buddy/src/suggestNextPrompt.ts';
 
 describe('dropsHarnessSuggestion', () => {
   const harness = { kind: 'suggestion' } as const;
@@ -22,5 +22,13 @@ describe('suggestNextPromptOutcome', () => {
     expect(suggestNextPromptOutcome(true, false)).toBe('shown');
     expect(suggestNextPromptOutcome(false, false)).toBe('not-shown');
     expect(suggestNextPromptOutcome(false, true)).toBe('stale');
+  });
+});
+
+describe('heldSuggestionRelease', () => {
+  test('the engine\'s held suggestion given up on is proposed, or released as what happened: the buddy hidden, a later turn started', () => {
+    expect(heldSuggestionRelease(false, false)).toBeNull();
+    expect(heldSuggestionRelease(true, false)).toBe('harness-hidden');
+    expect(heldSuggestionRelease(false, true)).toBe('harness-stale');
   });
 });

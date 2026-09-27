@@ -17,7 +17,9 @@ export const PLUGIN_NAME = 'buddy';
 /**
  * A line for `$.ui.log`'s transcript, naming the plugin: Claude Code states
  * that it files a line under the plugin's name only in the debug log, so a
- * transcript notice names the plugin itself.
+ * transcript notice names the plugin itself. The debug log's copy of the line
+ * then reads `buddy: buddy: …`, accepted: `$.ui.log` has no transcript-only
+ * sink (UiLogSink: `transcript` goes to the debug log too, `debug` only there).
  */
 export function notice(text: string): string {
   return `${PLUGIN_NAME}: ${text}`;

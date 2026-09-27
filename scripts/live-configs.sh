@@ -66,7 +66,9 @@ try {
 } catch (e) { recs = [{ level: 'error', event: 'log-unreadable', message: String(e) }]; }
 const last = (e) => recs.filter((r) => r.event === e).at(-1) ?? null;
 const lastWithUsage = (e) => recs.filter((r) => r.event === e && typeof r.inTok === 'number').at(-1) ?? null;
-const q = last('commentAfterEachTurn.outcome'), s = last('suggestNextPrompt.outcome'), a = last('ask.outcome'), p = last('turn.prompt') ?? last('ask.prompt');
+// A refused ask made no call and carries no usage: the ask is the last one that did.
+const lastAsked = () => recs.filter((r) => r.event === 'ask.outcome' && r.outcome !== 'refused').at(-1) ?? null;
+const q = last('commentAfterEachTurn.outcome'), s = last('suggestNextPrompt.outcome'), a = lastAsked(), p = last('turn.prompt') ?? last('ask.prompt');
 // A call that writes no commentAfterEachTurn (off) logs its usage on suggestNextPrompt.outcome: on such a
 // turn a later harness-shown/harness-not-shown record can follow it with no usage, so this
 // takes the latest suggestNextPrompt.outcome record that actually carries it, not just the last one.

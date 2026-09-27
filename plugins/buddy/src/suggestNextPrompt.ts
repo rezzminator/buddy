@@ -16,3 +16,13 @@ export function suggestNextPromptOutcome(isShown: boolean, overtaken: boolean): 
   if (isShown) return 'shown';
   return overtaken ? 'stale' : 'not-shown';
 }
+
+/**
+ * Why the engine's held suggestion, given up on, is released unshown: the
+ * buddy is hidden (`harness-hidden`), or a later turn started, so it was for
+ * an ended one (`harness-stale`); null when it is proposed.
+ */
+export function heldSuggestionRelease(hidden: boolean, turnStarted: boolean): 'harness-hidden' | 'harness-stale' | null {
+  if (hidden) return 'harness-hidden';
+  return turnStarted ? 'harness-stale' : null;
+}

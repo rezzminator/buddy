@@ -13,12 +13,13 @@ import {
 import { REMEMBERED_EXCHANGES_KEY_PREFIX, REMEMBERED_EXCHANGES_SESSIONS, REMEMBERED_EXCHANGES_WRITE_DEADLINE_MS, rememberedExchangesOf, characterRememberedExchanges, addRememberedExchange, render, staleKeys, storeKey, type RememberedExchanges, type Exchange, type Stored } from '../src/rememberedExchanges.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { within, type Sleep } from '../src/deadline.ts';
+import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
   NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, chatTurnsToReadText, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
-import { dropsHarnessSuggestion, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
+import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
 import {
   ORIGINAL_ID, VARIANTS, companionOf, identityOf, originalCharacter, savedOriginalOf,
@@ -66,7 +67,9 @@ type State = {
   /** This session's rememberedExchanges as last loaded or written; loaded again when the session id changes (a start, a /clear, a reload). */
   rememberedExchanges: { sessionId: string; rememberedExchanges: RememberedExchanges } | null;
   /** Every rememberedExchanges read and write, one after another, in the order made. */
-  rememberedExchangesChain: Promise<void>;
+  rememberedExchangesChain: Chain;
+  /** The store writes of the rememberedExchanges: one in flight per session, so a late one never lands over a newer one. */
+  rememberedExchangesWrites: LatestWrites<Stored>;
   /** The last rememberedExchanges failure, said in the next /buddy question's reply; '' when none since. */
   rememberedExchangesError: string;
   /** A rememberedExchanges read or write was abandoned at its deadline and that was said: said again only after one lands. */
@@ -244,11 +247,18 @@ async function pruneRememberedExchanges($: EngineInterface, current: string): Pr
   for (const key of staleKeys(sessions, REMEMBERED_EXCHANGES_SESSIONS - 1)) await $.store.delete(key);
 }
 
-/** The session's rememberedExchanges, by `$.session.id()` (the transcript's name): a new id loads its own from the store. */
-async function rememberedExchangesFor(st: State, $: EngineInterface): Promise<{ sessionId: string; rememberedExchanges: RememberedExchanges }> {
+/**
+ * The session's rememberedExchanges, by `$.session.id()` (the transcript's
+ * name): a new id loads its own from the store. null when the link asking,
+ * `live` false, was abandoned while the store answered: a later link may have
+ * loaded and written since, and this stale read never replaces that.
+ */
+async function rememberedExchangesFor(st: State, $: EngineInterface, live: () => boolean): Promise<{ sessionId: string; rememberedExchanges: RememberedExchanges } | null> {
   const sessionId = await $.session.id();
   if (st.rememberedExchanges?.sessionId === sessionId) return st.rememberedExchanges;
-  const loaded = rememberedExchangesOf(await $.store.get(storeKey(sessionId)));
+  const value = await $.store.get(storeKey(sessionId));
+  if (!live()) return null;
+  const loaded = rememberedExchangesOf(value);
   if (loaded.error) rememberedExchangesFailed(st, $, 'reading the rememberedExchanges', new Error(loaded.error));
   st.rememberedExchanges = { sessionId, rememberedExchanges: loaded.rememberedExchanges };
   // Old sessions' rememberedExchanges are pruned beside this read, never on its path: it touches only other sessions' keys.
@@ -257,46 +267,59 @@ async function rememberedExchangesFor(st: State, $: EngineInterface): Promise<{ 
 }
 
 /**
- * `link` added to the rememberedExchanges chain, abandoned `ms` after it is added: a link
- * that never settles leaves the chain once its deadline passes, so later reads
- * and writes go ahead; the first such abandonment is said, the next only after
- * a link lands. Resolves true when the link landed, false when abandoned.
+ * `link` run on the rememberedExchanges chain (chained), abandoned `ms` after it
+ * starts; `waitMs`, a reader's patience, drops it unrun if it is still queued
+ * then. An abandonment is said once, the next only after a link lands; a link
+ * dropped unrun is logged, never said failed. A link failing after it was
+ * abandoned is logged, never said twice. Resolves true when the link landed.
  */
-function chainRememberedExchanges(st: State, $: EngineInterface, what: string, ms: number, link: () => Promise<void>): Promise<boolean> {
-  const bounded = within(sleeper($), st.rememberedExchangesChain.then(link), ms).then(
-    (r) => {
-      if (r !== 'timeout') {
-        st.rememberedExchangesHangSaid = false;
-        return true;
+async function chainRememberedExchanges(st: State, $: EngineInterface, what: string, ms: number, link: (live: () => boolean) => Promise<void>, waitMs?: number): Promise<boolean> {
+  const o = await chained(
+    sleeper($),
+    st.rememberedExchangesChain,
+    async (live) => {
+      try {
+        await link(live);
+      } catch (error) {
+        if (live()) throw error;
+        L.error(`${what} (abandoned)`, error, { area: 'rememberedExchanges' });
+        L.flush(logIO($)).catch(() => undefined);
       }
+    },
+    ms,
+    waitMs,
+  );
+  switch (o.kind) {
+    case 'landed':
+      st.rememberedExchangesHangSaid = false;
+      return true;
+    case 'failed':
+      rememberedExchangesFailed(st, $, what, o.error);
+      return false;
+    case 'abandoned':
       // In whole seconds: a question's deadline is what is left of its 90 s, a few ms short.
       if (!st.rememberedExchangesHangSaid) rememberedExchangesFailed(st, $, what, new Error(deadlineReason(Math.round(ms / 1000) * 1000)));
       st.rememberedExchangesHangSaid = true;
       return false;
-    },
-    (error: unknown) => {
-      rememberedExchangesFailed(st, $, what, error);
+    case 'dropped':
+      lg($, 'info', 'rememberedExchanges.dropped', { what });
       return false;
-    },
-  );
-  st.rememberedExchangesChain = bounded.then(() => undefined);
-  return bounded;
+  }
 }
 
 /** Appends the exchange `x` to the ring of `characterId` and saves the session's rememberedExchanges; the rememberedExchanges option 0 keeps nothing. */
 function rememberExchange(st: State, $: EngineInterface, characterId: string, x: Exchange): void {
   const n = st.options.rememberedExchanges;
   if (n === 0) return;
-  void chainRememberedExchanges(st, $, `remembering the ${x.kind}`, REMEMBERED_EXCHANGES_WRITE_DEADLINE_MS, async () => {
-    try {
-      const m = await rememberedExchangesFor(st, $);
-      m.rememberedExchanges = addRememberedExchange(m.rememberedExchanges, characterId, x, n);
-      const stored: Stored = { at: Date.now(), characters: m.rememberedExchanges };
-      await $.store.set(storeKey(m.sessionId), stored);
-    } catch (error) {
-      rememberedExchangesFailed(st, $, `remembering the ${x.kind}`, error);
-    }
-  });
+  const what = `remembering the ${x.kind}`;
+  chainRememberedExchanges(st, $, what, REMEMBERED_EXCHANGES_WRITE_DEADLINE_MS, async (live) => {
+    const m = await rememberedExchangesFor(st, $, live);
+    // Abandoned meanwhile: a later link may have written, and this one writes nothing.
+    if (!m || !live()) return;
+    m.rememberedExchanges = addRememberedExchange(m.rememberedExchanges, characterId, x, n);
+    const stored: Stored = { at: Date.now(), characters: m.rememberedExchanges };
+    await st.rememberedExchangesWrites(storeKey(m.sessionId), stored, (key, value) => $.store.set(key, value));
+  }).catch((error) => log($, what, error));
 }
 
 /** What `c` remembers of this session, rendered for a prompt, after every write made before; '' when nothing, off, or not read within the caller's `ms`. */
@@ -304,13 +327,17 @@ async function readRememberedExchanges(st: State, $: EngineInterface, c: Charact
   const n = st.options.rememberedExchanges;
   if (n === 0) return '';
   let text = '';
-  const landed = await chainRememberedExchanges(st, $, 'reading the rememberedExchanges', ms, async () => {
-    try {
-      text = render(characterRememberedExchanges((await rememberedExchangesFor(st, $)).rememberedExchanges, c.id, n), c.name);
-    } catch (error) {
-      rememberedExchangesFailed(st, $, 'reading the rememberedExchanges', error);
-    }
-  });
+  const landed = await chainRememberedExchanges(
+    st,
+    $,
+    'reading the rememberedExchanges',
+    ms,
+    async (live) => {
+      const m = await rememberedExchangesFor(st, $, live);
+      if (m && live()) text = render(characterRememberedExchanges(m.rememberedExchanges, c.id, n), c.name);
+    },
+    ms,
+  );
   return landed ? text : '';
 }
 
@@ -560,17 +587,34 @@ function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
   }
 }
 
-function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): void {
+/**
+ * A main turn ended, however, before any hook beneath runs (turn.complete):
+ * it is no longer the running one, and it uses up the prompt that started it,
+ * returned for onTurnComplete to file; null for a subagent's end. Runs with no
+ * character loaded too, and whatever the hooks beneath do.
+ */
+function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): { prompt: string; from?: string } | null {
+  try {
+    if (!isMainLoop(e.agentId)) return null;
+    if (st.mainTurn === e.turnId) st.mainTurn = undefined;
+    const ended = endPromptTurn(st.prompts, e.turnId);
+    st.prompts = ended.ledger;
+    return ended.from === undefined ? { prompt: ended.prompt } : { prompt: ended.prompt, from: ended.from };
+  } catch (error) {
+    log($, 'the end of a turn', error);
+    return null;
+  }
+}
+
+/** A main turn's end, `ended` its prompt (onTurnEnd): the tally, the chatTurnsToRead turns, and the end-of-turn call. */
+function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, ended: { prompt: string; from?: string } | null): void {
   try {
     // Only the main loop's end is the turn's end: a subagent's leaves the main turn's tally whole.
-    if (!isMainLoop(e.agentId) || !st.b) return;
+    if (!ended || !st.b) return;
     wake(st.b, Math.random);
     // A turn ended, however: an earlier turn's call still running is stale, its commentAfterEachTurn and suggestNextPrompt never shown.
     const gen = ++st.turnGen;
-    if (st.mainTurn === e.turnId) st.mainTurn = undefined;
-    // Every main turn uses up the prompt that started it; only an answered one files it into the chatTurnsToRead turns, and a prompt not the user's under its origin.
-    const ended = endPromptTurn(st.prompts, e.turnId);
-    st.prompts = ended.ledger;
+    // Only an answered turn files its prompt into the chatTurnsToRead turns, and a prompt not the user's under its origin.
     const answered = e.reason === 'answer' && !e.isAborted;
     if (answered) st.turns = pushTurn(st.turns, { prompt: ended.prompt, answer: e.answer, ...(ended.from === undefined ? {} : { from: ended.from }) }, st.options.chatTurnsToRead);
     const gate: TurnGate = { answered, hidden: st.hidden, interactive: st.interactive, bandSeen: st.bandSeen, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt };
@@ -600,6 +644,7 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
   st.mainTurn = undefined;
   st.conversation++;
   st.turnGen++;
+  if (st.harnessSuggestion !== null) lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-stale' });
   st.harnessSuggestion = null;
   st.suggestNextPromptGaveUp = true;
   if (st.b) endTurn(st.b, false, 0);
@@ -742,8 +787,14 @@ async function showSuggestNextPrompt(st: State, $: EngineInterface, gen: number,
   const { isShown } = await $.prompt.suggest({ text });
   // Not shown because a turn started while it was proposed: stale, not the engine's refusal.
   lg($, 'info', 'suggestNextPrompt.outcome', { outcome: suggestNextPromptOutcome(isShown, st.mainTurn !== undefined), length: text.length, ...fields });
+  if (!isShown) return;
+  // The engine's own suggestion, held for this turn, lost to the buddy's: released now, as what happened.
+  if (st.harnessSuggestion !== null) {
+    st.harnessSuggestion = null;
+    lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-replaced' });
+  }
   // Shown: the buddy remembers this suggestNextPrompt, so it can say what it suggested last.
-  if (isShown) rememberExchange(st, $, characterId, { kind: 'suggestNextPrompt', text });
+  rememberExchange(st, $, characterId, { kind: 'suggestNextPrompt', text });
 }
 
 /** The buddy has no suggestNextPrompt for turn `gen`: the engine's own, held back meanwhile, is shown, and a later one passes. `ms`: the turn's end to the reply, logged on the outcome. */
@@ -752,10 +803,11 @@ async function giveUpSuggestNextPrompt(st: State, $: EngineInterface, gen: numbe
   st.suggestNextPromptGaveUp = true;
   const text = st.harnessSuggestion;
   st.harnessSuggestion = null;
-  if (text === null || st.hidden) return;
-  // A turn started meanwhile: the engine's suggestion was for the ended turn, released unshown.
-  if (st.mainTurn !== undefined) {
-    lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-stale', ms });
+  if (text === null) return;
+  // Hidden, or a turn started meanwhile (the engine's suggestion was for the ended turn): released unshown, said as which.
+  const released = heldSuggestionRelease(st.hidden, st.mainTurn !== undefined);
+  if (released) {
+    lg($, 'info', 'suggestNextPrompt.outcome', { outcome: released, ms });
     return;
   }
   const { isShown } = await $.prompt.suggest({ text });
@@ -1086,7 +1138,8 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
   let cleared = false;
   let said = '';
   let reason = '';
-  let usage: Record<string, number> = {};
+  // What the calls sent so far cost, the first's kept whatever the retry does: a timeout or a throw still logs it.
+  let paid: unknown;
   // The answer belongs to the one asked: a character switched in meanwhile never says it.
   let shown = true;
   let late = false;
@@ -1106,19 +1159,19 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
         const send = async (): Promise<ModelCompleteResult> =>
           $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: requestTimeoutMs(ms, (await $.clock.now()) - t0) });
         const first = await send();
+        paid = first.usage;
         const leftMs = ms - ((await $.clock.now()) - t0);
         if (late || !retriesEmpty(first, leftMs)) return first;
         // The model returned no words and the question is still open: asked once more, its outcome counting both calls.
         lg($, 'debug', 'ask.retry', { reason: 'empty reply', leftMs });
         const again = await send();
-        return { ...again, usage: sumUsage(first.usage, again.usage) } as ModelCompleteResult;
+        paid = sumUsage(first.usage, again.usage);
+        return { ...again, usage: paid } as ModelCompleteResult;
       })(),
       ms,
     );
     late = r === 'timeout';
     lg($, 'debug', 'ask.result', shape(r));
-    // What the call cost and how much it read from the prompt cache.
-    usage = r !== 'timeout' && 'usage' in r ? usageFields(r.usage) : {};
     const text = r !== 'timeout' && r.isAnswered ? oneLine(r.text) : '';
     if (conversation !== st.conversation) {
       // Asked about a conversation /clear or a resume ended: never shown as an answer about this one, never remembered in it.
@@ -1135,13 +1188,23 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
       shown = failAnswer(b, reason, c.id);
     }
   } catch (error) {
-    reason = message(error);
-    log($, 'a /buddy question', error);
-    shown = failAnswer(b, reason, c.id);
+    if (conversation !== st.conversation) {
+      // Failed after /clear or a resume: dropped as an answer is, never a failure about the old chat shown in this one.
+      cleared = true;
+      reason = 'the conversation it was asked in ended';
+      L.error('a /buddy question', error, { dropped: true });
+      shown = failAnswer(b, reason, c.id);
+    } else {
+      reason = message(error);
+      log($, 'a /buddy question', error);
+      shown = failAnswer(b, reason, c.id);
+    }
   } finally {
     st.asking = null;
     endQuestion(b);
   }
+  // What the calls cost and how much they read from the prompt cache.
+  const usage = usageFields(paid);
   if (cleared) {
     warn($, 'ask.dropped', `${c.name}'s answer was dropped: the conversation it was asked in ended`, { asker: c.id });
     lg($, 'info', 'ask.outcome', { outcome: 'dropped', reason, ms: Date.now() - started, ...usage });
@@ -1283,7 +1346,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     lastKey: '',
     lastTickError: '',
     rememberedExchanges: null,
-    rememberedExchangesChain: Promise.resolve(),
+    rememberedExchangesChain: newChain(),
+    rememberedExchangesWrites: latestWrites<Stored>(),
     rememberedExchangesError: '',
     rememberedExchangesHangSaid: false,
     asking: null,
@@ -1358,9 +1422,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return next(e);
   });
 
+  // The running-turn marker and the prompt clear first: a hook beneath that throws never leaves the turn running.
   on('turn.complete', async ($, e, next) => {
+    const ended = onTurnEnd(st, $, e);
     const r = await next(e);
-    onTurnComplete(st, $, e);
+    onTurnComplete(st, $, e, ended);
     return r;
   });
 

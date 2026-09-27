@@ -127,13 +127,16 @@ export function turnSystem(persona: string, wants: TurnWants): string {
 
 /**
  * One main-thread turn: the prompt it began with and what Claude answered.
- * `from`, set when that prompt was not the user's: its origin (a peer, a task
- * notification, a plugin), or `unknown` when no submission of it was seen.
+ * `from`, set when that prompt was not known to be the user's: its origin (a
+ * peer, a task notification, a plugin), `unclassified` when the engine could
+ * not place it, or `unknown` when no submission of it was seen.
  */
 export type Turn = { prompt: string; answer: string; from?: string };
 
-/** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn. */
-const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk'];
+/** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
+const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
+/** Origins that say nothing of whose a prompt was: no submission seen (`unknown`), or one the engine could not place. */
+const UNKNOWN_ORIGINS: readonly string[] = ['unknown', 'unclassified'];
 
 /** Whether a prompt of origin `kind` (prompt.submit's `origin.kind`) is the user's own. */
 export function isUserOrigin(kind: string): boolean {
@@ -148,34 +151,43 @@ const PROMPTS_KEPT = 10;
  * text: `entered`, the prompts that entered (prompt.submit's result) and
  * started no turn yet, oldest first; `started`, the main turns begun
  * (turn.start), by id, with their text and whose it was (`seen` false until
- * its submission settles).
+ * its submission settles; `queued` when it took a waiting prompt).
  */
 export type PromptLedger = {
   entered: readonly { text: string; from?: string }[];
-  started: readonly { turnId: string; text: string; from?: string; seen: boolean }[];
+  started: readonly { turnId: string; text: string; from?: string; seen: boolean; queued?: boolean }[];
 };
 export const NO_PROMPTS: PromptLedger = { entered: [], started: [] };
 
 /**
  * A prompt that entered the session, `origin` its origin's kind. One typed
- * over the running turn `turnId` waits for a turn of its own; one not the
- * user's with a `turnId` was delivered into that turn and starts none. A turn
- * already started with this text (its turn.start came first) takes its origin.
+ * over the running turn `turnId` waits for a turn of its own, and never
+ * matches that turn; one not the user's with a `turnId` was delivered into
+ * that turn and starts none. A turn already started with this text (its
+ * turn.start came first) takes its origin; so does one that took a waiting
+ * prompt of the same text when this one arrives idle, since an idle prompt's
+ * turn starts inside its own submission: the waiting one started no turn.
  */
 export function submitPrompt(l: PromptLedger, text: string, origin: string, turnId?: string): PromptLedger {
   const user = isUserOrigin(origin);
   if (turnId !== undefined && !user) return l;
   const from = user ? undefined : origin;
-  const i = l.started.findIndex((s) => !s.seen && s.text === text);
-  if (i >= 0) return { ...l, started: l.started.map((s, k) => (k === i ? { ...s, from, seen: true } : s)) };
+  const i = l.started.findIndex((s) => s.turnId !== turnId && !s.seen && s.text === text);
+  const j = i >= 0 || turnId !== undefined ? i : l.started.findLastIndex((s) => s.queued === true && s.text === text);
+  if (j >= 0) return { ...l, started: l.started.map((s, k) => (k === j ? { turnId: s.turnId, text: s.text, from, seen: true } : s)) };
   return { ...l, entered: [...l.entered, { text, from }].slice(-PROMPTS_KEPT) };
 }
 
-/** The main turn `turnId` began with `text` (turn.start): it takes the oldest entered prompt of that text, and its origin. */
+/**
+ * The main turn `turnId` began with `text` (turn.start): it takes the oldest
+ * entered prompt of that text, and its origin. Every prompt entered before
+ * that one, or all when none matches, started no turn (delivered into an
+ * earlier one): dropped, never handed to a later turn.
+ */
 export function startPromptTurn(l: PromptLedger, turnId: string, text: string): PromptLedger {
   const i = l.entered.findIndex((p) => p.text === text);
-  const turn = i >= 0 ? { turnId, text, from: l.entered[i]!.from, seen: true } : { turnId, text, seen: false };
-  return { entered: l.entered.filter((_, k) => k !== i), started: [...l.started, turn].slice(-PROMPTS_KEPT) };
+  const turn = i >= 0 ? { turnId, text, from: l.entered[i]!.from, seen: true, queued: true } : { turnId, text, seen: false };
+  return { entered: i >= 0 ? l.entered.slice(i + 1) : [], started: [...l.started, turn].slice(-PROMPTS_KEPT) };
 }
 
 /**
@@ -208,8 +220,8 @@ export function pushTurn(turns: readonly Turn[], turn: Turn, size = CHAT_TURNS_T
 export function chatTurnsToReadText(turns: readonly Turn[]): string {
   if (turns.length === 0) return '';
   const blocks = turns.map((t) => {
-    // A prompt that was not the user's is never shown as what the user asked.
-    const asked = t.from === undefined ? 'The user asked Claude:' : `Claude was sent, not by the user (${t.from}):`;
+    // A prompt that was not the user's is never shown as what the user asked; one of unknown origin is never said not to be.
+    const asked = t.from === undefined ? 'The user asked Claude:' : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:' : `Claude was sent, not by the user (${t.from}):`;
     return `${asked}\n${tail(t.prompt, TURN_PROMPT_CAP) || '(not seen)'}\n\nClaude answered:\n${tail(t.answer, TURN_ANSWER_CAP) || '(no text)'}\n\n`;
   });
   return `The main chat's last ${turns.length === 1 ? 'turn' : `${turns.length} turns`}, oldest first:\n\n${blocks.join('')}`;

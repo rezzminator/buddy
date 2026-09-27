@@ -29,7 +29,9 @@ Each session has one record in `$.store`, under `rememberedExchanges:{session id
 - **In the store.** `$.store` survives `/reload`, so a plugin reload mid-session keeps the thread.
 - **Bounded.** The store keeps the 20 most recently written sessions (`REMEMBERED_EXCHANGES_SESSIONS`); older records are deleted (`staleKeys`).
 
-Every read and write goes through one chain, in the order made, so an answer is saved before the next question reads the ring.
+Every read and write goes through one chain, in the order made, so an answer is saved before the next question reads the ring (`chainRememberedExchanges`, on `chained`).
+A link's deadline counts only its own run: a write gets 30 seconds (`REMEMBERED_EXCHANGES_WRITE_DEADLINE_MS`), a read what is left of its caller's deadline. A link still running at its deadline is abandoned, said once, and the chain goes on; a read whose caller gives up while it still waits is dropped unrun (`rememberedExchanges.dropped`), never said failed.
+An abandoned link writes nothing once it lands: a late store read never replaces the book a later link loaded, and at most one store write per session is in flight (`latestWrites`), so a late write never lands over a newer one.
 
 ## How it reaches the model
 
@@ -83,9 +85,10 @@ A stored record that is malformed keeps what still reads and says how many excha
 | File | Symbols |
 | --- | --- |
 | [`src/rememberedExchanges.ts`](../../plugins/buddy/src/rememberedExchanges.ts) | `REMEMBERED_EXCHANGES_DEFAULT`, `REMEMBERED_EXCHANGES_MAX`, `REMEMBERED_EXCHANGES_TEXT_CAP`, `REMEMBERED_EXCHANGES_SESSIONS`, `REMEMBERED_EXCHANGES_KEY_PREFIX`, `Exchange`, `RememberedExchanges`, `Stored`, `storeKey`, `capText`, `remember`, `addRememberedExchange`, `characterRememberedExchanges`, `render`, `rememberedExchangesOf`, `staleKeys` |
+| [`src/chain.ts`](../../plugins/buddy/src/chain.ts) | `chained`, `newChain`, `latestWrites`, `LinkOutcome` |
 | [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `questionPrompt`, `chatTurnsToReadText`, `turnPrompt` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `rememberedExchangesFor`, `pruneRememberedExchanges`, `rememberExchange`, `readRememberedExchanges`, `heard`, `rememberedExchangesFailed`, `ask`, `turnCall`, `sayCommentAfterEachTurn`, `showSuggestNextPrompt` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `rememberedExchangesFor`, `pruneRememberedExchanges`, `chainRememberedExchanges`, `rememberExchange`, `readRememberedExchanges`, `heard`, `rememberedExchangesFailed`, `ask`, `turnCall`, `sayCommentAfterEachTurn`, `showSuggestNextPrompt` |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `rememberedExchanges` |
 
 ## How it's tested

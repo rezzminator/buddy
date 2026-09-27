@@ -224,9 +224,39 @@ describe('the prompt ledger', () => {
     peer = submitPrompt(peer, 'P1', 'peer');
     expect(endPromptTurn(peer, 't1').from).toBe('peer');
   });
-  test('the user\'s own origins: the terminal, Remote Control, an SDK host', () => {
-    expect(['composer', 'bridge', 'sdk'].every(isUserOrigin)).toBe(true);
-    expect(['peer', 'task-notification', 'plugin', 'unclassified', 'auto-continuation', 'scheduled-trigger'].some(isUserOrigin)).toBe(false);
+  test('the user\'s own origins: the terminal, Remote Control, an SDK host, the owner\'s Slack ping, a continuation of the user\'s own action', () => {
+    expect(['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'].every(isUserOrigin)).toBe(true);
+    expect(['peer', 'task-notification', 'plugin', 'unclassified', 'scheduled-trigger', 'channel'].some(isUserOrigin)).toBe(false);
+  });
+  test('a submission never matches the turn it was typed over, even with the same text', () => {
+    // A continuation turn carries '' and an image-only prompt typed over it carries '' too.
+    let l = startPromptTurn(NO_PROMPTS, 't1', '');
+    l = submitPrompt(l, '', 'composer', 't1');
+    expect(endPromptTurn(l, 't1').from).toBe('unknown');
+  });
+  test('a user prompt delivered into a running turn, which started no turn, never gives its origin to a later turn of the same text', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    // Typed over t1 and delivered into it: no turn.start of its own.
+    l = submitPrompt(l, 'yes', 'composer', 't1');
+    l = endPromptTurn(l, 't1').ledger;
+    // A peer's 'yes' arrives idle: its turn.start comes first, inside prompt.submit's next.
+    l = startPromptTurn(l, 't2', 'yes');
+    l = submitPrompt(l, 'yes', 'peer');
+    expect(endPromptTurn(l, 't2').from).toBe('peer');
+    // The user's own next 'yes' is the user's.
+    l = startPromptTurn(endPromptTurn(l, 't2').ledger, 't3', 'yes');
+    l = submitPrompt(l, 'yes', 'composer');
+    expect(filed(endPromptTurn(l, 't3'))).toEqual({ prompt: 'yes', from: undefined });
+  });
+  test('prompts left waiting when a turn starts from another are dropped: none is handed to a later turn', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    l = submitPrompt(l, 'again', 'composer', 't1');
+    l = endPromptTurn(l, 't1').ledger;
+    // t2 was started by something else (its submission never seen): 'again' was delivered into t1.
+    l = startPromptTurn(l, 't2', 'a task finished');
+    l = endPromptTurn(l, 't2').ledger;
+    l = startPromptTurn(l, 't3', 'again');
+    expect(endPromptTurn(l, 't3').from).toBe('unknown');
   });
   test('/clear and a resume start a fresh conversation; an exit does not matter', () => {
     expect(endsConversation('clear')).toBe(true);
@@ -278,6 +308,13 @@ describe('a turn not started by the user', () => {
     const w = chatTurnsToReadText([{ prompt: 'hello from a peer', answer: 'Hi, peer.', from: 'peer' }]);
     expect(w).not.toContain('The user asked Claude');
     expect(w).toContain('Claude was sent, not by the user (peer):\nhello from a peer\n\nClaude answered:\nHi, peer.');
+  });
+  test('a turn whose origin was never seen, or the engine could not place, is shown as of unknown origin, never as not by the user', () => {
+    for (const from of ['unknown', 'unclassified']) {
+      const w = chatTurnsToReadText([{ prompt: 'go on', answer: 'Going.', from }]);
+      expect(w).not.toContain('not by the user');
+      expect(w).toContain('Claude was sent, from an unknown origin:\ngo on\n\nClaude answered:\nGoing.');
+    }
   });
 });
 
