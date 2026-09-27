@@ -53,7 +53,7 @@ type State = {
   original: Entry | null;
   /** The picked original's roll and soul, as saved: a restart draws it with no backup scan. */
   saved: SavedOriginal | undefined;
-  /** Why characters/ or the characterDir could not be listed: the menu says it in the group. */
+  /** Why characters/ or the customCharactersFolder could not be listed: the menu says it in the group. */
   shippedError: string | undefined;
   folderError: string | undefined;
   menu: MenuState | null;
@@ -92,7 +92,7 @@ type State = {
   suggestGaveUp: boolean;
   /** The inherit read of the main chat's model failed once and was logged; a later failure falls back to opus in silence. */
   inheritFailed: Set<'model'>;
-  /** The effort of the main chat's latest model request (turn.step), which effort inherit sends; undefined before its first. */
+  /** The effort of the main chat's latest model request (turn.step), which buddyEffort inherit sends; undefined before its first. */
   mainEffort: ObservedEffort;
   /** The prompts given to the main chat (prompt.submit) and the main turns they started (turn.start), by id: an answered turn files its own into `turns`. */
   prompts: PromptLedger;
@@ -100,7 +100,7 @@ type State = {
   mainTurn: string | undefined;
   /** Bumped only by /clear or a resume: a /buddy question asked in an earlier conversation is dropped, never shown or remembered in this one. */
   conversation: number;
-  /** The main chat's last contextTurns answered turns, oldest first, read by the end-of-turn call and a question's completion. */
+  /** The main chat's last chatTurnsToRead answered turns, oldest first, read by the end-of-turn call and a question's completion. */
   turns: Turn[];
   /** The options' warnings were said: once, in the first greeting's bubble. */
   warned: boolean;
@@ -196,8 +196,8 @@ async function loadRoster(st: State, $: EngineInterface): Promise<void> {
   st.shippedError = builtin.error;
   st.folderError = undefined;
   let user: Entry[] = [];
-  if (st.options.characterDir) {
-    let dir = st.options.characterDir;
+  if (st.options.customCharactersFolder) {
+    let dir = st.options.customCharactersFolder;
     if (dir.startsWith('~')) dir = expandHome(dir, await $.env.get('HOME'));
     const mine = await readDir($, dir.replace(/\/+$/, ''), 'user');
     if (mine.error) errors.push(mine.error);
@@ -219,7 +219,7 @@ function applyChoice(st: State, $: EngineInterface): void {
   // An ignored option is said once, in the first greeting's bubble, as a character or roster error is: never a silent revert.
   const warning = startWarning(choice.error, st.roster.errors, st.warned ? [] : st.options.errors);
   st.warned = true;
-  if (!st.b) st.b = createBrain(choice.character, st.options.motion, st.options.ambiguousWidth === 'wide');
+  if (!st.b) st.b = createBrain(choice.character, st.options.walkAlongPrompt, st.options.ambiguousCharacterWidth === 'wide');
   st.b.pets = st.pets;
   setCharacter(st.b, choice.character, warning, Math.random);
   L.context.character = choice.character.id;
@@ -283,9 +283,9 @@ function chainMemory(st: State, $: EngineInterface, what: string, ms: number, li
   return bounded;
 }
 
-/** Appends the exchange `x` to the ring of `characterId` and saves the session's book; the memory option 0 keeps nothing. */
+/** Appends the exchange `x` to the ring of `characterId` and saves the session's book; the rememberedExchanges option 0 keeps nothing. */
 function keep(st: State, $: EngineInterface, characterId: string, x: Exchange): void {
-  const n = st.options.memory;
+  const n = st.options.rememberedExchanges;
   if (n === 0) return;
   void chainMemory(st, $, `remembering the ${x.kind}`, MEMORY_WRITE_DEADLINE_MS, async () => {
     try {
@@ -301,7 +301,7 @@ function keep(st: State, $: EngineInterface, characterId: string, x: Exchange): 
 
 /** What `c` remembers of this session, rendered for a prompt, after every write made before; '' when nothing, off, or not read within the caller's `ms`. */
 async function recollect(st: State, $: EngineInterface, c: Character, ms: number): Promise<string> {
-  const n = st.options.memory;
+  const n = st.options.rememberedExchanges;
   if (n === 0) return '';
   let text = '';
   const landed = await chainMemory(st, $, 'reading the memory', ms, async () => {
@@ -460,7 +460,7 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     lg($, 'debug', 'session.build-unread', { error: message(error) });
   }
-  lg($, 'info', 'session.start', { build, model: st.options.quipModel, effort: st.options.effort, level: L.level, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
+  lg($, 'info', 'session.start', { build, model: st.options.buddyModel, effort: st.options.buddyEffort, level: L.level, quips: st.options.commentAfterEachTurn, suggestions: st.options.suggestNextPrompt, memory: st.options.rememberedExchanges });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
@@ -526,7 +526,7 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
   }
 }
 
-/** Records the effort of a request of the running main turn, which effort inherit sends; a subagent's or a side request's leaves it. */
+/** Records the effort of a request of the running main turn, which buddyEffort inherit sends; a subagent's or a side request's leaves it. */
 function onTurnStep(st: State, $: EngineInterface, e: TurnStepInput): void {
   try {
     st.mainEffort = observeEffort(st.mainEffort, e, st.mainTurn);
@@ -572,10 +572,10 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
     const ended = endPromptTurn(st.prompts, e.turnId);
     st.prompts = ended.ledger;
     const answered = e.reason === 'answer' && !e.isAborted;
-    if (answered) st.turns = pushTurn(st.turns, { prompt: ended.prompt, answer: e.answer, ...(ended.from === undefined ? {} : { from: ended.from }) }, st.options.contextTurns);
-    const gate: TurnGate = { answered, hidden: st.hidden, interactive: st.interactive, bandSeen: st.bandSeen, quips: st.options.quips, suggestions: st.options.suggestions };
+    if (answered) st.turns = pushTurn(st.turns, { prompt: ended.prompt, answer: e.answer, ...(ended.from === undefined ? {} : { from: ended.from }) }, st.options.chatTurnsToRead);
+    const gate: TurnGate = { answered, hidden: st.hidden, interactive: st.interactive, bandSeen: st.bandSeen, quips: st.options.commentAfterEachTurn, suggestions: st.options.suggestNextPrompt };
     const may = turnMay(gate);
-    const { turn, lineDue } = endTurn(st.b, may.line, st.options.quipCooldownSec);
+    const { turn, lineDue } = endTurn(st.b, may.line, st.options.secondsBetweenComments);
     const wants: TurnWants = { line: lineDue, next: may.next };
     // The engine's own suggestion is held back only while this turn's call may still propose one; one already held (the engine may suggest before this code runs) is shown or released, never erased.
     st.suggestGaveUp = !wants.next;
@@ -615,24 +615,24 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
  */
 async function callSettings(st: State, $: EngineInterface, event: string): Promise<{ model: string; effort?: Effort }> {
   let sessionModel: string | undefined;
-  if (st.options.quipModel === INHERIT) {
+  if (st.options.buddyModel === INHERIT) {
     try {
       sessionModel = await $.session.model();
     } catch (error) {
-      if (!st.inheritFailed.has('model')) log($, "reading the main chat's model for quipModel inherit", error);
+      if (!st.inheritFailed.has('model')) log($, "reading the main chat's model for buddyModel inherit", error);
       st.inheritFailed.add('model');
     }
   }
-  const model = resolveModel(st.options.quipModel, sessionModel);
-  const effort = resolveEffort(st.options.effort, st.mainEffort);
+  const model = resolveModel(st.options.buddyModel, sessionModel);
+  const effort = resolveEffort(st.options.buddyEffort, st.mainEffort);
   lg($, 'debug', event, { model, effort: effort ?? 'none' });
   return effort ? { model, effort } : { model };
 }
 
 /**
  * One call at a turn's end writes the buddy's line and the next-prompt
- * suggestion, those wanted: a quipModel completion on the main chat's last
- * contextTurns turns, in the voice of `c`, the character drawn as the turn ended.
+ * suggestion, those wanted: a buddyModel completion on the main chat's last
+ * chatTurnsToRead turns, in the voice of `c`, the character drawn as the turn ended.
  * One deadline covers the memory read, the settings and the completion.
  * A timeout, a refusal, an empty reply or a throw fails the line as a quip
  * fails and gives the suggestion up; a reply after a later turn ended (or
@@ -932,7 +932,7 @@ async function openMenu(st: State, $: EngineInterface): Promise<{ text: string }
   if (!b) return { text: 'buddy is still starting; try again in a moment' };
   lg($, 'info', 'menu.open', { current: b.character.id });
   const originals = await findOriginals($);
-  const model = buildMenu({ roster: st.roster, shippedError: st.shippedError, folder: { isSet: Boolean(st.options.characterDir), error: st.folderError }, originals });
+  const model = buildMenu({ roster: st.roster, shippedError: st.shippedError, folder: { isSet: Boolean(st.options.customCharactersFolder), error: st.folderError }, originals });
   const current = currentKeyOf(b.character.id, st.saved?.variant);
   const start = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
   stopMenu(st);
@@ -1069,7 +1069,7 @@ function shape(r: ModelCompleteResult | 'timeout'): LogFields {
  * One /buddy question of `c` to its outcome, always visible: an answer, or
  * "{name} couldn't answer: {reason}" in the bubble. The quip model answers
  * from persona, memory (what `c` remembered before this question), the main
- * chat's last contextTurns turns (`recentTurns`) and question, whether or not
+ * chat's last chatTurnsToRead turns (`recentTurns`) and question, whether or not
  * the main turn is running. One deadline, from the question's start, covers
  * the memory read, the settings and the completion.
  */
@@ -1370,10 +1370,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return yield* next(e);
   });
 
-  // With suggestions on, the engine's own guess is held back: the buddy's end-of-turn call proposes the next prompt instead.
+  // With suggestNextPrompt on, the engine's own guess is held back: the buddy's end-of-turn call proposes the next prompt instead.
   on('prompt.suggest', async ($, e, next) => {
     try {
-      if (dropsHarnessSuggestion(e.origin, st.options.suggestions, st.hidden || st.b === null, st.suggestGaveUp)) {
+      if (dropsHarnessSuggestion(e.origin, st.options.suggestNextPrompt, st.hidden || st.b === null, st.suggestGaveUp)) {
         st.harnessSuggestion = e.text;
         lg($, 'debug', 'suggest.harness-held');
         return { isShown: false };

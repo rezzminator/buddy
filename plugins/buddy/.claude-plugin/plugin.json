@@ -13,80 +13,80 @@
   "userConfig": {
     "character": {
       "type": "string",
-      "title": "Character id (see /buddy-personality)",
-      "description": "The character drawn above the prompt; a pick in /buddy-personality overrides it for this machine, and picking this one there returns to it.",
+      "title": "Which character to show (see /buddy-personality)",
+      "description": "The id of the character drawn above your prompt, such as duck or cat. A pick in /buddy-personality overrides it on this machine; picking this same character there returns to it.",
       "default": "duck"
     },
-    "characterDir": {
+    "customCharactersFolder": {
       "type": "directory",
-      "title": "Folder of your own character JSON files",
-      "description": "Each {id}.json in it is a character (see the plugin's schema/character.schema.json); an id shared with a built-in replaces the built-in. Empty: built-ins only.",
+      "title": "Folder with your own characters (optional)",
+      "description": "A folder of character files, one {id}.json each, following the plugin's schema/character.schema.json. They join the built-in characters in /buddy-personality; one with the same id as a built-in replaces it. Leave empty to use only the built-in characters.",
       "default": ""
     },
-    "motion": {
+    "walkAlongPrompt": {
       "type": "boolean",
-      "title": "Walk along the prompt line",
-      "description": "Off: the character stands still and only animates in place.",
+      "title": "Walk back and forth along the prompt line",
+      "description": "On: the character walks along the line above your prompt. Off: it stays in one place and only animates there.",
       "default": true
     },
-    "quips": {
+    "commentAfterEachTurn": {
       "type": "boolean",
-      "title": "The buddy says a line at the end of every answered turn (spends tokens)",
-      "description": "One short call on quipModel at the end of every answered turn, seeing the chat's last contextTurns turns, writes the buddy's in-character line and, with suggestions on, the prompt suggestion too. Set false to keep the buddy quiet.",
+      "title": "Say a line after each of Claude's answers (uses tokens)",
+      "description": "After every answered turn, one short call on buddyModel reads the last chatTurnsToRead turns of your chat and writes a line in the character's voice for its speech bubble. The same call also writes the prompt suggestion when suggestNextPrompt is on. secondsBetweenComments spaces the lines out. Off: the buddy stays quiet after turns.",
       "default": true
     },
-    "quipModel": {
+    "buddyModel": {
       "type": "string",
-      "title": "Model for the buddy's lines, suggestions and questions",
-      "description": "An alias (opus, sonnet, haiku), a full model id, or inherit: the main chat's model, read at every call (opus when it cannot be read). It writes the end-of-turn line and suggestion and answers every /buddy question.",
+      "title": "Model the buddy uses (opus, sonnet, haiku, a model id, or inherit)",
+      "description": "The model behind every buddy call: the line after each turn (commentAfterEachTurn), the suggested next prompt (suggestNextPrompt) and the answer to every /buddy question. Give an alias (opus, sonnet, haiku) or a full model id. inherit uses whatever model your chat is on, read at each call, and opus when it cannot be read.",
       "default": "opus"
     },
-    "effort": {
+    "buddyEffort": {
       "type": "string",
-      "title": "How hard quipModel thinks: low, medium, high, xhigh, max or inherit",
-      "description": "The effort of every quipModel call the buddy makes (the end-of-turn line and suggestion, every /buddy question). Higher is slower. inherit uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies.",
+      "title": "How hard the buddy's model thinks: low, medium, high, xhigh, max or inherit",
+      "description": "The thinking effort of every buddyModel call. Higher is slower and costs more. inherit uses the effort of your chat's latest request; before its first request, or when that request sets none or a number, no effort is sent and the model's own default applies.",
       "default": "low"
     },
-    "quipCooldownSec": {
+    "secondsBetweenComments": {
       "type": "number",
-      "title": "Minimum seconds between the buddy's lines",
-      "description": "A line waits at least this long after the previous one; 0 is every answered turn. The suggestion is written every turn regardless.",
+      "title": "Fewest seconds between two buddy lines (0 = after every answer)",
+      "description": "With commentAfterEachTurn on, a new line waits at least this many seconds after the previous one. 0 says one after every answered turn. It does not space out the prompt suggestion, which suggestNextPrompt writes every turn.",
       "default": 0
     },
-    "suggestions": {
+    "suggestNextPrompt": {
       "type": "boolean",
-      "title": "The buddy writes the prompt suggestion (spends tokens)",
-      "description": "The same short call at the end of every answered turn proposes your next prompt, in your words. Claude Code's own suggestion is held back and shown only when the buddy has none. Set false to keep Claude Code's own.",
+      "title": "The buddy suggests your next prompt (uses tokens)",
+      "description": "After every answered turn, the same short call on buddyModel proposes your next prompt, in your words, as the grey suggestion in the prompt box. Claude Code's own suggestion is held back and shown only when the buddy has none. Off: Claude Code's own suggestion shows as usual.",
       "default": true
     },
-    "memory": {
+    "rememberedExchanges": {
       "type": "number",
-      "title": "How many recent exchanges the buddy remembers (0 = off)",
-      "description": "Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), or one line the buddy said, or a next prompt it suggested that the prompt box showed. They go into its next answer or quip, kept per session and per character; at most 30.",
+      "title": "How many recent exchanges the buddy remembers (0 = none, at most 30)",
+      "description": "An exchange is a /buddy question with its answer (or the question alone when it got none), a line the buddy said, or a next prompt it suggested that the prompt box showed. The buddy sees these in its next answer or line. Kept per session and per character. More exchanges, more tokens per call.",
       "default": 6
     },
-    "contextTurns": {
+    "chatTurnsToRead": {
       "type": "number",
-      "title": "How many recent turns the buddy reads (1 to 10)",
-      "description": "How many of the chat's latest answered turns (your prompt and Claude's answer each) each call reads: questions and the end-of-turn call. More turns, more tokens per call.",
+      "title": "How many recent chat turns the buddy reads (1 to 10)",
+      "description": "How many of your chat's latest answered turns (your prompt and Claude's answer) every buddy call reads: /buddy questions, commentAfterEachTurn and suggestNextPrompt. More turns, more tokens per call.",
       "default": 3
     },
     "logLevel": {
       "type": "string",
-      "title": "Log level: error, info or debug",
-      "description": "What the plugin writes to logFile: error only failures; info also sessions, commands, asks and their outcomes, quips, menu picks; debug also question text, model result shapes and band decisions. Never your identity.",
+      "title": "How much the plugin logs: error, info or debug",
+      "description": "What the plugin writes to logFile. error: failures only. info: also sessions, commands, questions and their outcomes, the buddy's lines and menu picks. debug: also question text, the shape of model results and drawing decisions. It never logs who you are.",
       "default": "info"
     },
     "logFile": {
       "type": "string",
-      "title": "Log file (empty = no log file)",
-      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record, retried when another session writes at the same moment, capped at 1 MB with one rotation (.1). /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to the debug log.",
+      "title": "Where the plugin log goes (empty = no log file)",
+      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record, capped at 1 MB with one older copy (.1); /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to Claude Code's debug log.",
       "default": "$CLAUDE_CONFIG_DIR/buddy/buddy.log"
     },
-    "ambiguousWidth": {
+    "ambiguousCharacterWidth": {
       "type": "string",
-      "title": "Ambiguous-width characters: narrow or wide",
-      "description": "How many columns your terminal gives East Asian ambiguous-width characters (a CJK locale often draws them wide): narrow 1, wide 2. The bubble and the sprite are laid out to it.",
+      "title": "Width of ambiguous-width characters in your terminal: narrow or wide",
+      "description": "Some characters (East Asian ambiguous width) take one column in most terminals and two in some, often with a CJK locale. narrow: 1 column; wide: 2. The speech bubble and the character are laid out to match. Change it only if the bubble's border looks misaligned.",
       "default": "narrow"
     }
   }

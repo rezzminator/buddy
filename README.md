@@ -56,8 +56,8 @@ server of its own.
   call, gets an "oops".
 - 💬 **Talks back, and remembers.** `/buddy why is this slow?` gets a
   one-line answer, in character, that says what you and Claude both
-  missed. It is one fast call that sees the chat's last `contextTurns` turns (default 3).
-  It keeps your last few exchanges (the `memory` option) for its
+  missed. It is one fast call that sees the chat's last `chatTurnsToRead` turns (default 3).
+  It keeps your last few exchanges (the `rememberedExchanges` option) for its
   next answer.
 - 🐣 **Your own buddy, back.** `/buddy-personality` opens a menu with a
   live preview; its "Yours" group recomputes the companion Claude Code
@@ -66,7 +66,7 @@ server of its own.
 - 🤫 **Free unless you ask.** Walking, petting, switching and reactions never
   call a model. Only a question you ask, and one short call at the end of
   each answered turn for the buddy's line and the prompt suggestion (on by
-  default; `quips: false` and `suggestions: false` turn them off), spend tokens;
+  default; `commentAfterEachTurn: false` and `suggestNextPrompt: false` turn them off), spend tokens;
   a headless `claude -p` run makes no end-of-turn call.
 - 🛡️ **Never in the way.** A character that fails to load is replaced by the
   duck, who says why; a hook that fails logs the error and steps aside.
@@ -167,7 +167,7 @@ the left, a live preview of the highlighted one on the right.
   twice, as the native install and as the npm install rolled it: the two
   turned your account id into a different species, eyes, hat and stats, and
   the preview lets you recognise yours.
-- **Your folder**: your own characters, from the `characterDir` option.
+- **Your folder**: your own characters, from the `customCharactersFolder` option.
 
 ↑ and ↓ move the highlight, and the preview follows: the sprite in its idle
 animation, the name, its description (for your original, its saved personality) and a greeting in its voice;
@@ -189,7 +189,7 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
 
 - **Walking.** The character steps one column every `stepMs` (200 ms unless
   the character says otherwise), turns at the edge, and rests now and then.
-  It stops walking while a bubble is up. With the `motion` option off, or a
+  It stops walking while a bubble is up. With the `walkAlongPrompt` option off, or a
   character that does not walk, it stands still and its frames still
   animate.
 - **While Claude works** it draws its `working` pose and stands still. From
@@ -212,14 +212,14 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   sprite shows the bubble alone. A long bubble is cut with `…` to fit the
   rows it has. Text is measured in terminal cells, so CJK text and emoji
   line up; if your terminal draws East Asian ambiguous-width characters two
-  columns wide, as a CJK locale often does, set `ambiguousWidth` to `wide`.
+  columns wide, as a CJK locale often does, set `ambiguousCharacterWidth` to `wide`.
 - **Hover card.** Hover over the character to see its name, description,
   pets, mood and the questions asked this session. It needs a terminal that
   reports the mouse; elsewhere the card never shows.
 - **Questions.** `/buddy {question}` is
-  one fast call on `quipModel` (default `opus`) at the `effort` option's
+  one fast call on `buddyModel` (default `opus`) at the `buddyEffort` option's
   level (default `low`), with the character's persona, the character rule,
-  its memory and the chat's last `contextTurns` turns (default 3; each of your prompts' last 1500
+  its memory and the chat's last `chatTurnsToRead` turns (default 3; each of your prompts' last 1500
   characters and each of Claude's answers' last 3000), answered at once,
   even while Claude is busy mid-turn. The character rule tells it to become
   the character completely and say one useful thing that both you and
@@ -246,14 +246,14 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   `~/.claude.json`. `/buddy log` shows the path and the last 20 lines, to
   paste into an issue; an empty `logFile` writes no file.
 - **Quips** (on by default). At the end of every answered turn, tool use or
-  not, one short call on `quipModel` at the `effort` level (at most 120
+  not, one short call on `buddyModel` at the `buddyEffort` level (at most 120
   output tokens, a 30-second deadline) reads the chat's last
-  `contextTurns` turns (your
+  `chatTurnsToRead` turns (your
   prompts and Claude's answers, each capped from its end) and the turn's
   tally (the tools it used, how many failed, the last Bash command) and
   writes the buddy's one-line reaction for the bubble, told the same
-  character rule as a question. `quipCooldownSec`
-  (default 0) spaces the lines out; `quips: false` keeps the buddy quiet. An
+  character rule as a question. `secondsBetweenComments`
+  (default 0) spaces the lines out; `commentAfterEachTurn: false` keeps the buddy quiet. An
   aborted turn, or a subagent's, makes no call.
 - **Prompt suggestions** (on by default). The same call also writes the
   prompt you are most likely to send next, in your own words, the
@@ -266,7 +266,7 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   the band never draws (VS Code, mobile) the call writes the suggestion
   alone, and no line is paid for. Each turn's line replaces the last
   turn's at once; a `/buddy` answer, its failure, a refusal or the thinking
-  line hold the bubble against it. `suggestions: false` leaves Claude Code's own alone;
+  line hold the bubble against it. `suggestNextPrompt: false` leaves Claude Code's own alone;
   with it on, turning off Claude Code's own prompt suggestions saves paying
   for both.
 - **Errors are never silent.** A chosen character that is missing or invalid
@@ -280,31 +280,31 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
 Set these through `/plugin configure`, or under `pluginConfigs["buddy@buddy"].options`
 in `settings.json`. The key must be the full plugin id: Claude Code silently
 ignores options under any other key. A value buddy cannot use is ignored by
-name and its default kept (a `memory` above 30 is capped to 30): the first
+name and its default kept (a `rememberedExchanges` above 30 is capped to 30): the first
 greeting's bubble says so once, and `/buddy help` and the log list it.
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `character` | string | `"duck"` | Character id (see /buddy-personality) |
-| `characterDir` | directory | `""` | Folder of your own character JSON files |
-| `motion` | boolean | `true` | Walk along the prompt line |
-| `quips` | boolean | `true` | The buddy says a line at the end of every answered turn, from one short `quipModel` call that also writes the suggestion (spends tokens); `false` keeps it quiet |
-| `quipModel` | string | `"opus"` | Model for the buddy's lines, suggestions and questions: the end-of-turn call and every /buddy question. `inherit` follows the main chat's model, read at every call (`opus` when it cannot be read) |
-| `effort` | string | `"low"` | How hard `quipModel` thinks on each of those calls: low, medium, high, xhigh, max or `inherit`. `inherit` uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies |
-| `quipCooldownSec` | number | `0` | Minimum seconds between the buddy's lines; 0 = every answered turn |
-| `suggestions` | boolean | `true` | The buddy writes the prompt suggestion in the same end-of-turn call (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
-| `memory` | number | `6` | How many recent exchanges the buddy remembers (0 = off). Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), one line the buddy said, or a next prompt it suggested that the prompt box showed. They go into its next answer or quip, kept per session and per character; at most 30 |
-| `contextTurns` | number | `3` | How many of the chat's latest answered turns each call reads (questions and the end-of-turn call): 1 to 10; more turns, more tokens per call |
+| `customCharactersFolder` | directory | `""` | Folder of your own character JSON files |
+| `walkAlongPrompt` | boolean | `true` | Walk along the prompt line |
+| `commentAfterEachTurn` | boolean | `true` | The buddy says a line at the end of every answered turn, from one short `buddyModel` call that also writes the suggestion (spends tokens); `false` keeps it quiet |
+| `buddyModel` | string | `"opus"` | Model for the buddy's lines, suggestions and questions: the end-of-turn call and every /buddy question. `inherit` follows the main chat's model, read at every call (`opus` when it cannot be read) |
+| `buddyEffort` | string | `"low"` | How hard `buddyModel` thinks on each of those calls: low, medium, high, xhigh, max or `inherit`. `inherit` uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies |
+| `secondsBetweenComments` | number | `0` | Minimum seconds between the buddy's lines; 0 = every answered turn |
+| `suggestNextPrompt` | boolean | `true` | The buddy writes the prompt suggestion in the same end-of-turn call (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
+| `rememberedExchanges` | number | `6` | How many recent exchanges the buddy remembers (0 = off). Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), one line the buddy said, or a next prompt it suggested that the prompt box showed. They go into its next answer or quip, kept per session and per character; at most 30 |
+| `chatTurnsToRead` | number | `3` | How many of the chat's latest answered turns each call reads (questions and the end-of-turn call): 1 to 10; more turns, more tokens per call |
 | `logLevel` | string | `"info"` | Log level: error, info or debug |
 | `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, capped at 1 MB with one rotation; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
-| `ambiguousWidth` | string | `"narrow"` | Ambiguous-width characters: narrow or wide; `wide` for a terminal that draws them two columns wide, as a CJK locale often does |
+| `ambiguousCharacterWidth` | string | `"narrow"` | Ambiguous-width characters: narrow or wide; `wide` for a terminal that draws them two columns wide, as a CJK locale often does |
 
 ```json
 {
   "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
   "pluginConfigs": {
     "buddy@buddy": {
-      "options": { "characterDir": "/path/to/my-characters", "quips": true }
+      "options": { "customCharactersFolder": "/path/to/my-characters", "commentAfterEachTurn": true }
     }
   }
 }
@@ -314,8 +314,8 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 
 ### Speed and context
 
-- A question and the end-of-turn call each read the last `contextTurns`
-  turns and the buddy's own small prompt, on `quipModel` at `effort`; about
+- A question and the end-of-turn call each read the last `chatTurnsToRead`
+  turns and the buddy's own small prompt, on `buddyModel` at `buddyEffort`; about
   3 seconds, however long the chat.
 - `/buddy log` shows what each question cost: its `ask.outcome` record
   carries its tokens, `cacheRead` (input read from the prompt cache) and
@@ -328,7 +328,7 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 
 A character is one JSON file, `{id}.json`, checked against
 [`plugins/buddy/schema/character.schema.json`](./plugins/buddy/schema/character.schema.json).
-Put yours in a folder, point `characterDir` at it, and `/buddy reload`.
+Put yours in a folder, point `customCharactersFolder` at it, and `/buddy reload`.
 
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
@@ -366,11 +366,11 @@ from your account id, with the name and personality Claude Code's config (`~/.cl
 
 Only when a model answers. Walking, reactions, petting and every command
 except a question are local. A question
-sends `quipModel`, at the `effort` level, the question, the character's
-persona, its memory and the ends of the chat's last `contextTurns` turns, never the rest
+sends `buddyModel`, at the `buddyEffort` level, the question, the character's
+persona, its memory and the ends of the chat's last `chatTurnsToRead` turns, never the rest
 of the conversation. Quips and prompt suggestions are on by default: one short
-`quipModel` call per answered turn, sent its memory, the ends of the chat's
-last `contextTurns` turns (default 3) and the turn's tally; `quips: false` and `suggestions: false`
+`buddyModel` call per answered turn, sent its memory, the ends of the chat's
+last `chatTurnsToRead` turns (default 3) and the turn's tally; `commentAfterEachTurn: false` and `suggestNextPrompt: false`
 turn them off, and with suggestions on, turning off Claude Code's own prompt
 suggestions saves paying for both.
 </details>

@@ -4,18 +4,18 @@
     "buddy@buddy": {
       "options": {
         "character": "duck",
-        "characterDir": "",
-        "motion": true,
-        "quips": true,
-        "quipModel": "opus",
-        "effort": "low",
-        "quipCooldownSec": 0,
-        "suggestions": true,
-        "memory": 6,
-        "contextTurns": 3,
+        "customCharactersFolder": "",
+        "walkAlongPrompt": true,
+        "commentAfterEachTurn": true,
+        "buddyModel": "opus",
+        "buddyEffort": "low",
+        "secondsBetweenComments": 0,
+        "suggestNextPrompt": true,
+        "rememberedExchanges": 6,
+        "chatTurnsToRead": 3,
         "logLevel": "info",
         "logFile": "$CLAUDE_CONFIG_DIR/buddy/buddy.log",
-        "ambiguousWidth": "narrow"
+        "ambiguousCharacterWidth": "narrow"
       }
     }
   }

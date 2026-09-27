@@ -28,7 +28,7 @@ export type Talk = { text: string; pose: Pose | null; until: number; held?: bool
 
 export type Brain = {
   character: Character;
-  /** The motion option; the character's own motion.walk also has to allow it. */
+  /** The walkAlongPrompt option; the character's own motion.walk also has to allow it. */
   walkOption: boolean;
   now: number;
   motion: MotionState;
@@ -50,7 +50,7 @@ export type Brain = {
   after: { event: LineEvent; pose: Pose | null; ms: number } | null;
   /** Canned lines said since the adapter last took them, with who said them: its memory records the shown ones. The thinking filler is never among them. */
   said: { id: string; text: string }[];
-  /** East Asian ambiguous-width characters take two columns (the ambiguousWidth option). */
+  /** East Asian ambiguous-width characters take two columns (the ambiguousCharacterWidth option). */
   ambiguousWide: boolean;
   /** The /buddy question waiting for its answer: its thinking line, said again whenever the bubble frees up while its asker is drawn; null when none. */
   pending: { askerId: string; talk: Talk } | null;
@@ -288,7 +288,7 @@ export function isMainLoop(agentId: string | undefined): boolean {
 
 /**
  * The turn ended: its summary, tools or none, and whether the buddy's line is
- * due (quips on and the cooldown passed; cooldown 0 is every turn). The
+ * due (commentAfterEachTurn on and the cooldown passed; cooldown 0 is every turn). The
  * turn's tally starts over either way.
  */
 export function endTurn(b: Brain, quips: boolean, cooldownSec: number): { turn: TurnSummary; lineDue: boolean } {

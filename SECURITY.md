@@ -29,12 +29,12 @@ Useful when judging impact:
   starts or resumes: when `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` is unset it
   searches the config for Claude Code's function-hooks rollout flag, and it
   prints one line saying buddy is off, or nothing. It writes nothing.
-- It reads the character JSON files in the folder the `characterDir` option
+- It reads the character JSON files in the folder the `customCharactersFolder` option
   names.
 - It makes model calls only through Claude Code itself: a `/buddy` question,
   and one short call at the end of each answered turn for the buddy's line
-  and the prompt suggestion, on `quipModel` (default `opus`) at `effort`
-  (default `low`) and sent its memory and the chat's last `contextTurns` turns (default 3) (`quips` and `suggestions`, on by default; turn
+  and the prompt suggestion, on `buddyModel` (default `opus`) at `buddyEffort`
+  (default `low`) and sent its memory and the chat's last `chatTurnsToRead` turns (default 3) (`commentAfterEachTurn` and `suggestNextPrompt`, on by default; turn
   both off for none). There is no buddy server.
 
 It writes two things, and nothing else:
@@ -42,7 +42,7 @@ It writes two things, and nothing else:
 - **Its own Claude Code plugin store:** the memory of the last 20 sessions
   (per character, its recent exchanges: a `/buddy` question with its
   answer, or the question alone if it got none, or one line it said;
-  nothing when `memory` is 0), the picked character, the picked
+  nothing when `rememberedExchanges` is 0), the picked character, the picked
   original companion's soul (its name and personality) and which install's
   roll you chose, the pet count, and whether it is hidden.
 - **The log file**, unless `logFile` is empty: by default

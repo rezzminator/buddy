@@ -249,10 +249,10 @@ describe('the end-of-turn gate', () => {
     expect(skipReason({ ...g, answered: false })).toBe('not an answered turn');
     expect(skipReason({ ...g, interactive: false })).toBe('headless');
     expect(skipReason({ ...g, hidden: true })).toBe('hidden');
-    expect(skipReason({ ...g, quips: false, suggestions: false })).toBe('quips and suggestions off');
+    expect(skipReason({ ...g, quips: false, suggestions: false })).toBe('commentAfterEachTurn and suggestNextPrompt off');
     expect(skipReason({ ...g, bandSeen: false, suggestions: false })).toBe('band never drawn');
   });
-  test('the cooldown skip, built as the adapter builds it: suggestions off, a line not yet due', () => {
+  test('the cooldown skip, built as the adapter builds it: suggestNextPrompt off, a line not yet due', () => {
     const v = validateCharacter(raw());
     if (!v.ok) throw new Error(v.error);
     const b = createBrain(v.character, true);

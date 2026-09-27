@@ -12,7 +12,7 @@ export type TickInput = {
   now: number;
   cols: number;
   width: number;
-  /** Walking is on: the character's motion.walk and the motion option. */
+  /** Walking is on: the character's motion.walk and the walkAlongPrompt option. */
   walk: boolean;
   /** Something holds him still: a bubble, work, sleep. */
   still: boolean;

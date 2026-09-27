@@ -82,8 +82,8 @@ voice.
 ### Persona
 
 `persona` is the prompt a model answers in when you ask a question, and at
-the end of every answered turn, when it voices the buddy's line (`quips`) and
-decides what the prompt suggestion nudges toward (`suggestions`), though the
+the end of every answered turn, when it voices the buddy's line (`commentAfterEachTurn`) and
+decides what the prompt suggestion nudges toward (`suggestNextPrompt`), though the
 suggestion itself is written in the user's words. Write it in the second person ("You are …"): who
 the character is, how it talks, a phrase or two it likes. The engine puts
 its character rule (`CHARACTER_RULE`) right after the persona: become the
@@ -137,8 +137,8 @@ Every pose it leaves out falls back as the table above says: `oops`,
 
 1. Save the file in a folder of your own, for example
    `my-characters/blob.json`.
-2. Point the `characterDir` option at that folder: through `/plugin configure`, or in
-   `settings.json` under `pluginConfigs["buddy@buddy"].options.characterDir`.
+2. Point the `customCharactersFolder` option at that folder: through `/plugin configure`, or in
+   `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersFolder`.
    Start a new session.
 3. `/buddy-personality` lists it under Your folder, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.

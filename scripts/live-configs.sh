@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Live configuration proof: five real Claude Code sessions (the main chat on
 # Haiku) with this checkout loaded by --plugin-dir, two user turns each, the
-# buddy options pinned per session (quipModel opus, effort low, logLevel debug,
+# buddy options pinned per session (buddyModel opus, buddyEffort low, logLevel debug,
 # logFile in the session's folder, always), every turn measured:
-#   S1 defaults (quips, suggestions, memory 6): after each turn a line shows in
+#   S1 defaults (commentAfterEachTurn, suggestNextPrompt, rememberedExchanges 6): after each turn a line shows in
 #      the bubble and a suggestion in the prompt box; a /buddy question is
 #      answered, and a second one referring to it is answered from memory
-#   S2 quips false: no line after a turn, a suggestion still shown
-#   S3 suggestions false, memory 0: a line shows; no suggestion; no memory kept
+#   S2 commentAfterEachTurn false: no line after a turn, a suggestion still shown
+#   S3 suggestNextPrompt false, rememberedExchanges 0: a line shows; no suggestion; no memory kept
 #      or read (the store holds nothing for the session)
 #   S4 headless `claude -p`, then `-p --resume`: turn.skipped why headless and
 #      no model call from the plugin
-#   S5 characterDir with one invalid character, the character option naming it:
+#   S5 customCharactersFolder with one invalid character, the character option naming it:
 #      the duck is drawn with a bubble naming the error
 # Per turn, from the plugin log and the transcript: the turn's end to the line
 # in the log (quip.outcome ts minus the transcript's reply), the plugin's own
@@ -40,9 +40,9 @@ SESSIONS="S1 S2 S3 S4 S5"
 options_of() {
   case $1 in
     S1|S4) echo '{}' ;;
-    S2) echo '{ "quips": false }' ;;
-    S3) echo '{ "suggestions": false, "memory": 0 }' ;;
-    S5) jq -n --arg d "$RUN/chars" '{ characterDir: $d, character: "broken" }' ;;
+    S2) echo '{ "commentAfterEachTurn": false }' ;;
+    S3) echo '{ "suggestNextPrompt": false, "rememberedExchanges": 0 }' ;;
+    S5) jq -n --arg d "$RUN/chars" '{ customCharactersFolder: $d, character: "broken" }' ;;
   esac
 }
 lines() { [ -f "$RUN/buddy.log" ] && wc -l < "$RUN/buddy.log" | tr -d ' ' || echo 0; }
@@ -67,7 +67,7 @@ try {
 const last = (e) => recs.filter((r) => r.event === e).at(-1) ?? null;
 const lastWithUsage = (e) => recs.filter((r) => r.event === e && typeof r.inTok === 'number').at(-1) ?? null;
 const q = last('quip.outcome'), s = last('suggest.outcome'), a = last('ask.outcome'), p = last('turn.prompt') ?? last('ask.prompt');
-// A call that writes no line (quips off) logs its usage on suggest.outcome: on a no-line
+// A call that writes no line (commentAfterEachTurn off) logs its usage on suggest.outcome: on a no-line
 // turn a later harness-shown/harness-not-shown record can follow it with no usage, so this
 // takes the latest suggest.outcome record that actually carries it, not just the last one.
 const call = q ?? a ?? lastWithUsage('suggest.outcome');
@@ -150,7 +150,7 @@ run_session() {
   ID=$(uuidgen | tr 'A-Z' 'a-z'); echo "$ID" > "$RUN/session-id"
   if [ "$S" = S5 ]; then mkdir -p "$RUN/chars"; printf '%s\n' '{ "name": "Broken", "poses": 3 }' > "$RUN/chars/broken.json"; fi
   jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" \
-    '{ pluginConfigs: { "buddy@inline": { options: ({ quipModel: "opus", effort: "low", logLevel: "debug", logFile: $log } + $o) } } }' > "$RUN/settings.json"
+    '{ pluginConfigs: { "buddy@inline": { options: ({ buddyModel: "opus", buddyEffort: "low", logLevel: "debug", logFile: $log } + $o) } } }' > "$RUN/settings.json"
   pool_of duck thinking > "$RUN/thinking.pool"
   [ -s "$RUN/thinking.pool" ] || printf '%s\n' 'Let me think...' 'Hmm...' 'One moment...' > "$RUN/thinking.pool"
   rows_of duck > "$RUN/duck.rows"
@@ -216,7 +216,7 @@ run_session() {
   if [ "$S" = S3 ]; then
     local st mem
     st=$(store_file); mem=$([ -n "$st" ] && jq -r --arg k "memory:$ID" '.[$k] // empty | tostring' "$st" 2>&1)
-    [ -z "$mem" ] && check PASS "memory 0: nothing kept or read for the session" "$([ -n "$st" ] && echo "the store has no memory:$ID" || echo "no store file"); turn.prompt lengths $(jq -r -s 'map(.promptLength) | join(",")' "$RUN/turns.jsonl")" || check FAIL "memory 0: nothing kept or read for the session" "${mem:0:120}"
+    [ -z "$mem" ] && check PASS "rememberedExchanges 0: nothing kept or read for the session" "$([ -n "$st" ] && echo "the store has no memory:$ID" || echo "no store file"); turn.prompt lengths $(jq -r -s 'map(.promptLength) | join(",")' "$RUN/turns.jsonl")" || check FAIL "rememberedExchanges 0: nothing kept or read for the session" "${mem:0:120}"
   fi
   if [ "$S" = S1 ]; then
     local a1 a2

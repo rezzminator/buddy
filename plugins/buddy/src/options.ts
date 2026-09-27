@@ -10,54 +10,54 @@ import { TURN_WINDOW, TURN_WINDOW_MAX } from './prompts.ts';
 /** How hard the buddy's model thinks: the engine's ModelEffort values. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
-/** quipModel's and effort's value for "whatever the main chat has", resolved at every call. */
+/** buddyModel's and buddyEffort's value for "whatever the main chat has", resolved at every call. */
 export const INHERIT = 'inherit';
-/** The model an inherited quipModel falls back to when the main chat's cannot be read. */
+/** The model an inherited buddyModel falls back to when the main chat's cannot be read. */
 export const INHERIT_FALLBACK_MODEL = 'opus';
 export type AmbiguousWidth = 'narrow' | 'wide';
 export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
 
 export type Options = {
   character: string;
-  characterDir: string;
-  motion: boolean;
+  customCharactersFolder: string;
+  walkAlongPrompt: boolean;
   /** The end-of-turn call writes the buddy's line, shown in the bubble. */
-  quips: boolean;
+  commentAfterEachTurn: boolean;
   /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and every /buddy question; 'inherit' = the main chat's (resolveModel). */
-  quipModel: string;
-  /** How hard quipModel thinks on each of those calls; 'inherit' = the main chat's (resolveEffort). */
-  effort: Effort | typeof INHERIT;
+  buddyModel: string;
+  /** How hard buddyModel thinks on each of those calls; 'inherit' = the main chat's (resolveEffort). */
+  buddyEffort: Effort | typeof INHERIT;
   /** The least seconds between two lines; 0 = every answered turn. */
-  quipCooldownSec: number;
+  secondsBetweenComments: number;
   /** The end-of-turn call writes the next-prompt suggestion, and the harness's own is held back, shown only when the buddy has none. */
-  suggestions: boolean;
+  suggestNextPrompt: boolean;
   /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
-  memory: number;
+  rememberedExchanges: number;
   /** How many of the main chat's latest answered turns a completion reads, 1 to TURN_WINDOW_MAX: questions and the end-of-turn call. */
-  contextTurns: number;
+  chatTurnsToRead: number;
   /** The plugin log's level: error, info or debug. */
   logLevel: LogLevel;
   /** The plugin log's file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = no log file (errors still go to the debug log). */
   logFile: string;
   /** How many columns an East Asian ambiguous-width character takes: narrow 1, wide 2. */
-  ambiguousWidth: AmbiguousWidth;
+  ambiguousCharacterWidth: AmbiguousWidth;
   errors: string[];
 };
 
 export const DEFAULTS: Omit<Options, 'errors'> = {
   character: 'duck',
-  characterDir: '',
-  motion: true,
-  quips: true,
-  quipModel: 'opus',
-  effort: 'low',
-  quipCooldownSec: 0,
-  suggestions: true,
-  memory: MEMORY_DEFAULT,
-  contextTurns: TURN_WINDOW,
+  customCharactersFolder: '',
+  walkAlongPrompt: true,
+  commentAfterEachTurn: true,
+  buddyModel: 'opus',
+  buddyEffort: 'low',
+  secondsBetweenComments: 0,
+  suggestNextPrompt: true,
+  rememberedExchanges: MEMORY_DEFAULT,
+  chatTurnsToRead: TURN_WINDOW,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
-  ambiguousWidth: 'narrow',
+  ambiguousCharacterWidth: 'narrow',
 };
 
 function bool(v: unknown): boolean | undefined {
@@ -70,67 +70,67 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, characterDir, motion, quips, quipModel, effort, quipCooldownSec, suggestions, memory, contextTurns, logLevel, logFile, ambiguousWidth } = raw;
+  const { character, customCharactersFolder, walkAlongPrompt, commentAfterEachTurn, buddyModel, buddyEffort, secondsBetweenComments, suggestNextPrompt, rememberedExchanges, chatTurnsToRead, logLevel, logFile, ambiguousCharacterWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
   }
-  if (characterDir !== undefined && characterDir !== '') {
-    if (typeof characterDir === 'string') o.characterDir = characterDir.trim();
-    else bad('characterDir', 'not a string');
+  if (customCharactersFolder !== undefined && customCharactersFolder !== '') {
+    if (typeof customCharactersFolder === 'string') o.customCharactersFolder = customCharactersFolder.trim();
+    else bad('customCharactersFolder', 'not a string');
   }
-  if (motion !== undefined) {
-    const b = bool(motion);
-    if (b === undefined) bad('motion', `${JSON.stringify(motion)} is not true or false`);
-    else o.motion = b;
+  if (walkAlongPrompt !== undefined) {
+    const b = bool(walkAlongPrompt);
+    if (b === undefined) bad('walkAlongPrompt', `${JSON.stringify(walkAlongPrompt)} is not true or false`);
+    else o.walkAlongPrompt = b;
   }
-  if (quips !== undefined) {
-    const b = bool(quips);
-    if (b === undefined) bad('quips', `${JSON.stringify(quips)} is not true or false`);
-    else o.quips = b;
+  if (commentAfterEachTurn !== undefined) {
+    const b = bool(commentAfterEachTurn);
+    if (b === undefined) bad('commentAfterEachTurn', `${JSON.stringify(commentAfterEachTurn)} is not true or false`);
+    else o.commentAfterEachTurn = b;
   }
-  if (suggestions !== undefined) {
-    const b = bool(suggestions);
-    if (b === undefined) bad('suggestions', `${JSON.stringify(suggestions)} is not true or false`);
-    else o.suggestions = b;
+  if (suggestNextPrompt !== undefined) {
+    const b = bool(suggestNextPrompt);
+    if (b === undefined) bad('suggestNextPrompt', `${JSON.stringify(suggestNextPrompt)} is not true or false`);
+    else o.suggestNextPrompt = b;
   }
-  if (quipModel !== undefined && quipModel !== '') {
-    if (typeof quipModel === 'string') o.quipModel = quipModel.trim().toLowerCase() === INHERIT ? INHERIT : quipModel.trim();
-    else bad('quipModel', 'not a string');
+  if (buddyModel !== undefined && buddyModel !== '') {
+    if (typeof buddyModel === 'string') o.buddyModel = buddyModel.trim().toLowerCase() === INHERIT ? INHERIT : buddyModel.trim();
+    else bad('buddyModel', 'not a string');
   }
-  if (effort !== undefined && effort !== '') {
-    const e = typeof effort === 'string' ? effort.trim().toLowerCase() : '';
-    if (e === INHERIT) o.effort = INHERIT;
-    else if ((EFFORTS as readonly string[]).includes(e)) o.effort = e as Effort;
-    else bad('effort', `${JSON.stringify(effort)} is not low, medium, high, xhigh, max or inherit`);
+  if (buddyEffort !== undefined && buddyEffort !== '') {
+    const e = typeof buddyEffort === 'string' ? buddyEffort.trim().toLowerCase() : '';
+    if (e === INHERIT) o.buddyEffort = INHERIT;
+    else if ((EFFORTS as readonly string[]).includes(e)) o.buddyEffort = e as Effort;
+    else bad('buddyEffort', `${JSON.stringify(buddyEffort)} is not low, medium, high, xhigh, max or inherit`);
   }
-  if (quipCooldownSec !== undefined && quipCooldownSec !== '') {
-    const n = typeof quipCooldownSec === 'number' ? quipCooldownSec : Number(quipCooldownSec);
-    if (Number.isFinite(n) && n >= 0) o.quipCooldownSec = n;
-    else bad('quipCooldownSec', `${JSON.stringify(quipCooldownSec)} is not a number of seconds`);
+  if (secondsBetweenComments !== undefined && secondsBetweenComments !== '') {
+    const n = typeof secondsBetweenComments === 'number' ? secondsBetweenComments : Number(secondsBetweenComments);
+    if (Number.isFinite(n) && n >= 0) o.secondsBetweenComments = n;
+    else bad('secondsBetweenComments', `${JSON.stringify(secondsBetweenComments)} is not a number of seconds`);
   }
-  if (memory !== undefined && memory !== '') {
-    const n = typeof memory === 'number' ? memory : typeof memory === 'string' ? Number(memory) : NaN;
-    if (!Number.isInteger(n) || n < 0) bad('memory', `${JSON.stringify(memory)} is not a whole number of exchanges; remembering ${MEMORY_DEFAULT}`);
+  if (rememberedExchanges !== undefined && rememberedExchanges !== '') {
+    const n = typeof rememberedExchanges === 'number' ? rememberedExchanges : typeof rememberedExchanges === 'string' ? Number(rememberedExchanges) : NaN;
+    if (!Number.isInteger(n) || n < 0) bad('rememberedExchanges', `${JSON.stringify(rememberedExchanges)} is not a whole number of exchanges; remembering ${MEMORY_DEFAULT}`);
     else if (n > MEMORY_MAX) {
-      o.memory = MEMORY_MAX;
-      o.errors.push(`option memory capped: ${n} is above ${MEMORY_MAX}; remembering ${MEMORY_MAX}`);
-    } else o.memory = n;
+      o.rememberedExchanges = MEMORY_MAX;
+      o.errors.push(`option rememberedExchanges capped: ${n} is above ${MEMORY_MAX}; remembering ${MEMORY_MAX}`);
+    } else o.rememberedExchanges = n;
   }
-  if (contextTurns !== undefined && contextTurns !== '') {
-    const n = typeof contextTurns === 'number' ? contextTurns : typeof contextTurns === 'string' ? Number(contextTurns) : NaN;
-    if (Number.isInteger(n) && n >= 1 && n <= TURN_WINDOW_MAX) o.contextTurns = n;
-    else bad('contextTurns', `${JSON.stringify(contextTurns)} is not a whole number from 1 to ${TURN_WINDOW_MAX}; reading ${TURN_WINDOW}`);
+  if (chatTurnsToRead !== undefined && chatTurnsToRead !== '') {
+    const n = typeof chatTurnsToRead === 'number' ? chatTurnsToRead : typeof chatTurnsToRead === 'string' ? Number(chatTurnsToRead) : NaN;
+    if (Number.isInteger(n) && n >= 1 && n <= TURN_WINDOW_MAX) o.chatTurnsToRead = n;
+    else bad('chatTurnsToRead', `${JSON.stringify(chatTurnsToRead)} is not a whole number from 1 to ${TURN_WINDOW_MAX}; reading ${TURN_WINDOW}`);
   }
   if (logLevel !== undefined && logLevel !== '') {
     const l = typeof logLevel === 'string' ? logLevel.trim().toLowerCase() : '';
     if ((LOG_LEVELS as readonly string[]).includes(l)) o.logLevel = l as LogLevel;
     else bad('logLevel', `${JSON.stringify(logLevel)} is not error, info or debug`);
   }
-  if (ambiguousWidth !== undefined && ambiguousWidth !== '') {
-    const w = typeof ambiguousWidth === 'string' ? ambiguousWidth.trim().toLowerCase() : '';
-    if ((AMBIGUOUS_WIDTHS as readonly string[]).includes(w)) o.ambiguousWidth = w as AmbiguousWidth;
-    else bad('ambiguousWidth', `${JSON.stringify(ambiguousWidth)} is not narrow or wide`);
+  if (ambiguousCharacterWidth !== undefined && ambiguousCharacterWidth !== '') {
+    const w = typeof ambiguousCharacterWidth === 'string' ? ambiguousCharacterWidth.trim().toLowerCase() : '';
+    if ((AMBIGUOUS_WIDTHS as readonly string[]).includes(w)) o.ambiguousCharacterWidth = w as AmbiguousWidth;
+    else bad('ambiguousCharacterWidth', `${JSON.stringify(ambiguousCharacterWidth)} is not narrow or wide`);
   }
   // Unlike the others, an empty logFile means something: no log file.
   if (logFile !== undefined) {

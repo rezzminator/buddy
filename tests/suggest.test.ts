@@ -3,7 +3,7 @@ import { dropsHarnessSuggestion, suggestOutcome } from '../plugins/buddy/src/sug
 
 describe('dropsHarnessSuggestion', () => {
   const harness = { kind: 'suggestion' } as const;
-  test('drops the engine\'s own suggestion only while suggestions are on and the buddy is shown', () => {
+  test('drops the engine\'s own suggestion only while suggestNextPrompt is on and the buddy is shown', () => {
     expect(dropsHarnessSuggestion(harness, true, false, false)).toBe(true);
     expect(dropsHarnessSuggestion(harness, false, false, false)).toBe(false);
     expect(dropsHarnessSuggestion(harness, true, true, false)).toBe(false);

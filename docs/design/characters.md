@@ -45,7 +45,7 @@ A missing pose draws the next one along its chain (`POSE_FALLBACK`), so three po
 ```mermaid
 flowchart LR
   S["plugin characters/*.json"] --> M["mergeRoster"]
-  U["characterDir/*.json"] --> M
+  U["customCharactersFolder/*.json"] --> M
   M --> R["roster"]
   O["original companion"] -->|withEntry| R
   R --> C["choose: store, option, duck"]
@@ -54,7 +54,7 @@ flowchart LR
 | Source | Where | Marked |
 | --- | --- | --- |
 | Shipped (`builtin`) | the plugin's `characters/`: `cat`, `dragon`, `duck`, `ghost`, `professor`, `robot`, `yellow-duck` | |
-| Your folder (`user`) | the folder the `characterDir` option names; `~` expands to HOME | the menu's Your folder group |
+| Your folder (`user`) | the folder the `customCharactersFolder` option names; `~` expands to HOME | the menu's Your folder group |
 | Original (`original`) | built from the account's roll and a species template, id `original`, reserved: a character file with that id is refused with an error naming the file, said in the menu's Your folder group, the log, and the bubble at each session start and `/buddy reload` (`mergeRoster`, `startWarning`) | [Original companion](./original-companion.md) |
 
 A file is a candidate when it is a visible `.json` entry that is not a folder (`isCharacterFile`).
@@ -90,7 +90,7 @@ An original companion's pools come from its species template, with `{name}` fill
 ## How a contributor adds one
 
 1. Write `{id}.json` in a folder of your own; [`CONTRIBUTING.md`](../../CONTRIBUTING.md) has a working example.
-2. Point `characterDir` at the folder and start a session. `/buddy-personality` lists it under Your folder, or as `{id} (invalid)` with the first error in its preview.
+2. Point `customCharactersFolder` at the folder and start a session. `/buddy-personality` lists it under Your folder, or as `{id} (invalid)` with the first error in its preview.
 3. Enter on it in the menu draws it. Edit, save, `/buddy reload`. Try a narrow window too.
 4. To ship it: add it to `plugins/buddy/characters/` with the relative `$schema`, add a row to the README's Characters table, run the checks, and open a pull request against `develop`.
 
@@ -102,7 +102,7 @@ A shipped character is original work (no copied character, trademark or real per
 - **The first error, by its path.** Rejected: a list of every problem. An author fixes one precise thing at a time, and the validator stays small.
 - **Unknown fields are invalid.** Rejected: ignoring them. A typo such as `walkright` would otherwise vanish silently.
 - **Invalid files stay listed.** Rejected: dropping them. A file that disappears reads as "buddy did not find it"; a named error reads as what it is.
-- **Printable ASCII only.** Rejected: Unicode art. A wide character takes two columns, and an ambiguous-width one one or two as the terminal's font decides, so art that lines up in one terminal breaks in another. Only an original companion's eyes (`· ✦ × ◉ °`) use them, and the `ambiguousWidth` option measures those.
+- **Printable ASCII only.** Rejected: Unicode art. A wide character takes two columns, and an ambiguous-width one one or two as the terminal's font decides, so art that lines up in one terminal breaks in another. Only an original companion's eyes (`· ✦ × ◉ °`) use them, and the `ambiguousCharacterWidth` option measures those.
 - **The loader pads and bottom-aligns.** Rejected: requiring exact widths. Authors never count trailing spaces. (Species templates do require exact widths: their eye and hat slots sit at fixed columns.)
 - **A fallback chain for poses.** Rejected: requiring all ten. A small character is complete with `idle` and a walk.
 - **A neutral fallback pool.** Rejected: the duck's lines as the default for every character. No character ever speaks in another's voice.

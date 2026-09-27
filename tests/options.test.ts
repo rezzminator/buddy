@@ -4,44 +4,44 @@ import { DEFAULTS, expandHome, logPath, observeEffort, resolveEffort, resolveMod
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, quips: true, quipModel: 'opus', effort: 'low', quipCooldownSec: 0, suggestions: true, memory: 6, contextTurns: 3, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersFolder: '', walkAlongPrompt: true, commentAfterEachTurn: true, buddyModel: 'opus', buddyEffort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, rememberedExchanges: 6, chatTurnsToRead: 3, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousCharacterWidth: 'narrow' });
   });
   test('good values', () => {
-    const o = resolveOptions({ character: ' Cat ', characterDir: '~/chars', motion: false, quips: 'false', quipModel: 'sonnet', effort: ' HIGH ', quipCooldownSec: '10' });
-    expect(o).toMatchObject({ character: 'cat', characterDir: '~/chars', motion: false, quips: false, quipModel: 'sonnet', effort: 'high', quipCooldownSec: 10, errors: [] });
+    const o = resolveOptions({ character: ' Cat ', customCharactersFolder: '~/chars', walkAlongPrompt: false, commentAfterEachTurn: 'false', buddyModel: 'sonnet', buddyEffort: ' HIGH ', secondsBetweenComments: '10' });
+    expect(o).toMatchObject({ character: 'cat', customCharactersFolder: '~/chars', walkAlongPrompt: false, commentAfterEachTurn: false, buddyModel: 'sonnet', buddyEffort: 'high', secondsBetweenComments: 10, errors: [] });
   });
   test('a bad value is ignored by name', () => {
-    const o = resolveOptions({ motion: 'maybe', quipCooldownSec: -1 });
-    expect(o.motion).toBe(true);
-    expect(o.quipCooldownSec).toBe(0);
+    const o = resolveOptions({ walkAlongPrompt: 'maybe', secondsBetweenComments: -1 });
+    expect(o.walkAlongPrompt).toBe(true);
+    expect(o.secondsBetweenComments).toBe(0);
     expect(o.errors).toEqual([
-      'option motion ignored: "maybe" is not true or false',
-      'option quipCooldownSec ignored: -1 is not a number of seconds',
+      'option walkAlongPrompt ignored: "maybe" is not true or false',
+      'option secondsBetweenComments ignored: -1 is not a number of seconds',
     ]);
   });
 });
 
-describe('the effort option', () => {
+describe('the buddyEffort option', () => {
   test('low by default; any ModelEffort, any case; anything else is ignored by name', () => {
-    expect(resolveOptions({}).effort).toBe('low');
-    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveOptions({ effort: e })).toMatchObject({ effort: e, errors: [] });
-    expect(resolveOptions({ effort: 'Max' })).toMatchObject({ effort: 'max', errors: [] });
-    expect(resolveOptions({ effort: '' })).toMatchObject({ effort: 'low', errors: [] });
-    expect(resolveOptions({ effort: 'turbo' })).toMatchObject({ effort: 'low', errors: ['option effort ignored: "turbo" is not low, medium, high, xhigh, max or inherit'] });
-    expect(resolveOptions({ effort: 3 })).toMatchObject({ effort: 'low', errors: ['option effort ignored: 3 is not low, medium, high, xhigh, max or inherit'] });
+    expect(resolveOptions({}).buddyEffort).toBe('low');
+    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveOptions({ buddyEffort: e })).toMatchObject({ buddyEffort: e, errors: [] });
+    expect(resolveOptions({ buddyEffort: 'Max' })).toMatchObject({ buddyEffort: 'max', errors: [] });
+    expect(resolveOptions({ buddyEffort: '' })).toMatchObject({ buddyEffort: 'low', errors: [] });
+    expect(resolveOptions({ buddyEffort: 'turbo' })).toMatchObject({ buddyEffort: 'low', errors: ['option buddyEffort ignored: "turbo" is not low, medium, high, xhigh, max or inherit'] });
+    expect(resolveOptions({ buddyEffort: 3 })).toMatchObject({ buddyEffort: 'low', errors: ['option buddyEffort ignored: 3 is not low, medium, high, xhigh, max or inherit'] });
   });
   test('inherit, any case, is kept as inherit', () => {
-    expect(resolveOptions({ effort: 'inherit' })).toMatchObject({ effort: 'inherit', errors: [] });
-    expect(resolveOptions({ effort: ' Inherit ' })).toMatchObject({ effort: 'inherit', errors: [] });
+    expect(resolveOptions({ buddyEffort: 'inherit' })).toMatchObject({ buddyEffort: 'inherit', errors: [] });
+    expect(resolveOptions({ buddyEffort: ' Inherit ' })).toMatchObject({ buddyEffort: 'inherit', errors: [] });
   });
 });
 
-describe('the quipModel option', () => {
+describe('the buddyModel option', () => {
   test('opus by default; a model name as given; inherit, any case, is kept as inherit', () => {
-    expect(resolveOptions({}).quipModel).toBe('opus');
-    expect(resolveOptions({ quipModel: ' haiku ' })).toMatchObject({ quipModel: 'haiku', errors: [] });
-    expect(resolveOptions({ quipModel: 'inherit' })).toMatchObject({ quipModel: 'inherit', errors: [] });
-    expect(resolveOptions({ quipModel: 'INHERIT' })).toMatchObject({ quipModel: 'inherit', errors: [] });
+    expect(resolveOptions({}).buddyModel).toBe('opus');
+    expect(resolveOptions({ buddyModel: ' haiku ' })).toMatchObject({ buddyModel: 'haiku', errors: [] });
+    expect(resolveOptions({ buddyModel: 'inherit' })).toMatchObject({ buddyModel: 'inherit', errors: [] });
+    expect(resolveOptions({ buddyModel: 'INHERIT' })).toMatchObject({ buddyModel: 'inherit', errors: [] });
   });
 });
 
@@ -68,20 +68,20 @@ describe('resolveEffort', () => {
   test("inherit is the level of the main chat's latest request", () => {
     for (const e of ['low', 'medium', 'high', 'xhigh', 'max'] as const) expect(resolveEffort('inherit', e)).toBe(e);
   });
-  test("inherit with a numeric effort, none on the request, or no request yet sends none: the model's default applies", () => {
+  test("inherit with a numeric buddyEffort, none on the request, or no request yet sends none: the model's default applies", () => {
     expect(resolveEffort('inherit', 32000)).toBeUndefined();
     expect(resolveEffort('inherit', undefined)).toBeUndefined();
   });
 });
 
 describe('observeEffort', () => {
-  test("a step of the running main turn replaces the recorded effort, an absent one included", () => {
+  test("a step of the running main turn replaces the recorded buddyEffort, an absent one included", () => {
     expect(observeEffort(undefined, { turnId: 't1', effort: 'medium' }, 't1')).toBe('medium');
     expect(observeEffort('medium', { turnId: 't1', effort: 'max' }, 't1')).toBe('max');
     expect(observeEffort('medium', { turnId: 't1', effort: 32000 }, 't1')).toBe(32000);
     expect(observeEffort('medium', { turnId: 't1' }, 't1')).toBeUndefined();
   });
-  test("a subagent's step leaves the main chat's recorded effort as it was", () => {
+  test("a subagent's step leaves the main chat's recorded buddyEffort as it was", () => {
     expect(observeEffort('medium', { turnId: 's1', agentId: 'sub1', effort: 'max' }, 't1')).toBe('medium');
     expect(observeEffort(undefined, { turnId: 't1', agentId: 'sub1', effort: 'low' }, 't1')).toBeUndefined();
   });
@@ -97,50 +97,50 @@ describe('observeEffort', () => {
   });
 });
 
-describe('the suggestions option', () => {
+describe('the suggestNextPrompt option', () => {
   test('on by default; true or false, as a boolean or its string; anything else is ignored by name', () => {
-    expect(resolveOptions({}).suggestions).toBe(true);
-    expect(resolveOptions({ suggestions: false })).toMatchObject({ suggestions: false, errors: [] });
-    expect(resolveOptions({ suggestions: 'true' })).toMatchObject({ suggestions: true, errors: [] });
-    expect(resolveOptions({ suggestions: 'yes' })).toMatchObject({ suggestions: true, errors: ['option suggestions ignored: "yes" is not true or false'] });
+    expect(resolveOptions({}).suggestNextPrompt).toBe(true);
+    expect(resolveOptions({ suggestNextPrompt: false })).toMatchObject({ suggestNextPrompt: false, errors: [] });
+    expect(resolveOptions({ suggestNextPrompt: 'true' })).toMatchObject({ suggestNextPrompt: true, errors: [] });
+    expect(resolveOptions({ suggestNextPrompt: 'yes' })).toMatchObject({ suggestNextPrompt: true, errors: ['option suggestNextPrompt ignored: "yes" is not true or false'] });
   });
-  test('quips and suggestions turn off independently', () => {
-    expect(resolveOptions({ quips: false })).toMatchObject({ quips: false, suggestions: true, errors: [] });
-    expect(resolveOptions({ suggestions: 'false' })).toMatchObject({ quips: true, suggestions: false, errors: [] });
+  test('commentAfterEachTurn and suggestNextPrompt turn off independently', () => {
+    expect(resolveOptions({ commentAfterEachTurn: false })).toMatchObject({ commentAfterEachTurn: false, suggestNextPrompt: true, errors: [] });
+    expect(resolveOptions({ suggestNextPrompt: 'false' })).toMatchObject({ commentAfterEachTurn: true, suggestNextPrompt: false, errors: [] });
   });
 });
 
-describe('the contextTurns option', () => {
+describe('the chatTurnsToRead option', () => {
   test('3 by default; a whole number from 1 to 10, as a number or its string', () => {
-    expect(resolveOptions({}).contextTurns).toBe(3);
-    expect(resolveOptions({ contextTurns: 1 })).toMatchObject({ contextTurns: 1, errors: [] });
-    expect(resolveOptions({ contextTurns: '10' })).toMatchObject({ contextTurns: 10, errors: [] });
-    expect(resolveOptions({ contextTurns: '' })).toMatchObject({ contextTurns: 3, errors: [] });
+    expect(resolveOptions({}).chatTurnsToRead).toBe(3);
+    expect(resolveOptions({ chatTurnsToRead: 1 })).toMatchObject({ chatTurnsToRead: 1, errors: [] });
+    expect(resolveOptions({ chatTurnsToRead: '10' })).toMatchObject({ chatTurnsToRead: 10, errors: [] });
+    expect(resolveOptions({ chatTurnsToRead: '' })).toMatchObject({ chatTurnsToRead: 3, errors: [] });
   });
   test('0, above 10, fractional or not a number: 3, and the error says why', () => {
     for (const v of [0, 11, 2.5, 'lots', true]) {
-      const o = resolveOptions({ contextTurns: v });
-      expect(o.contextTurns).toBe(3);
-      expect(o.errors).toEqual([`option contextTurns ignored: ${JSON.stringify(v)} is not a whole number from 1 to 10; reading 3`]);
+      const o = resolveOptions({ chatTurnsToRead: v });
+      expect(o.chatTurnsToRead).toBe(3);
+      expect(o.errors).toEqual([`option chatTurnsToRead ignored: ${JSON.stringify(v)} is not a whole number from 1 to 10; reading 3`]);
     }
   });
 });
 
-describe('the memory option', () => {
+describe('the rememberedExchanges option', () => {
   test('default 6; 0 is off; a whole number as given', () => {
-    expect(resolveOptions({}).memory).toBe(6);
-    expect(resolveOptions({ memory: 0 })).toMatchObject({ memory: 0, errors: [] });
-    expect(resolveOptions({ memory: '12' })).toMatchObject({ memory: 12, errors: [] });
-    expect(resolveOptions({ memory: 30 })).toMatchObject({ memory: 30, errors: [] });
+    expect(resolveOptions({}).rememberedExchanges).toBe(6);
+    expect(resolveOptions({ rememberedExchanges: 0 })).toMatchObject({ rememberedExchanges: 0, errors: [] });
+    expect(resolveOptions({ rememberedExchanges: '12' })).toMatchObject({ rememberedExchanges: 12, errors: [] });
+    expect(resolveOptions({ rememberedExchanges: 30 })).toMatchObject({ rememberedExchanges: 30, errors: [] });
   });
   test('above 30 caps at 30 and says so', () => {
-    expect(resolveOptions({ memory: 31 })).toMatchObject({ memory: 30, errors: ['option memory capped: 31 is above 30; remembering 30'] });
+    expect(resolveOptions({ rememberedExchanges: 31 })).toMatchObject({ rememberedExchanges: 30, errors: ['option rememberedExchanges capped: 31 is above 30; remembering 30'] });
   });
   test('negative, fractional or not a number: 6, and the note says why', () => {
-    expect(resolveOptions({ memory: -1 })).toMatchObject({ memory: 6, errors: ['option memory ignored: -1 is not a whole number of exchanges; remembering 6'] });
-    expect(resolveOptions({ memory: 2.5 })).toMatchObject({ memory: 6, errors: ['option memory ignored: 2.5 is not a whole number of exchanges; remembering 6'] });
-    expect(resolveOptions({ memory: 'x' })).toMatchObject({ memory: 6, errors: ['option memory ignored: "x" is not a whole number of exchanges; remembering 6'] });
-    expect(resolveOptions({ memory: true })).toMatchObject({ memory: 6, errors: ['option memory ignored: true is not a whole number of exchanges; remembering 6'] });
+    expect(resolveOptions({ rememberedExchanges: -1 })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: -1 is not a whole number of exchanges; remembering 6'] });
+    expect(resolveOptions({ rememberedExchanges: 2.5 })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: 2.5 is not a whole number of exchanges; remembering 6'] });
+    expect(resolveOptions({ rememberedExchanges: 'x' })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: "x" is not a whole number of exchanges; remembering 6'] });
+    expect(resolveOptions({ rememberedExchanges: true })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: true is not a whole number of exchanges; remembering 6'] });
   });
 });
 
@@ -185,12 +185,12 @@ describe('expandHome', () => {
     expect(o.logFile).toBe('$CLAUDE_CONFIG_DIR/buddy/buddy.log');
     expect(o.errors).toEqual(['option logFile ignored: not a string']);
   });
-  test('ambiguousWidth: narrow or wide, any case; anything else is ignored by name', () => {
-    expect(resolveOptions({ ambiguousWidth: ' WIDE ' }).ambiguousWidth).toBe('wide');
-    expect(resolveOptions({ ambiguousWidth: 'narrow' }).ambiguousWidth).toBe('narrow');
-    const o = resolveOptions({ ambiguousWidth: 'double' });
-    expect(o.ambiguousWidth).toBe('narrow');
-    expect(o.errors).toEqual(['option ambiguousWidth ignored: "double" is not narrow or wide']);
+  test('ambiguousCharacterWidth: narrow or wide, any case; anything else is ignored by name', () => {
+    expect(resolveOptions({ ambiguousCharacterWidth: ' WIDE ' }).ambiguousCharacterWidth).toBe('wide');
+    expect(resolveOptions({ ambiguousCharacterWidth: 'narrow' }).ambiguousCharacterWidth).toBe('narrow');
+    const o = resolveOptions({ ambiguousCharacterWidth: 'double' });
+    expect(o.ambiguousCharacterWidth).toBe('narrow');
+    expect(o.errors).toEqual(['option ambiguousCharacterWidth ignored: "double" is not narrow or wide']);
   });
 });
 

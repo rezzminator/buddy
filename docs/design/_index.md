@@ -29,7 +29,7 @@ flowchart LR
   B --> S["scene: src/scene.ts"]
   S --> A
   A --> Band["AbovePrompt band"]
-  R["roster: characters/, characterDir"] --> A
+  R["roster: characters/, customCharactersFolder"] --> A
   O["original: hatch.ts, original.ts, species/"] --> R
   A --> M["menu pane: src/menu.ts"]
   A --> V["voice + memory: src/prompts.ts"]
@@ -49,7 +49,7 @@ flowchart LR
 | Only the adapter touches `$`, passes it only to its top-level functions, and spells every call `$.noun.event(...)` | otherwise Claude Code loads the module with zero hooks; `npm run validate:plugin` reports it |
 | Every hook catches, logs `{what} failed: {err}` on the transcript (`$.ui.log` through `notice()`, which names the plugin) and the plugin log, and returns `next(e)` or the original result | a broken buddy never blocks the prompt of everyone who installed it |
 | An error never looks like "no buddy" | a bad character draws the duck with a bubble naming why; the menu says why inside the group |
-| Only a question, or the end-of-turn call while `quips` or `suggestions` is on, calls a model | walking, reactions, petting and every other command stay local and free |
+| Only a question, or the end-of-turn call while `commentAfterEachTurn` or `suggestNextPrompt` is on, calls a model | walking, reactions, petting and every other command stay local and free |
 
 ## What persists
 

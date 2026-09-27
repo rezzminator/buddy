@@ -52,7 +52,7 @@ mkdir -p "$WORK"
 # Only a test runner's output reacts as a test: (e) runs `npm test` here, which prints a pass summary.
 printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
 cat > "$RUN/settings.json" <<'EOF'
-{ "pluginConfigs": { "buddy@inline": { "options": { "quips": false, "suggestions": false, "motion": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
+{ "pluginConfigs": { "buddy@inline": { "options": { "commentAfterEachTurn": false, "suggestNextPrompt": false, "walkAlongPrompt": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
 EOF
 sed -i.bak "s|RUNDIR|$RUN|" "$RUN/settings.json" && rm -f "$RUN/settings.json.bak"
 ID=$(uuidgen | tr 'A-Z' 'a-z')

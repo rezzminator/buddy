@@ -5,7 +5,7 @@ It keeps the last few exchanges with each character in each session and puts the
 
 ## What it remembers
 
-The memory is a ring of the last N exchanges, oldest first, N being the `memory` option, which counts exchanges, not lines or tokens: an exchange is a `/buddy` question with its answer (or the question alone if it got none), one line the buddy said, or a next prompt it suggested.
+The memory is a ring of the last N exchanges, oldest first, N being the `rememberedExchanges` option, which counts exchanges, not lines or tokens: an exchange is a `/buddy` question with its answer (or the question alone if it got none), one line the buddy said, or a next prompt it suggested.
 
 | Exchange | Holds |
 | --- | --- |
@@ -44,8 +44,8 @@ That is what you and the user said to each other lately; you may refer back to i
 
 | Call | Where the block goes |
 | --- | --- |
-| a question | the prompt, before the chat's last `contextTurns` turns (3 by default) and the question (`questionPrompt`) |
-| the end-of-turn call | the prompt, before the chat's last `contextTurns` turns and the turn's summary (`turnPrompt`) |
+| a question | the prompt, before the chat's last `chatTurnsToRead` turns (3 by default) and the question (`questionPrompt`) |
+| the end-of-turn call | the prompt, before the chat's last `chatTurnsToRead` turns and the turn's summary (`turnPrompt`) |
 
 The block is read once, when the question is asked, so it holds what came before the question; the question joins the ring with its answer.
 No call is added: the memory rides on calls buddy makes anyway, and the one-line rule and token caps of [Voice](./voice.md) apply unchanged.
@@ -54,10 +54,10 @@ No call is added: the memory rides on calls buddy makes anyway, and the one-line
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `memory` | number | `6` | how many recent exchanges the buddy remembers, counting exchanges, not lines or tokens; `0` is off; at most `30` |
+| `rememberedExchanges` | number | `6` | how many recent exchanges the buddy remembers, counting exchanges, not lines or tokens; `0` is off; at most `30` |
 
 `0` records nothing and adds nothing to any prompt.
-A value above 30 remembers 30 and says so: `option memory capped: {n} is above 30; remembering 30`.
+A value above 30 remembers 30 and says so: `option rememberedExchanges capped: {n} is above 30; remembering 30`.
 A value that is not a whole number of zero or more is ignored by name and remembers 6.
 Both lines reach the log at session start, the first greeting's bubble once, and `/buddy help`, as every option's error does.
 
@@ -70,7 +70,7 @@ A stored record that is malformed keeps what still reads and says how many excha
 ## Decisions
 
 - **Recent exchanges in the prompt.** Rejected: a model-written summary of the conversation. A summary costs one more call per exchange; a ring costs nothing to keep and a few hundred tokens to send.
-- **Every call carries it.** Rejected: relying on the chat's own record. A `/buddy` answer is drawn only in the bubble and never lands in the main transcript, where the chat holds only the command and its `Asked {name}.` reply; so without the memory no call could see what the buddy said. A question and the end-of-turn call see only the chat's last `contextTurns` turns (`recentTurns`), never the whole chat.
+- **Every call carries it.** Rejected: relying on the chat's own record. A `/buddy` answer is drawn only in the bubble and never lands in the main transcript, where the chat holds only the command and its `Asked {name}.` reply; so without the memory no call could see what the buddy said. A question and the end-of-turn call see only the chat's last `chatTurnsToRead` turns (`recentTurns`), never the whole chat.
 - **A question and its answer in one slot.** Rejected: one slot per message. N then means N exchanges, and an answer never outlives its question.
 - **Kept in `$.store`.** Rejected: plugin memory only. A `/reload` would forget the thread mid-conversation.
 - **Per session and per character.** Rejected: one global ring. A new session's buddy would recall another chat, and a switched character would quote another's words as its own.
@@ -86,7 +86,7 @@ A stored record that is malformed keeps what still reads and says how many excha
 | [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `questionPrompt`, `recentTurns`, `turnPrompt` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bookFor`, `pruneMemory`, `keep`, `recollect`, `heard`, `memoryFailed`, `ask`, `turnCall`, `sayTurnLine`, `proposeTurnNext` |
-| [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `memory` |
+| [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `rememberedExchanges` |
 
 ## How it's tested
 

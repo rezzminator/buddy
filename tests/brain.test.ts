@@ -121,7 +121,7 @@ describe('brain', () => {
     expect(b.motion.x).toBe(0);
     expect(b.sleeping).toBe(false);
   });
-  test('the turn\'s summary at every end, tools or none; the line due only with quips on and past the cooldown', () => {
+  test('the turn\'s summary at every end, tools or none; the line due only with commentAfterEachTurn on and past the cooldown', () => {
     const b = createBrain(char(), true);
     const read = () => react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
     expect(endTurn(b, true, 45)).toEqual({ turn: { tools: [], failures: 0, lastBash: '' }, lineDue: true });

@@ -45,7 +45,7 @@ The row drawn now carries `autoFocus`, so the menu opens on it.
 | --- | --- | --- |
 | Shipped | the plugin's `characters/`, by id | `No shipped characters found.`, or why the folder could not be read |
 | Yours | your original companion, twice: `{name} — native install`, `{name} — npm install` | `No companion in {config} or its backups.`, or why the file could not be read; `{config}` is `~/.claude.json`, or `$CLAUDE_CONFIG_DIR/.claude.json` when that is set |
-| Your folder | the files in `characterDir`, by id | `No folder set: the characterDir option names one.`, `No character files in your folder.`, or why the folder could not be read |
+| Your folder | the files in `customCharactersFolder`, by id | `No folder set: the customCharactersFolder option names one.`, `No character files in your folder.`, or why the folder could not be read |
 
 `*` marks the row drawn now (`rowLabel`, `currentKeyOf`); for your original, the roll you picked.
 An invalid file is still a row, `{id} (invalid)`.
@@ -110,7 +110,7 @@ Every failure to look is a line where the missing rows would be, and every entry
 - **Enter remembers.** Rejected: a menu pick that lasts one session.
 - **The menu is the one way to see and switch.** Rejected: `/buddy list` and `/buddy use {id}` beside it. Two ways to choose drift apart; the menu shows everything the list did, with a preview.
 - **"Yours" read at every open.** Rejected: reading it once at start. A backup restored meanwhile shows at the next open, and a start never scans backups: with the original chosen it re-rolls from the saved soul.
-- **Your additions live in a folder, never in `~/.claude.json`.** Rejected: storing characters or picks in that file. Claude Code rewrites it, so a key buddy added could be lost or race the engine's own write, and buddy treats it as read-only. Your characters live in `characterDir`, your picks in `$.store`.
+- **Your additions live in a folder, never in `~/.claude.json`.** Rejected: storing characters or picks in that file. Claude Code rewrites it, so a key buddy added could be lost or race the engine's own write, and buddy treats it as read-only. Your characters live in `customCharactersFolder`, your picks in `$.store`.
 
 ## Where it lives
 

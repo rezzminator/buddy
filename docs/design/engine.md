@@ -44,7 +44,7 @@ A tick that throws is logged once, and again only when the message changes, so a
 - **Rest.** Every step rolls `restChance`; a hit stops it for `restTicks` steps and draws `rest`. One rest in four (`REST_LINE_CHANCE`) also says a `rest` line.
 - **Held still.** A bubble, work or sleep holds it in place, and a rest's countdown waits too.
 - **Frames.** Walking frames advance one per step. Every other pose changes frame every `STILL_FRAME_MS` (900 ms). A new pose starts at its first frame.
-- **Standing.** Walking needs both the `motion` option and the character's `motion.walk`. Without either, the character stands on its `idle` frames and still animates.
+- **Standing.** Walking needs both the `walkAlongPrompt` option and the character's `motion.walk`. Without either, the character stands on its `idle` frames and still animates.
 - **Working.** When `isWorking` turns true, the brain draws `working` and stands still. Work starting wakes it; with no bubble up, one time in four (`WORKING_LINE_CHANCE`) it says a `working` line.
 - **Sleep.** From midnight to 6 am local time (`isSleepHour`), after `SLEEP_IDLE_MS` (60 s) with no event, no bubble and no work, it falls asleep: the `sleep` pose and a `z Z` drift above it. Any event wakes it with a `wake` line; until one comes, it sleeps on past six.
 
@@ -110,7 +110,7 @@ It opens toward the free side: to the left when the sprite stands past the middl
 When the row does not fit, the bubble pushes the sprite, and the sprite keeps the pushed column after the bubble closes, so it never jumps back.
 Below 40 columns (`MIN_BUBBLE_COLS`), or when a bubble beside the sprite would be under 10 columns, the line is drawn above the sprite instead, unboxed, across the band's width; when the band is narrower than the sprite plus 2, the line is drawn alone.
 A bubble is never dropped: it is cut to the rows the band has (`maxRows`), its last line ending in `…` (`wrapCells`), and the confetti or the sleep drift gives way to it.
-Text is measured in terminal cells, not characters (`src/width.ts`): CJK and most emoji take two, combining marks none, and East Asian ambiguous-width characters (`★ █ × · …`) one, or two with the `ambiguousWidth` option set to `wide`, for a terminal whose font draws them wide. The bubble, the sprite rows and the hover card are laid out to it.
+Text is measured in terminal cells, not characters (`src/width.ts`): CJK and most emoji take two, combining marks none, and East Asian ambiguous-width characters (`★ █ × · …`) one, or two with the `ambiguousCharacterWidth` option set to `wide`, for a terminal whose font draws them wide. The bubble, the sprite rows and the hover card are laid out to it.
 
 | Bubble | Lasts |
 | --- | --- |

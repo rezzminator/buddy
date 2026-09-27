@@ -1,4 +1,4 @@
-// The words sent to a model: a completion on quipModel, for /buddy questions
+// The words sent to a model: a completion on buddyModel, for /buddy questions
 // and for the end-of-turn call, which writes the buddy's line and the prompt
 // suggestion together. Each demands short lines.
 
@@ -27,9 +27,9 @@ export function retriesEmpty(r: { isAnswered: boolean; reason?: string; text?: s
   if (leftMs < RETRY_MIN_MS) return false;
   return r.isAnswered ? oneLine(r.text ?? '') === '' : r.reason === 'empty-reply';
 }
-/** How many of the main chat's latest turns a completion reads by default: the contextTurns option's default. */
+/** How many of the main chat's latest turns a completion reads by default: the chatTurnsToRead option's default. */
 export const TURN_WINDOW = 3;
-/** The most of the main chat's latest turns a completion may read: the contextTurns option's ceiling. */
+/** The most of the main chat's latest turns a completion may read: the chatTurnsToRead option's ceiling. */
 export const TURN_WINDOW_MAX = 10;
 /** How much of each of those prompts a completion reads: its end. */
 const TURN_PROMPT_CAP = 1500;
@@ -96,12 +96,12 @@ export function turnMay(g: TurnGate): TurnWants {
   return { line: g.quips && calls && g.bandSeen, next: g.suggestions && calls };
 }
 
-/** Why an ended main turn makes no call; `lineDue` false with quips allowed is the cooldown. */
+/** Why an ended main turn makes no call; `lineDue` false with commentAfterEachTurn allowed is the cooldown. */
 export function skipReason(g: TurnGate): string {
   if (!g.answered) return 'not an answered turn';
   if (!g.interactive) return 'headless';
   if (g.hidden) return 'hidden';
-  if (!g.quips && !g.suggestions) return 'quips and suggestions off';
+  if (!g.quips && !g.suggestions) return 'commentAfterEachTurn and suggestNextPrompt off';
   if (g.quips && !g.bandSeen && !g.suggestions) return 'band never drawn';
   return 'cooldown';
 }
@@ -196,7 +196,7 @@ export function endsConversation(reason: string): boolean {
   return reason === 'clear' || reason === 'resume';
 }
 
-/** The window with `turn` added last, the oldest dropped past `size` turns (the contextTurns option); `turns` itself unchanged. */
+/** The window with `turn` added last, the oldest dropped past `size` turns (the chatTurnsToRead option); `turns` itself unchanged. */
 export function pushTurn(turns: readonly Turn[], turn: Turn, size = TURN_WINDOW): Turn[] {
   return [...turns, turn].slice(-size);
 }
