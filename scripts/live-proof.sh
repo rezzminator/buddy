@@ -5,10 +5,10 @@
 #   (a) the default character, the duck, is drawn above the prompt
 #   (b) it walks: the band changes between samples while nothing is said
 #   (c) /buddy pets it and counts; /buddy-personality marks it with *
-#   (d) a /buddy question before the first reply fails visibly: the bubble
-#       says nothing to fork yet, and no quip model answers in its place
+#   (d) a /buddy question before the first reply is answered: the quip
+#       model needs no turns to read
 #   (e) a Bash `npm test` run printing a test pass shows a testPass line
-#   (f) a /buddy question after a reply (a fork of the chat) is answered
+#   (f) a /buddy question after a reply is answered
 #   (g) Enter on another character in /buddy-personality draws it, and the
 #       reopened menu marks it with *; picking the duck there returns
 #   (h) /buddy off hides the band; /buddy on brings it back
@@ -21,13 +21,11 @@
 #       ask you to remember? is answered with pineapple; the plugin's store
 #       holds both as exchanges, no thinking filler (its memory:{session} key,
 #       nothing else read)
-#   (k) a /buddy question while a main turn runs (`sleep 8` via Bash, after a
-#       marker line) waits for that turn to end, then a fork answers it
-#       without the main turn's text, and a second immediate ask gets a
-#       visible outcome: refused out loud, or asked
+#   (k) a /buddy question while a main turn runs (`sleep 8` via Bash) is
+#       answered at once, before that turn ends, and a second immediate ask
+#       gets a visible outcome: refused out loud, or asked
 #   (l) the plugin log (logFile set to this run's folder) holds the ask's
-#       start and outcome, answered via fork and never via the quip model, and
-#       /buddy log prints its path and lines
+#       start and its answered outcome, and /buddy log prints its path and lines
 # Prints a table, one row per check, and exits 1 when any check fails,
 # 2 when the session could not be driven (no transcript, a turn timed out).
 # Spends real tokens: a few cents of Haiku. It resets this plugin's own
@@ -59,9 +57,8 @@ WORK=$RUN/work
 mkdir -p "$WORK"
 # Only a test runner's output reacts as a test: (e) runs `npm test` here, which prints a pass summary.
 printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
-# questionMode defaults to complete; (d), (f), (k) and (l) prove the fork, so the proof pins it.
 cat > "$RUN/settings.json" <<'EOF'
-{ "pluginConfigs": { "buddy@inline": { "options": { "questionMode": "fork", "quips": false, "suggestions": false, "motion": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
+{ "pluginConfigs": { "buddy@inline": { "options": { "quips": false, "suggestions": false, "motion": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
 EOF
 sed -i.bak "s|RUNDIR|$RUN|" "$RUN/settings.json" && rm -f "$RUN/settings.json.bak"
 ID=$(uuidgen | tr 'A-Z' 'a-z')
@@ -204,7 +201,7 @@ if [ "$m" = "$DEFAULT" ]; then add "(c) /buddy-personality marks the current one
 
 out=$(command_out "/buddy what is your favourite tool")
 got=$(answered); v=$?
-if [ $v -ne 0 ] && grep -q 'Asked' <<<"$out" && grep -q 'nothing to fork yet' <<<"$got"; then add "(d) question before a reply: nothing to fork yet" PASS "$got"; else add "(d) question before a reply: nothing to fork yet" FAIL "$out / $got"; fi
+if [ $v -eq 0 ] && grep -q 'Asked' <<<"$out"; then add "(d) question before a reply" PASS "$got"; else add "(d) question before a reply" FAIL "$out / $got"; fi
 
 send "Run this Bash command: npm test. Then reply with exactly: T1"
 seen=""
@@ -220,7 +217,7 @@ sleep 7
 
 out=$(command_out "/buddy what did we just run")
 got=$(answered); v=$?
-[ $v -eq 0 ] && add "(f) question after a reply (fork)" PASS "$got" || add "(f) question after a reply (fork)" FAIL "$out / $got"
+[ $v -eq 0 ] && add "(f) question after a reply" PASS "$got" || add "(f) question after a reply" FAIL "$out / $got"
 
 menu_pick "$OTHER"
 if shows_any "$RUN/other.rows"; then add "(g) a menu pick of $OTHER draws it" PASS "$OTHER sprite row in the pane"; else add "(g) a menu pick of $OTHER draws it" FAIL "no $OTHER row"; fi
@@ -282,9 +279,8 @@ if grep -q -F 'question: remember the word pineapple -> ' <<<"$mem" && grep -q -
   add "(j) the store holds this session's memory" PASS "$(grep -c . <<<"$mem") exchanges under memory:$ID, no thinking filler"
 else add "(j) the store holds this session's memory" FAIL "${STORE:-no buddy_inline store file}: $(head -c 80 <<<"$mem")"; fi
 
-# (k) Ask while a main turn runs: the fork would replay that turn's words.
-MARK=ZEBRA-7Q
-send "First write exactly this sentence: $MARK the release is still running. Then run this Bash command: sleep 8. Then reply with exactly: K1"
+# (k) Ask while a main turn runs: the quip model answers at once, the turn still running.
+send "Run this Bash command: sleep 8. Then reply with exactly: K1"
 for _ in $(seq 1 40); do sleep 0.5; f=$(transcript); [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | select(.input.command? // "" | contains("sleep 8"))' "$f" >/dev/null 2>&1 && break; done
 # Both asks back to back, the second before the first's reply row is awaited.
 before=$(stdout_rows | wc -l)
@@ -293,21 +289,21 @@ send "/buddy say ack"
 for _ in $(seq 1 20); do sleep 1; [ "$(stdout_rows | wc -l)" -ge "$((before + 2))" ] && break; done
 out=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 1p); out2=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 2p)
 got=$(answered); v=$?
-# The answer came after the main turn ended: its K1 reply is already in the transcript.
+# The answer came before the main turn ended: its K1 reply is not yet in the transcript.
 ended=no; f=$(transcript); [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("K1"))' "$f" >/dev/null 2>&1 && ended=yes
 sleep 3
 mem=$([ -n "$STORE" ] && jq -r --arg k "memory:$ID" --arg d "$DEFAULT" '.[$k].characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$STORE" 2>&1)
 a1=$(grep -F 'do you like yourself? -> ' <<<"$mem" | tail -1 | sed 's/.* -> //')
-route=$(jq -r -s '([.[] | select(.event == "ask.queued")] | length) as $q | ([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "queued: \($q), \($o.outcome // "none") via \($o.via // "-")"' "$RUN/buddy.log" 2>&1)
+route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "\($o.outcome // "none") in \($o.ms // "-") ms"' "$RUN/buddy.log" 2>&1)
 echo "$out / $out2 / $got / $a1 / turn ended first: $ended / $route" > "$RUN/k.txt"
-if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && ! grep -q -F "$MARK" <<<"$a1" && [ "$ended" = yes ] && grep -q 'queued: [1-9].*answered via fork' <<<"$route"; then add "(k) a question during a busy main turn: a fork after the turn ends" PASS "$a1 ($route)"; else add "(k) a question during a busy main turn: a fork after the turn ends" FAIL "$out / ${a1:-not in memory} / turn ended first: $ended / $route"; fi
+if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && [ "$ended" = no ] && grep -q '^answered' <<<"$route"; then add "(k) a question during a busy main turn: answered before the turn ends" PASS "$a1 ($route)"; else add "(k) a question during a busy main turn: answered before the turn ends" FAIL "$out / ${a1:-not in memory} / turn ended first: $ended / $route"; fi
 if grep -q 'still thinking about your last question' <<<"$out2" || { grep -q 'Asked' <<<"$out2" && [ $v -eq 0 ]; }; then add "(k) a second immediate ask: a visible outcome" PASS "$out2 / bubble: $got"; else add "(k) a second immediate ask: a visible outcome" FAIL "${out2:-no reply} / $got"; fi
 for _ in $(seq 1 60); do sleep 0.5; f=$(transcript); jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("K1"))' "$f" >/dev/null 2>&1 && break; done
 # (l) The plugin log: this run's file, the ask's start and outcome.
 BLOG=$RUN/buddy.log
-if [ -s "$BLOG" ] && jq -e -s 'any(.[]; .event == "ask.start") and any(.[]; .event == "ask.outcome" and .outcome == "answered" and .via == "fork") and all(.[]; .event != "ask.outcome" or .via != "complete")' "$BLOG" >/dev/null 2>&1; then
-  add "(l) the log holds the ask's start and outcome, via fork" PASS "$(jq -r -s '[.[] | select(.event == "ask.outcome")] | map("\(.outcome) via \(.via // "-") \(.ms)ms") | join(", ")' "$BLOG")"
-else add "(l) the log holds the ask's start and outcome, via fork" FAIL "$(tail -c 200 "$BLOG" 2>&1)"; fi
+if [ -s "$BLOG" ] && jq -e -s 'any(.[]; .event == "ask.start") and any(.[]; .event == "ask.outcome" and .outcome == "answered")' "$BLOG" >/dev/null 2>&1; then
+  add "(l) the log holds the ask's start and outcome" PASS "$(jq -r -s '[.[] | select(.event == "ask.outcome")] | map("\(.outcome) \(.ms)ms") | join(", ")' "$BLOG")"
+else add "(l) the log holds the ask's start and outcome" FAIL "$(tail -c 200 "$BLOG" 2>&1)"; fi
 out=$(command_out "/buddy log")
 if grep -q -F "Log: $BLOG" <<<"$out" && grep -q '"event":' <<<"$out"; then add "(l) /buddy log prints its path and lines" PASS "$(head -c 90 <<<"$out")"; else add "(l) /buddy log prints its path and lines" FAIL "$(head -c 200 <<<"$out")"; fi
 

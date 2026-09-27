@@ -24,7 +24,7 @@ The hook tests and the validation need `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, as
 The script drives a real, interactive Claude Code session and reads the screen.
 
 - **The session.** tmux on a private socket (`-L buddy-proof`), a 160 × 50 window, never your own tmux server. The real Claude binary (`CLAUDE_BIN`, else `claude` resolved past a text wrapper), with `--model haiku --setting-sources project --allowedTools Bash --plugin-dir plugins/buddy`, a fresh `--session-id`, and function hooks on.
-- **The options.** A settings file pins them under `buddy@inline`, the id a `--plugin-dir` copy reads: `questionMode: fork`, `quips: false`, `motion: true`.
+- **The options.** A settings file pins them under `buddy@inline`, the id a `--plugin-dir` copy reads: `quips: false`, `suggestions: false`, `motion: true`, `logLevel: debug`, and `logFile` in the run folder.
 - **The boot.** The trust dialog defaults to "No, exit", so the script presses Down, then Enter.
 - **What it reads.** What is drawn, from the pane (`tmux capture-pane`). The art to look for, from the characters' own JSON: rows of four or more visible characters, and for a second character only rows the duck lacks. The bubble, as the text between the round border's bars. Each command's reply, from the session transcript's `<local-command-stdout>`, so a reply is read as data, not scraped.
 - **The evidence.** A timestamped run directory keeps every pane capture, the drive log and a copy of the transcript; each row of the table prints the evidence it saw.
@@ -39,9 +39,9 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (b) it walks | nothing; three samples 2 s apart, after the greeting | the duck's rows change between samples |
 | (c) `/buddy` pets | `/buddy` | the reply reads `{name}: N pets` |
 | (c) `/buddy-personality` marks the current one | the menu, then Esc | `* Quack (duck)` in the pane |
-| (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply, so there is nothing to fork | the reply says `Asked`, and the bubble fails visibly: "couldn't answer" with `nothing to fork yet`, no quip model in its place |
+| (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply | the reply says `Asked`, and the bubble holds an answer |
 | (e) a test pass shows a `testPass` line | a prompt asking Claude to run `npm test` in the run's work folder, whose `package.json` test script prints `Tests: 3 passed` | a line of the duck's `testPass` pool shows in the bubble |
-| (f) question after a reply | `/buddy what did we just run`, a real fork of the chat | the bubble holds an answer |
+| (f) question after a reply | `/buddy what did we just run` | the bubble holds an answer |
 | (g) a menu pick of `{other}` draws it | the menu, Up to the first non-duck character by id (`cat`), Enter | a row unique to its art is in the pane |
 | (g) reopened, the menu marks `{other}` | the menu, then Esc | `* {name} ({other})` in the pane |
 | (g) picking the default returns | the menu, Down to the duck, Enter | the duck's rows are back |
@@ -56,9 +56,9 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (j) `/buddy remember the word pineapple` | that question | the reply says `Asked`, and the bubble holds an answer |
 | (j) the next answer remembers `pineapple` | `/buddy what word did I ask you to remember?` | the answer holds `pineapple` |
 | (j) the store holds this session's memory | nothing; the plugin's store file is read | its `memory:{session}` record holds the exchanges under `characters.duck`, no `thinking` filler |
-| (k) a question during a busy main turn | a prompt that writes a marker line, then runs `sleep 8` via Bash; `/buddy do you like yourself?` during it | the reply says `Asked`; the answer arrives after the main turn's `K1` reply, the log holds an `ask.queued` and the last outcome is `answered` via fork, and the answer does not hold the marker |
+| (k) a question during a busy main turn | a prompt that runs `sleep 8` via Bash, then replies `K1`; `/buddy do you like yourself?` during it | the reply says `Asked`; the answer arrives before the main turn's `K1` reply, and the last outcome in the log is `answered` |
 | (k) a second immediate ask | `/buddy say ack` right after | its reply refuses out loud (`still thinking about your last question`) or says `Asked` |
-| (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start`, an `ask.outcome` answered via fork, and no `ask.outcome` via `complete` |
+| (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start` and an `ask.outcome` answered |
 | (l) `/buddy log` | `/buddy log` | the reply names the run's log path and holds JSON lines |
 
 ### Why there is no fake HOME
@@ -100,7 +100,7 @@ Named here, so none reads as a pass:
 
 ## Decisions
 
-- **A real session, on Haiku.** Rejected: mocks alone. The testing kit cannot press a person's Esc or show that Claude Code really draws the band, and a fork needs a real chat. Haiku keeps a run to cents.
+- **A real session, on Haiku.** Rejected: mocks alone. The testing kit cannot press a person's Esc or show that Claude Code really draws the band, and a question mid-turn needs a real running turn. Haiku keeps a run to cents.
 - **Exit 2 apart from exit 1.** Rejected: one failure code. "Could not drive the session" and "a check failed" are different news.
 - **Replies from the transcript, drawing from the pane.** Rejected: scraping replies off the screen, where they wrap and scroll.
 - **The real HOME.** Rejected: a fake one, which logs the session out.

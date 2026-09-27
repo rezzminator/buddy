@@ -19,7 +19,7 @@ export const USAGE = [
   '/buddy help          this text',
   '/buddy log           the log file\'s path and its last 20 lines, to paste into an issue',
   '/buddy-personality   see every character and switch (remembered), with a live preview',
-  '/buddy {question}    ask your buddy (option questionMode: fork, complete or off)',
+  '/buddy {question}    ask your buddy',
 ].join('\n');
 
 const WORDS: Record<string, Action> = {

@@ -10,7 +10,7 @@ Characters are JSON files, seven shipped and any number of your own, and `/buddy
 | --- | --- |
 | [Engine](./engine.md) | the band above the prompt, the tick, motion, the brain's states, particles, the speech bubble |
 | [Characters](./characters.md) | the character contract, where characters come from, the line events, adding one |
-| [Voice](./voice.md) | questions (a fork of the chat or a plain completion), quips, the one-line rule and token caps, the quip model |
+| [Voice](./voice.md) | questions (a completion on the chat's last turns), quips, the one-line rule and token caps, the quip model |
 | [Memory](./memory.md) | the short memory of recent exchanges, kept per session and per character, fed into every prompt |
 | [Original companion](./original-companion.md) | recomputing the companion Claude Code hatched: identity, hash, PRNG, bones, species art, privacy, legal |
 | [Personality menu](./personality-menu.md) | `/buddy-personality`: the groups, the live preview, Enter and Esc, persistence, error lines |
@@ -33,7 +33,7 @@ flowchart LR
   O["original: hatch.ts, original.ts, species/"] --> R
   A --> M["menu pane: src/menu.ts"]
   A --> V["voice + memory: src/prompts.ts"]
-  V --> Model["$.model.fork / $.model.complete"]
+  V --> Model["$.model.complete"]
 ```
 
 - An event (a tool call, a turn ending, a command, a clock tick, a draw of the band) reaches the adapter, which calls one brain function.

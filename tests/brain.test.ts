@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ANSWER_MS, COMPLETE_DEADLINE_MS, FORK_DEADLINE_MS, QUEUE_MAX_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
+  ANSWER_MS, COMPLETE_DEADLINE_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
   failAnswer, farewell, holdsAnswer, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
@@ -203,7 +203,7 @@ describe('holdsAnswer', () => {
     failAnswer(b, 'timeout');
     expect(holdsAnswer(b)).toBe(true);
     beginQuestion(b, () => 0);
-    b.now += FORK_DEADLINE_MS * 10;
+    b.now += COMPLETE_DEADLINE_MS * 10;
     expect(holdsAnswer(b)).toBe(true);
     b.talk = { text: 'a canned line', pose: null, until: b.now + BUBBLE_MS };
     expect(holdsAnswer(b)).toBe(false);
@@ -211,16 +211,11 @@ describe('holdsAnswer', () => {
 });
 
 describe('a question\'s deadline and failures', () => {
-  test('a fork gets 180 s, a safety net counted from its start; a complete-mode question 90 s; the bubble names the one that passed', () => {
-    expect(FORK_DEADLINE_MS).toBe(180_000);
+  test('a question gets 90 s on the quip model; the bubble names the deadline that passed', () => {
     expect(COMPLETE_DEADLINE_MS).toBe(90_000);
-    expect(QUEUE_MAX_MS).toBe(600_000);
-    expect(deadlineReason(QUEUE_MAX_MS)).toBe('no answer in 600 s');
-    expect(deadlineReason(FORK_DEADLINE_MS)).toBe('no answer in 180 s');
     expect(deadlineReason(COMPLETE_DEADLINE_MS)).toBe('no answer in 90 s');
   });
   test('why a model call gave no answer, as the bubble says it', () => {
-    expect(noAnswerReason({ reason: 'nothing-to-fork' })).toBe("nothing to fork yet: ask again after Claude's first reply");
     expect(noAnswerReason({ reason: 'api-error', status: 529 })).toBe('api-error 529');
     expect(noAnswerReason({ reason: 'api-error', status: null })).toBe('api-error (no response)');
     expect(noAnswerReason({ reason: 'empty-reply' })).toBe('empty-reply');
@@ -259,7 +254,7 @@ describe('a pending question', () => {
     ticks(b, BUBBLE_MS / 200);
     expect(b.talk).toBeNull();
     endQuestion(b);
-    expect(failAnswer(b, deadlineReason(FORK_DEADLINE_MS), 'fixy')).toBe(false);
+    expect(failAnswer(b, deadlineReason(COMPLETE_DEADLINE_MS), 'fixy')).toBe(false);
     expect(b.talk).toBeNull();
   });
   test('ended with no answer to replace it, the thinking line goes at the next tick', () => {
@@ -272,7 +267,7 @@ describe('a pending question', () => {
 });
 
 describe('isMainLoop', () => {
-  test('only the main loop, which carries no agent id, is the user\'s turn; a subagent\'s or a fork\'s loop is not', () => {
+  test('only the main loop, which carries no agent id, is the user\'s turn; a subagent\'s loop is not', () => {
     expect(isMainLoop(undefined)).toBe(true);
     expect(isMainLoop('a1b2')).toBe(false);
     expect(isMainLoop('')).toBe(false);

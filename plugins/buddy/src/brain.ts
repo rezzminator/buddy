@@ -13,17 +13,7 @@ import { buildScene, type Scene } from './scene.ts';
 export const BUBBLE_MS = 6000;
 export const ANSWER_MS = 15000;
 export const ERROR_MS = 10000;
-/**
- * A /buddy question's fork: a safety net so the bubble always ends, counted
- * from when the fork starts, never while the question waits for the main turn.
- * A fork carries the whole chat on its model and runs past a minute in a long
- * one; it cannot be cancelled, so past this it runs on unseen.
- */
-export const FORK_DEADLINE_MS = 180_000;
-
-/** How long a question asked mid-turn waits for the main turn to end before it gives up visibly: a turn end that never comes never leaves the bubble thinking. */
-export const QUEUE_MAX_MS = 600_000;
-/** A `complete`-mode question's deadline, on the quip model. */
+/** A /buddy question's deadline, on the quip model: a safety net so the bubble always ends. */
 export const COMPLETE_DEADLINE_MS = 90_000;
 export const SLEEP_IDLE_MS = 60000;
 export const REST_LINE_CHANCE = 0.25;
@@ -234,12 +224,10 @@ export function deadlineReason(ms: number): string {
 }
 
 /**
- * Why a model call gave no answer, as the bubble says it: `nothing-to-fork`
- * (a chat before its first reply) says what to do, `api-error` carries its
- * status, every other reason reads as itself.
+ * Why a model call gave no answer, as the bubble says it: `api-error` carries
+ * its status, every other reason reads as itself.
  */
 export function noAnswerReason(r: { reason: string; status?: number | null }): string {
-  if (r.reason === 'nothing-to-fork') return "nothing to fork yet: ask again after Claude's first reply";
   if (r.reason === 'api-error') return `api-error ${typeof r.status === 'number' ? r.status : '(no response)'}`;
   return r.reason;
 }
@@ -282,9 +270,9 @@ export function farewell(b: Brain, rand: () => number): string {
 
 /**
  * Whether an event's loop is the main conversation's, the user's own turn: it
- * carries no agent id. A subagent's loop and the engine's forks (the buddy's
- * own included) carry one, and never mark the main turn busy, feed its tally
- * or end it.
+ * carries no agent id. A subagent's loop, or any other loop the engine runs
+ * beside the main one, carries one, and never feeds the main turn's tally or
+ * ends it.
  */
 export function isMainLoop(agentId: string | undefined): boolean {
   return agentId === undefined;

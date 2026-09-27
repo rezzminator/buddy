@@ -79,7 +79,7 @@ A line is never the one said last from the same pool (`pickLine`).
 | `testPass` | a Bash call's output matches the pass pattern and not the fail one, and the call did not fail | always | 6 s, with confetti |
 | `testFail` | a Bash call's output matches the fail pattern | always | 6 s |
 | `petted` | a bare `/buddy` | always | 6 s |
-| `thinking` | a `/buddy` question starts | always | until the answer, the failure or the question's deadline (180 s from a fork's start, 90 s in `complete` mode) |
+| `thinking` | a `/buddy` question starts | always | until the answer, the failure or the question's deadline (90 s) |
 | `rest` | the tick a walking rest begins | 1 in 4 | 6 s |
 | `working` | `isWorking` turns true while no bubble shows | 1 in 4 | 6 s |
 | `wake` | the first event after sleep: a tool call, `/buddy` (a pet or a question), a turn ending, work starting | always | 6 s, unless the waking event says its own line at once (a pet, a question, a tool reaction), which replaces it |
@@ -106,7 +106,7 @@ A shipped character is original work (no copied character, trademark or real per
 - **The loader pads and bottom-aligns.** Rejected: requiring exact widths. Authors never count trailing spaces. (Species templates do require exact widths: their eye and hat slots sit at fixed columns.)
 - **A fallback chain for poses.** Rejected: requiring all ten. A small character is complete with `idle` and a walk.
 - **A neutral fallback pool.** Rejected: the duck's lines as the default for every character. No character ever speaks in another's voice.
-- **Your file wins an id.** Rejected: the shipped one winning. It lets you restyle a shipped character without forking the plugin. The one id no file takes is `original`: a file could otherwise stand in for your original companion.
+- **Your file wins an id.** Rejected: the shipped one winning. It lets you restyle a shipped character without editing the plugin. The one id no file takes is `original`: a file could otherwise stand in for your original companion.
 - **A stand-in compiled in.** Rejected: drawing nothing when `duck.json` fails. The error needs a buddy to say it.
 
 ## Where it lives

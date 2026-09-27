@@ -6,7 +6,6 @@ import { LOG_LEVELS, type LogLevel } from './log.ts';
 import { MEMORY_DEFAULT, MEMORY_MAX } from './memory.ts';
 import { TURN_WINDOW, TURN_WINDOW_MAX } from './prompts.ts';
 
-export type QuestionMode = 'fork' | 'complete' | 'off';
 /** How hard the buddy's model thinks: the engine's ModelEffort values. */
 export type Effort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const EFFORTS: readonly Effort[] = ['low', 'medium', 'high', 'xhigh', 'max'];
@@ -16,21 +15,16 @@ export const INHERIT = 'inherit';
 export const INHERIT_FALLBACK_MODEL = 'opus';
 export type AmbiguousWidth = 'narrow' | 'wide';
 export const AMBIGUOUS_WIDTHS: readonly AmbiguousWidth[] = ['narrow', 'wide'];
-export const QUESTION_MODES: readonly QuestionMode[] = ['fork', 'complete', 'off'];
-/** How the end-of-turn call runs: a completion on quipModel, or a fork of the main chat. */
-export type TurnMode = 'complete' | 'fork';
-export const TURN_MODES: readonly TurnMode[] = ['complete', 'fork'];
 
 export type Options = {
   character: string;
   characterDir: string;
   motion: boolean;
-  questionMode: QuestionMode;
   /** The end-of-turn call writes the buddy's line, shown in the bubble. */
   quips: boolean;
-  /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and questions that do not fork; 'inherit' = the main chat's (resolveModel). */
+  /** The model of the buddy's lines, suggestions and questions: the end-of-turn call and every /buddy question; 'inherit' = the main chat's (resolveModel). */
   quipModel: string;
-  /** How hard quipModel thinks on each of those calls, a fork takes none; 'inherit' = the main chat's (resolveEffort). */
+  /** How hard quipModel thinks on each of those calls; 'inherit' = the main chat's (resolveEffort). */
   effort: Effort | typeof INHERIT;
   /** The least seconds between two lines; 0 = every answered turn. */
   quipCooldownSec: number;
@@ -38,9 +32,7 @@ export type Options = {
   suggestions: boolean;
   /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
   memory: number;
-  /** How the end-of-turn call runs: complete = a quipModel completion on the last contextTurns turns; fork = a fork of the main chat (its model, effort and prompt cache). */
-  turnMode: TurnMode;
-  /** How many of the main chat's latest answered turns a completion reads, 1 to TURN_WINDOW_MAX: questions and the end-of-turn call that do not fork. */
+  /** How many of the main chat's latest answered turns a completion reads, 1 to TURN_WINDOW_MAX: questions and the end-of-turn call. */
   contextTurns: number;
   /** The plugin log's level: error, info or debug. */
   logLevel: LogLevel;
@@ -55,14 +47,12 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   character: 'duck',
   characterDir: '',
   motion: true,
-  questionMode: 'complete',
   quips: true,
   quipModel: 'opus',
   effort: 'low',
   quipCooldownSec: 0,
   suggestions: true,
   memory: MEMORY_DEFAULT,
-  turnMode: 'complete',
   contextTurns: TURN_WINDOW,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
@@ -79,7 +69,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, characterDir, motion, questionMode, quips, quipModel, effort, quipCooldownSec, suggestions, memory, turnMode, contextTurns, logLevel, logFile, ambiguousWidth } = raw;
+  const { character, characterDir, motion, quips, quipModel, effort, quipCooldownSec, suggestions, memory, contextTurns, logLevel, logFile, ambiguousWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -103,11 +93,6 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     if (b === undefined) bad('suggestions', `${JSON.stringify(suggestions)} is not true or false`);
     else o.suggestions = b;
   }
-  if (questionMode !== undefined && questionMode !== '') {
-    const m = typeof questionMode === 'string' ? questionMode.trim().toLowerCase() : '';
-    if ((QUESTION_MODES as readonly string[]).includes(m)) o.questionMode = m as QuestionMode;
-    else bad('questionMode', `${JSON.stringify(questionMode)} is not fork, complete or off`);
-  }
   if (quipModel !== undefined && quipModel !== '') {
     if (typeof quipModel === 'string') o.quipModel = quipModel.trim().toLowerCase() === INHERIT ? INHERIT : quipModel.trim();
     else bad('quipModel', 'not a string');
@@ -130,11 +115,6 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
       o.memory = MEMORY_MAX;
       o.errors.push(`option memory capped: ${n} is above ${MEMORY_MAX}; remembering ${MEMORY_MAX}`);
     } else o.memory = n;
-  }
-  if (turnMode !== undefined && turnMode !== '') {
-    const m = typeof turnMode === 'string' ? turnMode.trim().toLowerCase() : '';
-    if ((TURN_MODES as readonly string[]).includes(m)) o.turnMode = m as TurnMode;
-    else bad('turnMode', `${JSON.stringify(turnMode)} is not complete or fork`);
   }
   if (contextTurns !== undefined && contextTurns !== '') {
     const n = typeof contextTurns === 'number' ? contextTurns : typeof contextTurns === 'string' ? Number(contextTurns) : NaN;

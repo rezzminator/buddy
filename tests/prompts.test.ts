@@ -1,20 +1,9 @@
 import { describe, expect, test } from 'vitest';
 import {
-  CHARACTER_RULE, FORK_ROLE, ONE_LINE_RULE, SUGGESTION_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, TURN_WINDOW, TURN_WINDOW_MAX, forkPrompt, lostThread, pushTurn, recentTurns, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestionText, turnForkPrompt, turnPrompt, turnSystem,
+  CHARACTER_RULE, ONE_LINE_RULE, SUGGESTION_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, TURN_WINDOW, TURN_WINDOW_MAX, lostThread, pushTurn, recentTurns, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestionText, turnPrompt, turnSystem,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
-  test('the fork prompt: steps out of the chat\'s assistant voice, then persona, the question, the one-line rule', () => {
-    expect(forkPrompt('You are X.', 'why')).toBe(
-      `${FORK_ROLE}\n\nYou are X.\n\n${CHARACTER_RULE}\n\nThe user asks you directly: why. Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.`,
-    );
-    expect(FORK_ROLE).toContain('not the assistant');
-    expect(FORK_ROLE).toContain('sign-off');
-  });
-  test('every fork, the question\'s and the end-of-turn one, is told it has no tools: a denied tool attempt is another slow round', () => {
-    expect(FORK_ROLE).toContain('You have no tools in this reply');
-    expect(turnForkPrompt('You are X.', { line: true, next: true })).toContain('You have no tools in this reply');
-  });
   test('the completion system and prompt', () => {
     expect(oneLineSystem('You are X.')).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${ONE_LINE_RULE}`);
     expect(questionPrompt('hi')).toBe('The user asks you directly: hi');
@@ -37,12 +26,9 @@ describe('prompts', () => {
 describe('memory in the prompts', () => {
   const memory = 'Recently (oldest first):\nYou: remember pineapple\nCat: Noted.';
   test('before the question, with leave to refer back to it', () => {
-    const f = forkPrompt('You are X.', 'what word', memory);
-    expect(f.indexOf(memory)).toBeGreaterThan(f.indexOf('You are X.'));
-    expect(f.indexOf(memory)).toBeLessThan(f.indexOf('The user asks you directly: what word'));
-    expect(f).toContain('you may refer back to it');
     const c = questionPrompt('what word', memory);
     expect(c.startsWith(memory)).toBe(true);
+    expect(c).toContain('you may refer back to it');
     expect(c.endsWith('The user asks you directly: what word')).toBe(true);
     const tp = turnPrompt({ tools: ['Read'], failures: 0, lastBash: '' }, [{ prompt: 'hi', answer: 'Hello.' }], memory);
     expect(tp.startsWith(memory)).toBe(true);
@@ -98,19 +84,8 @@ describe('memory in the prompts', () => {
     expect(ten).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(t));
     expect(pushTurn(ten, t(13), 5)).toEqual([9, 10, 11, 12, 13].map(t));
   });
-  test('the end-of-turn fork prompt: the step out of the assistant voice, then the end-of-turn system prompt, then the memory', () => {
-    const both = { line: true, next: true };
-    expect(turnForkPrompt('You are X.', both)).toBe(`${FORK_ROLE}\n\n${turnSystem('You are X.', both)}`);
-    expect(turnForkPrompt('You are X.', both, '')).toBe(turnForkPrompt('You are X.', both));
-    const next = { line: false, next: true };
-    const p = turnForkPrompt('You are X.', next, 'Fixy: Still here.');
-    expect(p).toBe(`${FORK_ROLE}\n\n${turnSystem('You are X.', next)}\n\nFixy: Still here.\nThat is what you and the user said to each other lately; you may refer back to it.`);
-    expect(p).toContain('NEXT:');
-    expect(p).not.toContain('LINE:');
-  });
   test('no memory: the prompts as before', () => {
     expect(questionPrompt('hi', '')).toBe('The user asks you directly: hi');
-    expect(forkPrompt('You are X.', 'why', '')).toBe(forkPrompt('You are X.', 'why'));
   });
 });
 
@@ -123,13 +98,10 @@ describe('the character rule', () => {
     expect(CHARACTER_RULE).toMatch(/HOW.*never WHAT/);
     expect(CHARACTER_RULE).toMatch(/repeat/);
   });
-  test('comes right after the persona: questions, the end-of-turn LINE, and a fork (after its role)', () => {
+  test('comes right after the persona: questions and the end-of-turn LINE', () => {
     expect(oneLineSystem('You are X.').startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
     expect(turnSystem('You are X.', { line: true, next: true }).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
     expect(turnSystem('You are X.', { line: true, next: false }).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
-    const f = forkPrompt('You are X.', 'why', 'Recently: x');
-    expect(f.startsWith(`${FORK_ROLE}\n\nYou are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
-    expect(f.indexOf(CHARACTER_RULE)).toBeLessThan(f.indexOf('Recently: x'));
   });
   test('a NEXT alone is the user\'s own words, not the character\'s: no rule', () => {
     expect(turnSystem('You are X.', { line: false, next: true })).not.toContain(CHARACTER_RULE);

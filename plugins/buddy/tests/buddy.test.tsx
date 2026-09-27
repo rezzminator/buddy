@@ -52,9 +52,8 @@ type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; r
 const HOME = '/test-home';
 const SESSION = 'test-session';
 
-function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: Answer; complete?: Answer; queue?: Answer[]; forkDelayMs?: number; completeDelayMs?: number } = {}, disk: Disk = {}) {
+function world(on: On, store: Record<string, unknown> = {}, answers: { complete?: Answer; queue?: Answer[]; completeDelayMs?: number } = {}, disk: Disk = {}) {
   const logs: string[] = [];
-  const forks: string[] = [];
   const completes: { model: string; effort?: string; system?: string; prompt: string; timeoutMs?: number }[] = [];
   const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const commands: string[] = [];
@@ -155,17 +154,12 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`);
     return { value: text };
   });
-  on('model.fork', async (_$, e) => {
-    forks.push(e.prompt);
-    if (answers.forkDelayMs) await clock.sleep(answers.forkDelayMs);
-    return { value: { usage, ...(answers.fork ?? { isAnswered: true, text: 'A forked answer.' }) } } as never;
-  });
   on('model.complete', async (_$, e) => {
     completes.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt, timeoutMs: e.timeoutMs });
     if (answers.completeDelayMs) await clock.sleep(answers.completeDelayMs);
     return { value: { usage, ...(queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' }) } } as never;
   });
-  return { logs, forks, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins };
+  return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins };
 }
 
 function run(args: string) {
@@ -293,7 +287,7 @@ describe('/buddy', () => {
     await ui.unmount();
   });
 
-  test('an idle question: ONE completion on opus at low effort, no fork; the persona, then the character rule; only the last 3 turns', async ($, on) => {
+  test('an idle question: ONE completion on opus at low effort; the persona, then the character rule; only the last 3 turns', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: '"Forty-two, friend."\nand more' } });
     await $.session.start(START);
     const ui = await band($);
@@ -305,7 +299,6 @@ describe('/buddy', () => {
     const turnCalls = w.completes.length;
     expect((await $.command.run(run('what is up'))).text).toBe('Asked Fixy.');
     await w.clock.settle();
-    expect(w.forks).toEqual([]);
     expect(w.completes).toHaveLength(turnCalls + 1);
     const q = w.completes.at(-1)!;
     expect(q).toMatchObject({ model: 'opus', effort: 'low' });
@@ -412,11 +405,10 @@ describe('/buddy', () => {
     expect((await $.command.run(run('list'))).text).toBe('Switching characters moved to /buddy-personality.');
     expect((await $.command.run(run('use cat'))).text).toBe('Switching characters moved to /buddy-personality.');
     await w.clock.settle();
-    expect(w.forks).toEqual([]);
     expect(w.completes).toEqual([]);
   });
 
-  test('a failed completion says so in the bubble with its reason and status, and never forks', async ($, on) => {
+  test('a failed completion says so in the bubble with its reason and status', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: false, reason: 'api-error', status: 529 } });
     await $.session.start(START);
     const ui = await band($);
@@ -425,39 +417,33 @@ describe('/buddy', () => {
     expect(await shows(ui, /^Fixy couldn't answer: api-error 529$/)).toBe(true);
     expect(w.logs).toContain('buddy: a /buddy question got no answer: api-error 529');
     expect(w.completes).toHaveLength(1);
-    expect(w.forks).toEqual([]);
     await ui.unmount();
   });
 
-  test('a completion with an empty reply fails as empty-reply, and never forks', async ($, on) => {
+  test('a completion with an empty reply fails as empty-reply', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: false, reason: 'empty-reply' } });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('you there?'));
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
-    expect(w.forks).toEqual([]);
     expect(await shows(ui, /^Fixy couldn't answer: empty-reply$/)).toBe(true);
     await ui.unmount();
   });
 
-
-
-  test('a question asked during a busy main turn answers at once through one completion; nothing waits for the turn to end', async ($, on) => {
+  test('a question asked while the main turn runs answers at once through one completion', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'Quack, I am here.' } });
     await $.session.start(START);
     const ui = await band($, { isWorking: true });
     await $.command.run(run('you like yourself!?'));
     await w.clock.settle();
-    expect(w.forks).toEqual([]);
     expect(w.completes).toHaveLength(1);
     expect(w.completes[0]).toMatchObject({ model: 'opus', effort: 'low' });
     expect(await shows(ui, /^Quack, I am here\.$/)).toBe(true);
     const ring = (w.saved.get(`memory:${SESSION}`) as { characters: Record<string, { answer?: string }[]> }).characters.fixy!;
     expect(ring.at(-1)).toMatchObject({ question: 'you like yourself!?', answer: 'Quack, I am here.' });
     const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
-    expect(records.some((r) => r.event === 'ask.queued')).toBe(false);
-    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'answered', via: 'complete' });
+    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'answered' });
     await ui.unmount();
   });
 
@@ -504,10 +490,9 @@ describe('/buddy', () => {
     await w.clock.advance(1_000);
     expect(await shows(ui, /^Fixy couldn't answer: no answer in 90 s$/)).toBe(true);
     expect(w.logs).toContain('buddy: a /buddy question got no answer: no answer in 90 s');
-    expect(w.forks).toEqual([]);
     await w.clock.settle();
     const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
-    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', via: 'complete', reason: 'no answer in 90 s' });
+    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', reason: 'no answer in 90 s' });
     // The ask is over: the next question is taken, not refused.
     expect((await $.command.run(run('again?'))).text).toBe('Asked Fixy.');
     await ui.unmount();
@@ -890,7 +875,7 @@ describe('core fixes', () => {
 });
 
 describe('hook paths', () => {
-  test('turn.complete (quips and suggestions on by default): one call on the quip model reads the prompt, the answer and the tally; never a fork', async ($, on) => {
+  test('turn.complete (quips and suggestions on by default): one call on the quip model reads the prompt, the answer and the tally', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
     await $.session.start(START);
@@ -899,7 +884,6 @@ describe('hook paths', () => {
     await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(w.forks).toEqual([]);
     expect(w.completes.length).toBe(1);
     expect(w.completes[0]).toMatchObject({ model: 'opus', effort: 'low' });
     expect(w.completes[0]?.timeoutMs).toBe(30_000);
@@ -909,7 +893,7 @@ describe('hook paths', () => {
     // An untagged reply is the line alone.
     expect(await shows(ui, /A completed answer\./)).toBe(true);
     const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
-    expect(records.find((r) => r.event === 'turn.call')).toMatchObject({ mode: 'complete', line: true, next: true });
+    expect(records.find((r) => r.event === 'turn.call')).toMatchObject({ line: true, next: true });
     expect(records.find((r) => r.event === 'quip.outcome')).toMatchObject({ outcome: 'answered', inTok: 1, outTok: 1, cacheRead: 0, cachePct: 0 });
     await ui.unmount();
   });
@@ -921,12 +905,11 @@ describe('hook paths', () => {
     await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes).toHaveLength(0);
-    expect(w.forks).toHaveLength(0);
     const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(records.find((r) => r.event === 'turn.skipped')).toMatchObject({ why: 'headless' });
   });
 
-  test('a subagent\'s tool calls and turn end are not the main turn: no call, no busy, and the main turn keeps its tally', async ($, on) => {
+  test('a subagent\'s tool calls and turn end are not the main turn: no call, and the main turn keeps its tally', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
     await $.session.start(START);
@@ -953,7 +936,6 @@ describe('hook paths', () => {
       await $.turn.complete({ reason: 'answer', answer: `reply number ${n}`, isAborted: false, turnId: `t${n}` } as never);
       await w.clock.settle();
     }
-    expect(w.forks).toEqual([]);
     expect(w.completes).toHaveLength(4);
     for (const c of w.completes) expect(c).toMatchObject({ model: 'opus', effort: 'low' });
     expect(w.completes[0]!.system).toContain(`You are Fixy, a test fixture.\n\n${CHARACTER_RULE}\n\n`);
@@ -1094,7 +1076,6 @@ describe('prompt suggestions', () => {
     expect((await asked).text).toBe('Asked Fixy.');
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
-    expect(w.forks).toEqual([]);
     await working.unmount();
     await ui.unmount();
   });
@@ -1110,7 +1091,6 @@ describe('prompt suggestions', () => {
     await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
     await $.command.run(run('can you see the main chat?'));
     await w.clock.settle();
-    expect(w.forks).toEqual([]);
     const asks = w.completes.filter((c) => c.prompt.includes('The user asks you directly: can you see the main chat?'));
     expect(asks).toHaveLength(1);
     expect(asks[0]!.prompt).toContain('The user asked Claude:\nbuild the thing');
@@ -1125,7 +1105,6 @@ describe('prompt suggestions', () => {
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(w.forks).toEqual([]);
     expect(w.completes.length).toBe(1);
     expect(w.completes[0]?.system).toContain('You are Fixy, a test fixture.');
     expect(w.completes[0]?.system).toContain('LINE:');
@@ -1173,7 +1152,6 @@ describe('prompt suggestions', () => {
     await $.turn.complete({ reason: 'answer', answer: 'Sub done.', isAborted: false, turnId: 't2', agentId: 'agent-1' } as never);
     await w.clock.settle();
     expect(w.completes).toEqual([]);
-    expect(w.forks).toEqual([]);
     expect(w.suggested).toEqual([]);
     await ui.unmount();
   });

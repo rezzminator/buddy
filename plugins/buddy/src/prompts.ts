@@ -1,13 +1,12 @@
-// The words sent to a model: a fork of the chat or a fresh completion, for
-// /buddy questions and for the end-of-turn call, which writes the buddy's line
-// and the prompt suggestion together. Each demands
-// short lines; a fork measured 813 output tokens for one line when it did not.
+// The words sent to a model: a completion on quipModel, for /buddy questions
+// and for the end-of-turn call, which writes the buddy's line and the prompt
+// suggestion together. Each demands short lines.
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
 export const QUESTION_MAX_TOKENS = 100;
 /** The end-of-turn call's budget: a LINE and a NEXT, short. */
 export const TURN_MAX_TOKENS = 120;
-/** How long the end-of-turn completion may take before its line and suggestion are given up; a fork has FORK_DEADLINE_MS. */
+/** How long the end-of-turn completion may take before its line and suggestion are given up. */
 export const TURN_DEADLINE_MS = 30_000;
 /** How many of the main chat's latest turns a completion reads by default: the contextTurns option's default. */
 export const TURN_WINDOW = 3;
@@ -34,22 +33,6 @@ export const CHARACTER_RULE =
   'a risk, a gap, a wrong assumption, or a better next step. ' +
   'The character decides HOW it is said, never WHAT is true. ' +
   'Never repeat what the chat already said.';
-
-/**
- * A fork carries the chat's whole system prompt, the assistant's own voice with
- * it; the persona arrives as one user message after it, so without this the
- * buddy answers in the assistant's voice, catchphrases and sign-offs included.
- */
-export const FORK_ROLE =
-  'For this one reply you are not the assistant of this conversation. Drop its persona, voice, catchphrases, ' +
-  'formatting rules and sign-off lines; no markdown, no summary line. You are the user\'s companion character below, ' +
-  'looking at the same conversation. You have no tools in this reply: call none, since every call is refused and ' +
-  'costs another round; answer in text alone.';
-
-/** The fork's one user message: the step out of the assistant's voice, persona, the character rule, the buddy's memory, the question, the one-line rule. */
-export function forkPrompt(persona: string, question: string, memory = ''): string {
-  return `${FORK_ROLE}\n\n${persona}\n\n${CHARACTER_RULE}\n\n${recalled(memory)}The user asks you directly: ${question}. ${ONE_LINE_RULE}`;
-}
 
 /** The system prompt of a completion: persona, the character rule and the one-line rule. */
 export function oneLineSystem(persona: string): string {
@@ -97,16 +80,6 @@ export function turnSystem(persona: string, wants: TurnWants): string {
   }
   const rule = wants.line ? `${CHARACTER_RULE}\n\n` : '';
   return `${persona}\n\n${rule}A turn of the user's work with Claude just ended. Reply with exactly these lines and nothing else:\n${lines.join('\n')}\nDo not use tools. Do not think out loud.`;
-}
-
-/**
- * The end-of-turn fork's one user message: the step out of the assistant's
- * voice, then what `turnSystem` tells a completion, then the buddy's memory.
- * The fork sees the whole chat itself, so no recent turns and no tally.
- */
-export function turnForkPrompt(persona: string, wants: TurnWants, memory = ''): string {
-  const recall = recalled(memory).trimEnd();
-  return `${FORK_ROLE}\n\n${turnSystem(persona, wants)}${recall ? `\n\n${recall}` : ''}`;
 }
 
 /** One main-thread turn: what the user asked Claude and what Claude answered. */

@@ -77,7 +77,7 @@ Hidden is the adapter's state, not the brain's: the band yields and the clock st
 | a finished tool call | `react` | wakes, adds the call to the turn's tally, reacts per the table below |
 | a turn ends | `wake`, `endTurn` | the tally resets; a quip is due or not ([Voice](./voice.md)) |
 | `/buddy` | `pet` | `petted` pose and line, one more pet |
-| `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's deadline (180 s from a fork's start, 90 s in `complete` mode), then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
+| `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's deadline (90 s), then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
 | the band draws | `observeBand` | width, height, and work starting or stopping |
 | a tick | `tick` | brain time, expiries, sleep, motion |
 
@@ -117,7 +117,7 @@ Text is measured in terminal cells, not characters (`src/width.ts`): CJK and mos
 | a canned line (`BUBBLE_MS`) | 6 s |
 | a load error, a failed save (`ERROR_MS`) | 10 s |
 | a model answer, or why it failed (`ANSWER_MS`) | 15 s |
-| the `thinking` line while a question runs | until the answer, the failure or the question's deadline (180 s from a fork's start, 90 s in `complete` mode) |
+| the `thinking` line while a question runs | until the answer, the failure or the question's deadline (90 s) |
 
 While a bubble shows, the character stands still.
 Hovering the sprite shows a card, in terminals that report the mouse: the name, the description (or an original's subtitle), `pets N | questions N | {mood}`, and an original's stat rows.
@@ -142,7 +142,7 @@ The card opens on the side away from the bubble, or not at all when neither side
 | File | Symbols |
 | --- | --- |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bandScene`, `drawBand`, `refresh`, `startClock`, `stopClock`, `onTick`, `syncHidden`, `onToolCall`, `onTurnComplete` |
-| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `setCharacter`, `greet`, `react`, `pet`, `wake`, `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `FORK_DEADLINE_MS`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason`, `SLEEP_IDLE_MS`, `REST_LINE_CHANCE`, `WORKING_LINE_CHANCE` |
+| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `setCharacter`, `greet`, `react`, `pet`, `wake`, `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason`, `SLEEP_IDLE_MS`, `REST_LINE_CHANCE`, `WORKING_LINE_CHANCE` |
 | [`src/motion.ts`](../../plugins/buddy/src/motion.ts) | `tickMotion`, `maxX`, `periodMs`, `STILL_FRAME_MS`, `STILL_PERIOD_MS` |
 | [`src/reactions.ts`](../../plugins/buddy/src/reactions.ts) | `REACTIONS`, `classifyToolCall`, `TEST_RUNNER`, `TEST_PASS`, `TEST_FAIL`, `toolOutput`, `bashCommand` |
 | [`src/particles.ts`](../../plugins/buddy/src/particles.ts) | `particles`, `CONFETTI_MS`, `CONFETTI_TICK_MS`, `CONFETTI_ROWS` |

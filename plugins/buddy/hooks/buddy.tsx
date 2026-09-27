@@ -1,6 +1,6 @@
-import type { EngineInterface, ModelForkResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput } from 'claude-code';
+import type { EngineInterface, ModelCompleteResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput } from 'claude-code';
 import {
-  COMPLETE_DEADLINE_MS, ERROR_MS, FORK_DEADLINE_MS, QUEUE_MAX_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, isMainLoop, observeBand, period, pet,
+  COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, isMainLoop, observeBand, period, pet,
   react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
@@ -14,7 +14,7 @@ import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, sta
 import { Logger, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { INHERIT, expandHome, logPath, resolveEffort, resolveModel, resolveOptions, type Effort, type Options } from '../src/options.ts';
 import {
-  QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, stillThinking, turnForkPrompt, turnPrompt, turnSystem, type Turn, type TurnSummary, type TurnWants,
+  QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, stillThinking, turnPrompt, turnSystem, type Turn, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion } from '../src/suggest.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
@@ -69,8 +69,6 @@ type State = {
   memoryError: string;
   /** The /buddy question waiting for its answer, one at a time; null when none. */
   asking: { since: number } | null;
-  /** A tool ran since the last turn.complete, or the band reports work: the main turn is running. */
-  turnBusy: boolean;
   /** A person is at the prompt (session.start's isInteractive): a -p run or the SDK makes no end-of-turn call, nobody sees it. */
   interactive: boolean;
   /** The band has drawn in this session: before that (a headless session, ever) no line was shown, so none is remembered. */
@@ -92,8 +90,6 @@ type State = {
   inheritFailed: Set<'model' | 'effort'>;
   /** The user's prompt of the running main turn, from prompt.submit: an answered turn files it into `turns`. */
   pendingPrompt: string;
-  /** Questions asked while the main turn ran, each waiting to fork: the main thread's next turn.complete, of any reason, lets them go. */
-  turnWaiters: (() => void)[];
   /** The main chat's last contextTurns answered turns, oldest first, read by the end-of-turn call and a question's completion. */
   turns: Turn[];
   /** The options' warnings were said: once, in the first greeting's bubble. */
@@ -375,13 +371,7 @@ async function readStore(st: State, $: EngineInterface): Promise<void> {
   }
 }
 
-/** A question queued behind the main turn goes now: a new session or /buddy reload ends the wait. */
-function releaseQueued(st: State): void {
-  for (const go of st.turnWaiters.splice(0)) go();
-}
-
 async function startSession(st: State, $: EngineInterface): Promise<void> {
-  releaseQueued(st);
   await startLog(st, $);
   for (const e of st.options.errors) warn($, 'option.warning', e);
   await readStore(st, $);
@@ -427,7 +417,7 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     lg($, 'debug', 'session.build-unread', { error: message(error) });
   }
-  lg($, 'info', 'session.start', { build, model: st.options.quipModel, effort: st.options.effort, level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
+  lg($, 'info', 'session.start', { build, model: st.options.quipModel, effort: st.options.effort, level: L.level, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
@@ -436,8 +426,6 @@ function bandScene(st: State, $: EngineInterface, p: BandProps): Scene | null {
   if (p.hasSurvey || !st.b || st.hidden) return null;
   st.bandSeen = true;
   observeBand(st.b, { cols: p.bodyColumns, maxRows: p.maxRows, isWorking: p.isWorking }, Math.random);
-  // The band's spinner is the say on whether the main turn runs; a tool call alone can set it.
-  if (!p.isWorking) st.turnBusy = false;
   heard(st, $);
   const scene = sceneOf(st.b);
   lgT($, 'band.scene', { pose: st.b.lastPose, bubble: st.b.talk?.text.length ?? 0, cols: p.bodyColumns, working: p.isWorking });
@@ -484,9 +472,8 @@ function drawBand(Box: Component, Text: Component, s: Scene) {
 
 function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCallResult): void {
   try {
-    // A subagent's or a fork's call (the buddy's own fork's denied attempts included) is not the main turn's work.
+    // A subagent's call is not the main turn's work.
     if (!st.b || !isMainLoop(e.agentId)) return;
-    st.turnBusy = true;
     const call = e as unknown as { tool: string; command?: unknown; input?: unknown };
     const res = r as unknown as { deny?: unknown; isError?: unknown; text?: unknown; result?: unknown };
     react(st.b, { tool: call.tool, isError: res.isError === true, denied: typeof res.deny === 'string', output: toolOutput(res), command: call.tool === 'Bash' ? bashCommand(call) : '' }, Math.random);
@@ -498,13 +485,9 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
 
 function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): void {
   try {
-    // Only the main loop's end is the turn's end: a subagent's or a fork's leaves the main turn busy, its tally whole.
-    if (!isMainLoop(e.agentId)) return;
-    // The main turn ended, however it ended (answered, aborted, an error): a question waiting on it forks now.
-    for (const go of st.turnWaiters.splice(0)) go();
-    if (!st.b) return;
+    // Only the main loop's end is the turn's end: a subagent's leaves the main turn's tally whole.
+    if (!isMainLoop(e.agentId) || !st.b) return;
     wake(st.b, Math.random);
-    st.turnBusy = false;
     // Every answered turn of the main loop, tools or none; never an aborted one.
     const answered = e.reason === 'answer' && !e.isAborted;
     if (answered) {
@@ -520,7 +503,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
         st.harnessSuggestion = null;
         st.suggestGaveUp = false;
       }
-      lg($, 'info', 'turn.call', { mode: st.options.turnMode, line: wants.line, next: wants.next, tools: turn.tools.length });
+      lg($, 'info', 'turn.call', { line: wants.line, next: wants.next, tools: turn.tools.length });
       turnCall(st, $, turn, gen, wants).catch((error) => log($, 'the end-of-turn call', error));
     } else {
       const why = !answered ? 'not an answered turn' : !st.interactive ? 'headless' : st.hidden ? 'hidden' : !st.options.quips && !st.options.suggestions ? 'quips and suggestions off' : 'cooldown';
@@ -565,9 +548,8 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
 
 /**
  * One call at a turn's end writes the buddy's line and the next-prompt
- * suggestion, those wanted: in turnMode `complete` a quipModel completion on
- * the main chat's recent turns; in `fork` a fork of the main chat (its model,
- * effort and prompt cache), which the turn that just ended leaves free to fork.
+ * suggestion, those wanted: a quipModel completion on the main chat's last
+ * contextTurns turns.
  * A timeout, a refusal, an empty reply or a throw fails the line as a quip
  * fails and gives the suggestion up; a late suggestion is stale by `gen`.
  * Never throws.
@@ -582,22 +564,14 @@ async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: numb
   let usage: Record<string, number> = {};
   try {
     const memory = await recollect(st, $, b.character);
-    const mode = st.options.turnMode;
-    let r: ModelForkResult | 'timeout';
-    if (mode === 'fork') {
-      const prompt = turnForkPrompt(b.character.persona, wants, memory);
-      lg($, 'debug', 'turn.prompt', { mode, length: prompt.length });
-      r = await within($, $.model.fork({ prompt }), FORK_DEADLINE_MS);
-    } else {
-      const prompt = turnPrompt(t, turns, memory);
-      lg($, 'debug', 'turn.prompt', { mode, length: prompt.length });
-      const settings = await callSettings(st, $, 'turn.settings');
-      r = await within(
-        $,
-        $.model.complete({ ...settings, system: turnSystem(b.character.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }),
-        TURN_DEADLINE_MS,
-      );
-    }
+    const prompt = turnPrompt(t, turns, memory);
+    lg($, 'debug', 'turn.prompt', { length: prompt.length });
+    const settings = await callSettings(st, $, 'turn.settings');
+    const r: ModelCompleteResult | 'timeout' = await within(
+      $,
+      $.model.complete({ ...settings, system: turnSystem(b.character.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }),
+      TURN_DEADLINE_MS,
+    );
     // What the call cost and how much it read from the prompt cache, logged on the line's outcome.
     usage = r !== 'timeout' && 'usage' in r ? usageFields(r.usage) : {};
     if (r === 'timeout') reason = 'timeout';
@@ -979,23 +953,19 @@ async function within<T>($: EngineInterface, p: Promise<T>, ms: number): Promise
 }
 
 /** A model result as log fields: never the whole text. */
-function shape(r: ModelForkResult | 'timeout'): LogFields {
+function shape(r: ModelCompleteResult | 'timeout'): LogFields {
   if (r === 'timeout') return { timeout: true };
   return r.isAnswered ? { isAnswered: true, length: r.text.length, head: r.text.slice(0, 80) } : { isAnswered: false, reason: r.reason };
 }
 
 /**
  * One /buddy question to its outcome, always visible: an answer, or
- * "{name} couldn't answer: {reason}" in the bubble. In `fork` mode the fork of
- * the main chat (its model, context and prompt cache) answers, and nothing
- * else: a fork replays the main thread's last request, so one asked while the
- * main turn runs would continue that turn, and the question waits for the
- * turn to end first. In `complete` mode the quip model answers from persona,
- * memory, the main chat's last contextTurns turns (`recentTurns`) and question.
+ * "{name} couldn't answer: {reason}" in the bubble. The quip model answers
+ * from persona, memory, the main chat's last contextTurns turns
+ * (`recentTurns`) and question, whether or not the main turn is running.
  * `memory`: what the buddy remembered before this question; it goes before the question.
- * `busy`: whether the main turn ran when the question was asked, decided once at ask.start.
  */
-async function ask(st: State, $: EngineInterface, question: string, memory: string, busy: boolean): Promise<void> {
+async function ask(st: State, $: EngineInterface, question: string, memory: string): Promise<void> {
   const b = st.b;
   if (!b) {
     st.asking = null;
@@ -1004,40 +974,22 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
   const c = b.character;
   const started = Date.now();
   let said = '';
-  const via = st.options.questionMode === 'fork' ? 'fork' : 'complete';
   let reason = '';
   let usage: Record<string, number> = {};
   // The answer belongs to the one asked: a character switched in meanwhile never says it.
   let shown = true;
   try {
-    let r: ModelForkResult | 'timeout';
-    let deadline: number;
-    if (via === 'fork') {
-      let queuedOut = false;
-      if (busy) {
-        lg($, 'info', 'ask.queued', { why: 'the main turn is running' });
-        queuedOut = (await within($, new Promise<void>((go) => st.turnWaiters.push(go)), QUEUE_MAX_MS)) === 'timeout';
-      }
-      if (queuedOut) {
-        deadline = QUEUE_MAX_MS;
-        r = 'timeout';
-      } else {
-        const prompt = forkPrompt(c.persona, question, memory);
-        lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
-        // Counted from here, never while it waited: the safety net that ends the bubble, not a cancel.
-        deadline = FORK_DEADLINE_MS;
-        r = await within($, $.model.fork({ prompt }), deadline);
-      }
-    } else {
-      // A completion does not see the chat: the recent turns tell it where the chat stands.
-      const prompt = questionPrompt(question, memory, recentTurns(st.turns));
-      lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
-      deadline = COMPLETE_DEADLINE_MS;
-      const settings = await callSettings(st, $, 'ask.settings');
-      r = await within($, $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: deadline }), deadline);
-    }
-    lg($, 'debug', 'ask.result', { via, ...shape(r) });
-    // What the call cost and how much it read from the prompt cache: a fork's reuse of the chat's cache shows here.
+    // A completion does not see the chat: the recent turns tell it where the chat stands.
+    const prompt = questionPrompt(question, memory, recentTurns(st.turns));
+    lg($, 'debug', 'ask.prompt', { length: prompt.length });
+    const settings = await callSettings(st, $, 'ask.settings');
+    const r: ModelCompleteResult | 'timeout' = await within(
+      $,
+      $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: COMPLETE_DEADLINE_MS }),
+      COMPLETE_DEADLINE_MS,
+    );
+    lg($, 'debug', 'ask.result', shape(r));
+    // What the call cost and how much it read from the prompt cache.
     usage = r !== 'timeout' && 'usage' in r ? usageFields(r.usage) : {};
     const text = r !== 'timeout' && r.isAnswered ? oneLine(r.text) : '';
     if (text) {
@@ -1045,13 +997,13 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
       // Hidden by /buddy off while it thought: the answer is never drawn, so never remembered as said.
       shown = !st.hidden && answer(b, text, null, c.id);
     } else {
-      reason = r === 'timeout' ? deadlineReason(deadline) : r.isAnswered ? 'empty reply' : noAnswerReason(r);
+      reason = r === 'timeout' ? deadlineReason(COMPLETE_DEADLINE_MS) : r.isAnswered ? 'empty reply' : noAnswerReason(r);
       $.ui.log(`buddy: a /buddy question got no answer: ${reason}`);
       shown = failAnswer(b, reason, c.id);
     }
   } catch (error) {
     reason = message(error);
-    log($, 'a /buddy question', error, { via });
+    log($, 'a /buddy question', error);
     shown = failAnswer(b, reason, c.id);
   } finally {
     st.asking = null;
@@ -1059,7 +1011,7 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
   }
   const hidden = !shown && st.hidden;
   if (!shown && !hidden) warn($, 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
-  lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', via, ...(reason ? { reason } : {}), ms: Date.now() - started, ...usage });
+  lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', ...(reason ? { reason } : {}), ms: Date.now() - started, ...usage });
   // One exchange: the question with its answer as shown, or the question alone.
   keep(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question });
   refresh(st, $);
@@ -1112,7 +1064,6 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         return { text: `${b.character.name} is back${note}` };
       }
       case 'reload': {
-        releaseQueued(st);
         await loadRoster(st, $);
         applyChoice(st, $);
         startClock(st, $);
@@ -1135,7 +1086,6 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         }
       }
       case 'question': {
-        if (st.options.questionMode === 'off') return { text: 'questions are off (questionMode)' };
         if (st.hidden) return { text: `${b.character.name} is hidden; /buddy on first` };
         const c = b.character;
         // One question at a time, and a refused one says so: never silence.
@@ -1147,15 +1097,13 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         }
         st.asking = { since: Date.now() };
         began = true;
-        // Decided once, here: the band draws as working while this very command runs, so a later read is always busy.
-        const busy = b.working || st.turnBusy;
-        lg($, 'info', 'ask.start', { mode: st.options.questionMode, busy, length: action.text.length });
+        lg($, 'info', 'ask.start', { length: action.text.length });
         lg($, 'debug', 'ask.question', { question: action.text });
         // What it remembers from before this question; the question joins it with its answer, in ask.
         const memory = await recollect(st, $, c);
         beginQuestion(b, Math.random);
         refresh(st, $);
-        ask(st, $, action.text, memory, busy).catch((error) => {
+        ask(st, $, action.text, memory).catch((error) => {
           st.asking = null;
           log($, 'a /buddy question', error);
           endQuestion(b);
@@ -1200,7 +1148,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
     memoryChain: Promise.resolve(),
     memoryError: '',
     asking: null,
-    turnBusy: false,
     interactive: true,
     bandSeen: false,
     ticks: 0,
@@ -1212,7 +1159,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
     suggestGaveUp: false,
     inheritFailed: new Set(),
     pendingPrompt: '',
-    turnWaiters: [],
     turns: [],
     warned: false,
   };
