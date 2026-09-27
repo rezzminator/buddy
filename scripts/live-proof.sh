@@ -21,7 +21,7 @@
 #       ask you to remember? is answered with pineapple; the plugin's store
 #       holds both as exchanges, no thinking filler (its memory:{session} key,
 #       nothing else read)
-#   (k) a /buddy question while a main turn runs (`sleep 8` via Bash) is
+#   (k) a /buddy question while a main turn runs (`sleep 15` via Bash) is
 #       answered at once, before that turn ends, and a second immediate ask
 #       gets a visible outcome: refused out loud, or asked
 #   (l) the plugin log (logFile set to this run's folder) holds the ask's
@@ -224,8 +224,8 @@ if grep -q -F 'question: remember the word pineapple -> ' <<<"$mem" && grep -q -
 else add "(j) the store holds this session's memory" FAIL "${STORE:-no buddy_inline store file}: $(head -c 80 <<<"$mem")"; fi
 
 # (k) Ask while a main turn runs: the quip model answers at once, the turn still running.
-send "Run this Bash command: sleep 8. Then reply with exactly: K1"
-for _ in $(seq 1 40); do sleep 0.5; f=$(transcript); [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | select(.input.command? // "" | contains("sleep 8"))' "$f" >/dev/null 2>&1 && break; done
+send "Run this Bash command: sleep 15. Then reply with exactly: K1"
+for _ in $(seq 1 40); do sleep 0.5; f=$(transcript); [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | select(.input.command? // "" | contains("sleep 15"))' "$f" >/dev/null 2>&1 && break; done
 # Both asks back to back, the second before the first's reply row is awaited.
 before=$(stdout_rows | wc -l)
 send "/buddy do you like yourself?"
@@ -233,12 +233,14 @@ send "/buddy say ack"
 for _ in $(seq 1 20); do sleep 1; [ "$(stdout_rows | wc -l)" -ge "$((before + 2))" ] && break; done
 out=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 1p); out2=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 2p)
 got=$(answered); v=$?
-# The answer came before the main turn ended: its K1 reply is not yet in the transcript.
-ended=no; f=$(transcript); [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("K1"))' "$f" >/dev/null 2>&1 && ended=yes
 sleep 3
 mem=$([ -n "$STORE" ] && jq -r --arg k "memory:$ID" --arg d "$DEFAULT" '.[$k].characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$STORE" 2>&1)
 a1=$(grep -F 'do you like yourself? -> ' <<<"$mem" | tail -1 | sed 's/.* -> //')
 route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "\($o.outcome // "none") in \($o.ms // "-") ms"' "$RUN/buddy.log" 2>&1)
+# The answer came before the main turn ended: by the log, its answered outcome
+# precedes the turn's end (turn.call or turn.skipped, logged at every main turn end).
+for _ in $(seq 1 60); do jq -e -s 'any(.[]; .event == "turn.call" or .event == "turn.skipped")' "$RUN/buddy.log" >/dev/null 2>&1 && [ "$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | [.[] | select((.event == "turn.call" or .event == "turn.skipped") and .ts > $a)] | length' "$RUN/buddy.log" 2>/dev/null)" -gt 0 ] && break; sleep 0.5; done
+ended=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then "no answer" elif any(.[]; (.event == "turn.call" or .event == "turn.skipped") and .ts > $a) then "no" else "yes" end' "$RUN/buddy.log" 2>&1)
 echo "$out / $out2 / $got / $a1 / turn ended first: $ended / $route" > "$RUN/k.txt"
 if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && [ "$ended" = no ] && grep -q '^answered' <<<"$route"; then add "(k) a question during a busy main turn: answered before the turn ends" PASS "$a1 ($route)"; else add "(k) a question during a busy main turn: answered before the turn ends" FAIL "$out / ${a1:-not in memory} / turn ended first: $ended / $route"; fi
 if grep -q 'still thinking about your last question' <<<"$out2" || { grep -q 'Asked' <<<"$out2" && [ $v -eq 0 ]; }; then add "(k) a second immediate ask: a visible outcome" PASS "$out2 / bubble: $got"; else add "(k) a second immediate ask: a visible outcome" FAIL "${out2:-no reply} / $got"; fi
