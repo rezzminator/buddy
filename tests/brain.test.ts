@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   ANSWER_MS, COMPLETE_DEADLINE_MS, FORK_DEADLINE_MS, QUEUE_MAX_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
-  failAnswer, farewell, holdsAnswer, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
+  failAnswer, farewell, holdsAnswer, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { raw } from './fixtures.ts';
@@ -268,5 +268,13 @@ describe('a pending question', () => {
     endQuestion(b);
     ticks(b, 1);
     expect(b.talk).toBeNull();
+  });
+});
+
+describe('isMainLoop', () => {
+  test('only the main loop, which carries no agent id, is the user\'s turn; a subagent\'s or a fork\'s loop is not', () => {
+    expect(isMainLoop(undefined)).toBe(true);
+    expect(isMainLoop('a1b2')).toBe(false);
+    expect(isMainLoop('')).toBe(false);
   });
 });

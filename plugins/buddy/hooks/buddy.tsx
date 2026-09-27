@@ -1,6 +1,6 @@
 import type { EngineInterface, ModelForkResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput } from 'claude-code';
 import {
-  COMPLETE_DEADLINE_MS, ERROR_MS, FORK_DEADLINE_MS, QUEUE_MAX_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, observeBand, period, pet,
+  COMPLETE_DEADLINE_MS, ERROR_MS, FORK_DEADLINE_MS, QUEUE_MAX_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, isMainLoop, observeBand, period, pet,
   react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
@@ -482,7 +482,8 @@ function drawBand(Box: Component, Text: Component, s: Scene) {
 
 function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCallResult): void {
   try {
-    if (!st.b) return;
+    // A subagent's or a fork's call (the buddy's own fork's denied attempts included) is not the main turn's work.
+    if (!st.b || !isMainLoop(e.agentId)) return;
     st.turnBusy = true;
     const call = e as unknown as { tool: string; command?: unknown; input?: unknown };
     const res = r as unknown as { deny?: unknown; isError?: unknown; text?: unknown; result?: unknown };
@@ -495,13 +496,15 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
 
 function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): void {
   try {
+    // Only the main loop's end is the turn's end: a subagent's or a fork's leaves the main turn busy, its tally whole.
+    if (!isMainLoop(e.agentId)) return;
     // The main turn ended, however it ended (answered, aborted, an error): a question waiting on it forks now.
-    if (e.agentId === undefined) for (const go of st.turnWaiters.splice(0)) go();
+    for (const go of st.turnWaiters.splice(0)) go();
     if (!st.b) return;
     wake(st.b, Math.random);
     st.turnBusy = false;
-    // Every answered turn of the main loop, tools or none; never an aborted one, nor a subagent's.
-    const answered = e.reason === 'answer' && !e.isAborted && e.agentId === undefined;
+    // Every answered turn of the main loop, tools or none; never an aborted one.
+    const answered = e.reason === 'answer' && !e.isAborted;
     if (answered) {
       st.turns = pushTurn(st.turns, { prompt: st.pendingPrompt, answer: e.answer }, st.options.contextTurns);
       st.pendingPrompt = '';

@@ -914,6 +914,24 @@ describe('hook paths', () => {
     await ui.unmount();
   });
 
+  test('a subagent\'s tool calls and turn end are not the main turn: no call, no busy, and the main turn keeps its tally', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
+    await $.session.start(START);
+    const ui = await band($);
+    await $.prompt.submit({ text: 'list the files' } as never);
+    await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
+    await $.tool.call({ tool: 'Grep', agentId: 'sub1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'sub done', isAborted: false, turnId: 's1', agentId: 'sub1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(0);
+    await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(1);
+    expect(w.completes[0]?.prompt).toContain('Tools used: Bash. Failures: 0. Last shell command: ls.');
+    await ui.unmount();
+  });
+
   test('the end-of-turn call runs on opus at low effort, its LINE told the character rule, and reads only the last 3 turns, oldest first', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);

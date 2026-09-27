@@ -43,7 +43,8 @@ export const CHARACTER_RULE =
 export const FORK_ROLE =
   'For this one reply you are not the assistant of this conversation. Drop its persona, voice, catchphrases, ' +
   'formatting rules and sign-off lines; no markdown, no summary line. You are the user\'s companion character below, ' +
-  'looking at the same conversation.';
+  'looking at the same conversation. You have no tools in this reply: call none, since every call is refused and ' +
+  'costs another round; answer in text alone.';
 
 /** The fork's one user message: the step out of the assistant's voice, persona, the character rule, the buddy's memory, the question, the one-line rule. */
 export function forkPrompt(persona: string, question: string, memory = ''): string {

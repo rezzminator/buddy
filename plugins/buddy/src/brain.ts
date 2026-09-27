@@ -281,6 +281,16 @@ export function farewell(b: Brain, rand: () => number): string {
 }
 
 /**
+ * Whether an event's loop is the main conversation's, the user's own turn: it
+ * carries no agent id. A subagent's loop and the engine's forks (the buddy's
+ * own included) carry one, and never mark the main turn busy, feed its tally
+ * or end it.
+ */
+export function isMainLoop(agentId: string | undefined): boolean {
+  return agentId === undefined;
+}
+
+/**
  * The turn ended: its summary, tools or none, and whether the buddy's line is
  * due (quips on and the cooldown passed; cooldown 0 is every turn). The
  * turn's tally starts over either way.

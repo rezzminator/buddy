@@ -11,6 +11,10 @@ describe('prompts', () => {
     expect(FORK_ROLE).toContain('not the assistant');
     expect(FORK_ROLE).toContain('sign-off');
   });
+  test('every fork, the question\'s and the end-of-turn one, is told it has no tools: a denied tool attempt is another slow round', () => {
+    expect(FORK_ROLE).toContain('You have no tools in this reply');
+    expect(turnForkPrompt('You are X.', { line: true, next: true })).toContain('You have no tools in this reply');
+  });
   test('the completion system and prompt', () => {
     expect(oneLineSystem('You are X.')).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${ONE_LINE_RULE}`);
     expect(questionPrompt('hi')).toBe('The user asks you directly: hi');
