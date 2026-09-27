@@ -140,7 +140,7 @@ if [ -n "$s1" ] && { [ "$s1" != "$s2" ] || [ "$s2" != "$s3" ]; }; then add "(b) 
 
 out=$(command_out "/buddy") || exit 2
 if grep -q -E ': [0-9]+ pets' <<<"$out"; then add "(c) /buddy pets" PASS "$out"; else add "(c) /buddy pets" FAIL "$out"; fi
-m=$(menu_mark c)
+m=$(menu_mark c) || exit 2
 if [ "$m" = "$DEFAULT" ]; then add "(c) /buddy-personality marks the current one" PASS "* $DEF_NAME ($DEFAULT)"; else add "(c) /buddy-personality marks the current one" FAIL "marked: ${m:-none}; pane in $RUN/menu-c.txt"; fi
 
 out=$(command_out "/buddy what is your favourite tool") || exit 2
@@ -202,7 +202,7 @@ $T send-keys -t proof Enter; sleep 3
 pane > "$RUN/i-pick.txt"
 if [ "$pre" = ok ] && shows_any "$RUN/pick.rows" && ! in_pane "Your folder"; then add "(i) Enter on $PICK draws it, pane closed" PASS "$PICK sprite row in the pane"
 else add "(i) Enter on $PICK draws it, pane closed" FAIL "$pre / pane in $RUN/i-pick.txt"; fi
-m=$(menu_mark i)
+m=$(menu_mark i) || exit 2
 if [ "$m" = "$PICK" ]; then add "(i) reopened, the menu marks $PICK" PASS "* $(name_of "$PICK") ($PICK)"; else add "(i) reopened, the menu marks $PICK" FAIL "marked: ${m:-none}; pane in $RUN/menu-i.txt"; fi
 menu_pick "$DEFAULT"
 if shows_any "$RUN/default.rows"; then add "(i) picking the default returns" PASS "$DEFAULT sprite row in the pane"; else add "(i) picking the default returns" FAIL "no $DEFAULT row"; fi
@@ -239,7 +239,7 @@ a1=$(grep -F 'do you like yourself? -> ' <<<"$mem" | tail -1 | sed 's/.* -> //')
 route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "\($o.outcome // "none") in \($o.ms // "-") ms"' "$RUN/buddy.log" 2>&1)
 # The answer came before the main turn ended: by the log, its answered outcome
 # precedes the turn's end (turn.call or turn.skipped, logged at every main turn end).
-for _ in $(seq 1 60); do jq -e -s 'any(.[]; .event == "turn.call" or .event == "turn.skipped")' "$RUN/buddy.log" >/dev/null 2>&1 && [ "$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | [.[] | select((.event == "turn.call" or .event == "turn.skipped") and .ts > $a)] | length' "$RUN/buddy.log" 2>/dev/null)" -gt 0 ] && break; sleep 0.5; done
+for _ in $(seq 1 60); do jq -e -s 'any(.[]; .event == "turn.call" or .event == "turn.skipped")' "$RUN/buddy.log" >/dev/null 2>&1 && [ "$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then 0 else ([.[] | select((.event == "turn.call" or .event == "turn.skipped") and .ts > $a)] | length) end' "$RUN/buddy.log" 2>/dev/null)" -gt 0 ] && break; sleep 0.5; done
 ended=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then "no answer" elif any(.[]; (.event == "turn.call" or .event == "turn.skipped") and .ts > $a) then "no" else "yes" end' "$RUN/buddy.log" 2>&1)
 echo "$out / $out2 / $got / $a1 / turn ended first: $ended / $route" > "$RUN/k.txt"
 if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && [ "$ended" = no ] && grep -q '^answered' <<<"$route"; then add "(k) a question during a busy main turn: answered before the turn ends" PASS "$a1 ($route)"; else add "(k) a question during a busy main turn: answered before the turn ends" FAIL "$out / ${a1:-not in memory} / turn ended first: $ended / $route"; fi

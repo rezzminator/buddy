@@ -177,26 +177,56 @@ describe('the end-of-turn call', () => {
     expect(suggestionText('y'.repeat(SUGGESTION_MAX_CHARS + 1))).toBeNull();
   });
 });
+import { createBrain, endTurn } from '../plugins/buddy/src/brain.ts';
+import { validateCharacter } from '../plugins/buddy/src/character.ts';
 import {
-  NO_PROMPTS, REQUEST_MARGIN_MS, endPromptTurn, endsConversation, requestTimeoutMs, skipReason, submitPrompt, turnMay, type TurnGate,
+  NO_PROMPTS, endPromptTurn, endsConversation, isUserOrigin, requestTimeoutMs, skipReason, startPromptTurn, submitPrompt, turnMay, type TurnGate,
 } from '../plugins/buddy/src/prompts.ts';
+import { raw } from './fixtures.ts';
+
+/** A ledger's filing of a turn: its prompt and whose. */
+function filed(r: { prompt: string; from?: string }): { prompt: string; from: string | undefined } {
+  return { prompt: r.prompt, from: r.from };
+}
 
 describe('the prompt ledger', () => {
-  test('an idle prompt is the next turn\'s; one typed over a running turn waits for that turn to end', () => {
-    let l = submitPrompt(NO_PROMPTS, 'P1');
-    l = submitPrompt(l, 'P2', 't1');
-    const one = endPromptTurn(l);
-    expect(one.prompt).toBe('P1');
-    const two = endPromptTurn(one.ledger);
-    expect(two.prompt).toBe('P2');
-    expect(endPromptTurn(two.ledger).prompt).toBe('');
+  test('each turn is filed with the text its turn.start carried, whatever was typed over it meanwhile', () => {
+    let l = submitPrompt(NO_PROMPTS, 'P1', 'composer');
+    l = startPromptTurn(l, 't1', 'P1');
+    l = submitPrompt(l, 'P2', 'composer', 't1');
+    const one = endPromptTurn(l, 't1');
+    expect(filed(one)).toEqual({ prompt: 'P1', from: undefined });
+    l = startPromptTurn(one.ledger, 't2', 'P2');
+    expect(filed(endPromptTurn(l, 't2'))).toEqual({ prompt: 'P2', from: undefined });
   });
-  test('an aborted turn uses up its prompt too, and an idle prompt clears what waited', () => {
-    let l = submitPrompt(submitPrompt(NO_PROMPTS, 'P1'), 'P2', 't1');
-    l = endPromptTurn(l).ledger;
-    expect(l).toEqual({ current: 'P2', queued: [] });
-    l = submitPrompt(submitPrompt(l, 'P3', 't2'), 'P4');
-    expect(l).toEqual({ current: 'P4', queued: [] });
+  test('a peer message or a task notification delivered into a running turn never shifts the next turn\'s prompt', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    l = submitPrompt(l, 'from a peer', 'peer', 't1');
+    l = submitPrompt(l, 'a task finished', 'task-notification', 't1');
+    l = submitPrompt(l, 'P2', 'composer', 't1');
+    l = endPromptTurn(l, 't1').ledger;
+    l = startPromptTurn(l, 't2', 'P2');
+    expect(filed(endPromptTurn(l, 't2'))).toEqual({ prompt: 'P2', from: undefined });
+  });
+  test('a turn a non-user prompt started is filed under its origin, never as the user\'s', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'hello from a peer', 'peer'), 't1', 'hello from a peer');
+    expect(endPromptTurn(l, 't1')).toMatchObject({ prompt: 'hello from a peer', from: 'peer' });
+    // A turn with no submission seen (a continuation) is not presumed the user's.
+    l = startPromptTurn(NO_PROMPTS, 't2', '');
+    expect(endPromptTurn(l, 't2').from).toBe('unknown');
+    expect(endPromptTurn(NO_PROMPTS, 't3')).toMatchObject({ prompt: '', from: 'unknown' });
+  });
+  test('a turn started before its prompt.submit settled takes the origin once it does', () => {
+    let l = startPromptTurn(NO_PROMPTS, 't1', 'P1');
+    l = submitPrompt(l, 'P1', 'composer');
+    expect(filed(endPromptTurn(l, 't1'))).toEqual({ prompt: 'P1', from: undefined });
+    let peer = startPromptTurn(NO_PROMPTS, 't1', 'P1');
+    peer = submitPrompt(peer, 'P1', 'peer');
+    expect(endPromptTurn(peer, 't1').from).toBe('peer');
+  });
+  test('the user\'s own origins: the terminal, Remote Control, an SDK host', () => {
+    expect(['composer', 'bridge', 'sdk'].every(isUserOrigin)).toBe(true);
+    expect(['peer', 'task-notification', 'plugin', 'unclassified', 'auto-continuation', 'scheduled-trigger'].some(isUserOrigin)).toBe(false);
   });
   test('/clear and a resume start a fresh conversation; an exit does not matter', () => {
     expect(endsConversation('clear')).toBe(true);
@@ -221,13 +251,32 @@ describe('the end-of-turn gate', () => {
     expect(skipReason({ ...g, hidden: true })).toBe('hidden');
     expect(skipReason({ ...g, quips: false, suggestions: false })).toBe('quips and suggestions off');
     expect(skipReason({ ...g, bandSeen: false, suggestions: false })).toBe('band never drawn');
-    expect(skipReason(g)).toBe('cooldown');
+  });
+  test('the cooldown skip, built as the adapter builds it: suggestions off, a line not yet due', () => {
+    const v = validateCharacter(raw());
+    if (!v.ok) throw new Error(v.error);
+    const b = createBrain(v.character, true);
+    const gate = { ...g, suggestions: false };
+    const may = turnMay(gate);
+    expect(endTurn(b, may.line, 60).lineDue).toBe(true);
+    const { lineDue } = endTurn(b, may.line, 60);
+    expect({ line: lineDue, next: may.next }).toEqual({ line: false, next: false });
+    expect(skipReason(gate)).toBe('cooldown');
   });
 });
 
 describe('the request timeout', () => {
-  test('past the buddy\'s own deadline, so the deadline always decides first', () => {
-    expect(requestTimeoutMs(TURN_DEADLINE_MS)).toBe(TURN_DEADLINE_MS + REQUEST_MARGIN_MS);
-    expect(REQUEST_MARGIN_MS).toBeGreaterThan(0);
+  test('5 s past what is left of the deadline when the request is sent', () => {
+    expect(requestTimeoutMs(30_000, 0)).toBe(35_000);
+    expect(requestTimeoutMs(90_000, 60_000)).toBe(35_000);
+    expect(requestTimeoutMs(30_000, 45_000)).toBe(5_000);
+  });
+});
+
+describe('a turn not started by the user', () => {
+  test('is never shown to a completion as what the user asked', () => {
+    const w = recentTurns([{ prompt: 'hello from a peer', answer: 'Hi, peer.', from: 'peer' }]);
+    expect(w).not.toContain('The user asked Claude');
+    expect(w).toContain('Claude was sent, not by the user (peer):\nhello from a peer\n\nClaude answered:\nHi, peer.');
   });
 });

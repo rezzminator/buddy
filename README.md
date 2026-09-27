@@ -265,7 +265,8 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   interrupted or failed), `/clear` or `/buddy off` drops a late one. Where
   the band never draws (VS Code, mobile) the call writes the suggestion
   alone, and no line is paid for. Each turn's line replaces the last
-  turn's at once; only a `/buddy` answer holds the bubble against it. `suggestions: false` leaves Claude Code's own alone;
+  turn's at once; a `/buddy` answer, its failure, a refusal or the thinking
+  line hold the bubble against it. `suggestions: false` leaves Claude Code's own alone;
   with it on, turning off Claude Code's own prompt suggestions saves paying
   for both.
 - **Errors are never silent.** A chosen character that is missing or invalid

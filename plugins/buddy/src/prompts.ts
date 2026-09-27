@@ -11,9 +11,14 @@ export const TURN_DEADLINE_MS = 30_000;
 /** How long past the buddy's own deadline a completion runs before the engine abandons it (`timeoutMs`): the deadline always ends it first, with one reason. */
 export const REQUEST_MARGIN_MS = 5_000;
 
-/** The `timeoutMs` of a completion whose deadline is `deadlineMs`: past it, so the buddy's deadline decides, and the request is still abandoned. */
-export function requestTimeoutMs(deadlineMs: number): number {
-  return deadlineMs + REQUEST_MARGIN_MS;
+/**
+ * The `timeoutMs` of a completion sent `elapsedMs` into a deadline of
+ * `deadlineMs`: what is left of the deadline, plus the margin, so the buddy's
+ * deadline decides and the request is abandoned the margin after it, however
+ * late it was sent.
+ */
+export function requestTimeoutMs(deadlineMs: number, elapsedMs: number): number {
+  return Math.max(0, deadlineMs - elapsedMs) + REQUEST_MARGIN_MS;
 }
 /** How many of the main chat's latest turns a completion reads by default: the contextTurns option's default. */
 export const TURN_WINDOW = 3;
@@ -113,30 +118,70 @@ export function turnSystem(persona: string, wants: TurnWants): string {
   return `${persona}\n\n${rule}A turn of the user's work with Claude just ended. Reply with exactly these lines and nothing else:\n${lines.join('\n')}\nDo not use tools. Do not think out loud.`;
 }
 
-/** One main-thread turn: what the user asked Claude and what Claude answered. */
-export type Turn = { prompt: string; answer: string };
-
 /**
- * The prompts given to the main chat, filed with the turn they start:
- * `current` is the running (or next) turn's, `queued` the ones typed over a
- * running turn, oldest first, each starting a later turn.
+ * One main-thread turn: the prompt it began with and what Claude answered.
+ * `from`, set when that prompt was not the user's: its origin (a peer, a task
+ * notification, a plugin), or `unknown` when no submission of it was seen.
  */
-export type PromptLedger = { current: string; queued: string[] };
-export const NO_PROMPTS: PromptLedger = { current: '', queued: [] };
+export type Turn = { prompt: string; answer: string; from?: string };
 
-/**
- * A submitted prompt: with no `turnId` (the session was idle) it is the next
- * turn's; typed over the running turn `turnId`, it waits for that turn to end.
- */
-export function submitPrompt(l: PromptLedger, text: string, turnId?: string): PromptLedger {
-  if (turnId === undefined) return { current: text, queued: [] };
-  return { current: l.current, queued: [...l.queued, text] };
+/** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn. */
+const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk'];
+
+/** Whether a prompt of origin `kind` (prompt.submit's `origin.kind`) is the user's own. */
+export function isUserOrigin(kind: string): boolean {
+  return USER_ORIGINS.includes(kind);
 }
 
-/** A main-loop turn ended, in any way: the prompt it was given, and the ledger with the oldest waiting prompt as the next turn's. */
-export function endPromptTurn(l: PromptLedger): { prompt: string; ledger: PromptLedger } {
-  const [next = '', ...rest] = l.queued;
-  return { prompt: l.current, ledger: { current: next, queued: rest } };
+/** The most prompts, entered or started, the ledger keeps unmatched: past it the oldest go. */
+const PROMPTS_KEPT = 10;
+
+/**
+ * The prompts given to the main chat, matched to the turns they start by their
+ * text: `entered`, the prompts that entered (prompt.submit's result) and
+ * started no turn yet, oldest first; `started`, the main turns begun
+ * (turn.start), by id, with their text and whose it was (`seen` false until
+ * its submission settles).
+ */
+export type PromptLedger = {
+  entered: readonly { text: string; from?: string }[];
+  started: readonly { turnId: string; text: string; from?: string; seen: boolean }[];
+};
+export const NO_PROMPTS: PromptLedger = { entered: [], started: [] };
+
+/**
+ * A prompt that entered the session, `origin` its origin's kind. One typed
+ * over the running turn `turnId` waits for a turn of its own; one not the
+ * user's with a `turnId` was delivered into that turn and starts none. A turn
+ * already started with this text (its turn.start came first) takes its origin.
+ */
+export function submitPrompt(l: PromptLedger, text: string, origin: string, turnId?: string): PromptLedger {
+  const user = isUserOrigin(origin);
+  if (turnId !== undefined && !user) return l;
+  const from = user ? undefined : origin;
+  const i = l.started.findIndex((s) => !s.seen && s.text === text);
+  if (i >= 0) return { ...l, started: l.started.map((s, k) => (k === i ? { ...s, from, seen: true } : s)) };
+  return { ...l, entered: [...l.entered, { text, from }].slice(-PROMPTS_KEPT) };
+}
+
+/** The main turn `turnId` began with `text` (turn.start): it takes the oldest entered prompt of that text, and its origin. */
+export function startPromptTurn(l: PromptLedger, turnId: string, text: string): PromptLedger {
+  const i = l.entered.findIndex((p) => p.text === text);
+  const turn = i >= 0 ? { turnId, text, from: l.entered[i]!.from, seen: true } : { turnId, text, seen: false };
+  return { entered: l.entered.filter((_, k) => k !== i), started: [...l.started, turn].slice(-PROMPTS_KEPT) };
+}
+
+/**
+ * The main turn `turnId` ended, in any way: the prompt it began with and,
+ * when that was not the user's, its origin (`unknown` when its submission
+ * was never seen), and the ledger without it.
+ */
+export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string; from?: string; ledger: PromptLedger } {
+  const turn = l.started.find((s) => s.turnId === turnId);
+  const ledger = { ...l, started: l.started.filter((s) => s.turnId !== turnId) };
+  if (!turn) return { prompt: '', from: 'unknown', ledger };
+  const from = turn.seen ? turn.from : 'unknown';
+  return from === undefined ? { prompt: turn.text, ledger } : { prompt: turn.text, from, ledger };
 }
 
 /** A session end that leaves the process on a fresh conversation (`/clear`, a resume): the chat's window, its prompts and a pending line are the old one's. */
@@ -155,9 +200,11 @@ export function pushTurn(turns: readonly Turn[], turn: Turn, size = TURN_WINDOW)
  */
 export function recentTurns(turns: readonly Turn[]): string {
   if (turns.length === 0) return '';
-  const blocks = turns.map(
-    (t) => `The user asked Claude:\n${tail(t.prompt, TURN_PROMPT_CAP) || '(not seen)'}\n\nClaude answered:\n${tail(t.answer, TURN_ANSWER_CAP) || '(no text)'}\n\n`,
-  );
+  const blocks = turns.map((t) => {
+    // A prompt that was not the user's is never shown as what the user asked.
+    const asked = t.from === undefined ? 'The user asked Claude:' : `Claude was sent, not by the user (${t.from}):`;
+    return `${asked}\n${tail(t.prompt, TURN_PROMPT_CAP) || '(not seen)'}\n\nClaude answered:\n${tail(t.answer, TURN_ANSWER_CAP) || '(no text)'}\n\n`;
+  });
   return `The main chat's last ${turns.length === 1 ? 'turn' : `${turns.length} turns`}, oldest first:\n\n${blocks.join('')}`;
 }
 

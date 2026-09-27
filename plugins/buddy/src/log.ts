@@ -11,6 +11,18 @@
 // WRITE_ATTEMPTS times. A record is lost only when the other session's write
 // lands after that re-read, and then the fallback says so.
 
+/** The plugin's name, which every transcript notice leads with. */
+export const PLUGIN_NAME = 'buddy';
+
+/**
+ * A line for `$.ui.log`'s transcript, naming the plugin: Claude Code states
+ * that it files a line under the plugin's name only in the debug log, so a
+ * transcript notice names the plugin itself.
+ */
+export function notice(text: string): string {
+  return `${PLUGIN_NAME}: ${text}`;
+}
+
 export type LogLevel = 'error' | 'info' | 'debug';
 export const LOG_LEVELS: readonly LogLevel[] = ['error', 'info', 'debug'];
 export const LOG_CAP = 1_000_000;

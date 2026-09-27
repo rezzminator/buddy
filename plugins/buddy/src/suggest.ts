@@ -10,3 +10,9 @@ export type SuggestionOrigin = { kind: 'suggestion' } | { kind: 'plugin'; name: 
 export function dropsHarnessSuggestion(origin: SuggestionOrigin, enabled: boolean, hidden: boolean, gaveUp: boolean): boolean {
   return origin.kind === 'suggestion' && enabled && !hidden && !gaveUp;
 }
+
+/** How a suggestion of the buddy's ended: shown, not shown by the engine, or not shown because a later turn had started (`overtaken`), which is stale. */
+export function suggestOutcome(isShown: boolean, overtaken: boolean): 'shown' | 'not-shown' | 'stale' {
+  if (isShown) return 'shown';
+  return overtaken ? 'stale' : 'not-shown';
+}

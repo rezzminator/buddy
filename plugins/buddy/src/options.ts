@@ -150,9 +150,14 @@ export function resolveModel(option: string, sessionModel: string | undefined): 
 /** The main chat's effort as its latest request (turn.step) carried it: a level, a number, or undefined (no request yet, or a model without effort). */
 export type ObservedEffort = Effort | number | undefined;
 
-/** The effort recorded after a model request: a main-loop request's (no agentId) replaces it, even when absent; a subagent's leaves it. */
-export function observeEffort(recorded: ObservedEffort, step: { agentId?: string; effort?: Effort | number }): ObservedEffort {
-  return isMainLoop(step.agentId) ? step.effort : recorded;
+/**
+ * The effort recorded after a model request: a step of the running main turn
+ * (`mainTurn`, turn.start's id; no agentId) replaces it, even when absent; a
+ * subagent's, or any step outside that turn (an engine side request, or none
+ * running), leaves it.
+ */
+export function observeEffort(recorded: ObservedEffort, step: { turnId: string; agentId?: string; effort?: Effort | number }, mainTurn: string | undefined): ObservedEffort {
+  return isMainLoop(step.agentId) && mainTurn !== undefined && step.turnId === mainTurn ? step.effort : recorded;
 }
 
 /** The effort a call sends: the option, or for 'inherit' the level of the main chat's latest request; a number, none, or no request yet sends none, so the model's default applies. */

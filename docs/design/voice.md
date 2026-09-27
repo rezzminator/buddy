@@ -28,7 +28,7 @@ The command replies `Asked {name}.` at once, and the model call runs after the h
 A question has 90 seconds (`COMPLETE_DEADLINE_MS`).
 The answer replaces the `thinking` line for 15 seconds.
 A call that fails or answers nothing, or a question past its deadline (`no answer in 90 s`), shows `{name} couldn't answer: {reason}` with the `oops` pose, and the log names the reason (`noAnswerReason`): `api-error` carries its status (`api-error 529`), `empty-reply` and `aborted` read as themselves.
-The deadline ends the question in the bubble; the completion's own `timeoutMs` (`requestTimeoutMs`, 5 seconds past the deadline) makes the engine abandon the request, so it stops there. One deadline, from the question's start, covers the memory read, the settings and the completion.
+The deadline ends the question in the bubble; the completion's own `timeoutMs` (`requestTimeoutMs`: the time left before the deadline when it is sent, plus 5 seconds) makes the engine abandon the request 5 seconds past the deadline, however late it was sent. One deadline, from the question's start, covers the memory read, the settings and the completion.
 The answer belongs to the character asked: when another is drawn by the time it arrives, the answer or the failure is dropped, never said by the new one, and the log says `{name}'s answer was dropped: {drawn} is drawn now`.
 One question waits at a time: one asked meanwhile is refused out loud, in the reply and the bubble (`{name} is still thinking about your last question`).
 An answer, a failure or a refusal holds the bubble for its time; tool-call reactions and other unasked lines wait.
@@ -42,7 +42,7 @@ It is one `$.model.complete` on `quipModel` at `effort`, at most 120 output toke
 A call that cannot answer (an API error, an empty reply, the deadline) fails the line and gives the suggestion up to the engine's own; a reply arriving after a later main turn ended, however it ended, or after a `/clear` or a resume, is stale (`turnGen`): its line and suggestion are never shown.
 The call speaks as the character drawn when the turn ended: a line arriving after a switch is dropped, never said by the new one.
 A line is asked for only once the band has drawn in the session (`turnMay`); before that the call writes the suggestion alone.
-Each turn is filed with the prompt that started it: a prompt typed over a running turn waits for that turn to end (`submitPrompt`, `endPromptTurn`), and a `/clear` or a resume (`session.end`, `endsConversation`) empties the window and the prompts.
+Each turn is filed under its `turnId` with the prompt that started it, as `turn.start` carries it (`startPromptTurn`, `endPromptTurn`); `prompt.submit` supplies its origin (`submitPrompt`, `isUserOrigin`), so a peer message or task notification delivered into a running turn never takes the next turn's prompt, and a turn not started by the user is filed as such. A `/clear` or a resume (`session.end`, `endsConversation`) empties the window and the prompts, and a `/buddy` question asked before it is dropped, never shown or remembered.
 `parseTurnReply` reads the reply, and `quip.outcome` carries the call's usage (`usageFields`: `inTok`, `cacheRead`, `cacheWrite`, `outTok`, `cachePct`) and `ms`, from the turn's end to the reply, as `suggest.outcome` does; when the call wrote no line, `suggest.outcome` carries the usage instead.
 The system prompt is the persona, the character rule when a `LINE:` is wanted, then the tagged lines wanted (`turnSystem`): `LINE:` the buddy's own reaction in character, at most 20 words; `NEXT:` the prompt the user is most likely to send Claude next, in the user's own words, at most 15 words, `NEXT: NONE` only when the work is plainly finished.
 The prompt is the memory, the chat's recent turns (`recentTurns`: the last `contextTurns` answered main-thread turns, `TURN_WINDOW` = 3 by default, 1 to `TURN_WINDOW_MAX` = 10, oldest first, each the end of the user's prompt from `prompt.submit`, capped at 1500 characters, and the end of Claude's answer, capped at 3000), then the turn's tally (`turnPrompt`):
@@ -117,12 +117,13 @@ Like every option, it is resolved once at load by `resolveOptions`: a value of t
 
 | File | Symbols |
 | --- | --- |
-| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `ONE_LINE_RULE`, `QUESTION_MAX_TOKENS`, `TURN_MAX_TOKENS`, `TURN_DEADLINE_MS`, `oneLineSystem`, `questionPrompt`, `recentTurns`, `pushTurn`, `TURN_WINDOW`, `TURN_WINDOW_MAX`, `CHARACTER_RULE`, `turnSystem`, `turnPrompt`, `parseTurnReply`, `oneLine`, `lostThread`, `stillThinking`, `TurnSummary`, `suggestionText`, `SUGGESTION_MAX_CHARS` |
-| [`src/suggest.ts`](../../plugins/buddy/src/suggest.ts) | `dropsHarnessSuggestion` |
+| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `ONE_LINE_RULE`, `QUESTION_MAX_TOKENS`, `TURN_MAX_TOKENS`, `TURN_DEADLINE_MS`, `oneLineSystem`, `questionPrompt`, `recentTurns`, `pushTurn`, `TURN_WINDOW`, `TURN_WINDOW_MAX`, `CHARACTER_RULE`, `turnSystem`, `turnPrompt`, `parseTurnReply`, `oneLine`, `lostThread`, `stillThinking`, `TurnSummary`, `suggestionText`, `SUGGESTION_MAX_CHARS`, `turnMay`, `skipReason`, `submitPrompt`, `endPromptTurn`, `endsConversation`, `requestTimeoutMs`, `isUserOrigin`, `startPromptTurn` |
+| [`src/suggest.ts`](../../plugins/buddy/src/suggest.ts) | `dropsHarnessSuggestion`, `suggestOutcome` |
+| [`src/deadline.ts`](../../plugins/buddy/src/deadline.ts) | `within` |
 | [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `holdsAnswer`, `endTurn`, `react`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason` |
 | [`src/command.ts`](../../plugins/buddy/src/command.ts) | `parseCommand`, `USAGE` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS`, `resolveModel`, `resolveEffort`, `observeEffort`, `INHERIT` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `callSettings`, `onTurnStep`, `onTurnComplete`, `turnCall`, `sayTurnLine`, `proposeTurnNext`, `giveUpSuggestion`, `runCommand`, the `prompt.submit` and `prompt.suggest` hooks |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `callSettings`, `onTurnStep`, `onTurnComplete`, `turnCall`, `sayTurnLine`, `proposeTurnNext`, `giveUpSuggestion`, `runCommand`, `forgetConversation`, `onPromptSubmit`, `onTurnStart`, the `prompt.submit`, `turn.start` and `prompt.suggest` hooks |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `contextTurns`, `quips`, `quipModel`, `effort`, `quipCooldownSec`, `suggestions` |
 
 ## How it's tested

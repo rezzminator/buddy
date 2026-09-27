@@ -65,9 +65,12 @@ try {
   recs = readFileSync(log, 'utf8').split('\n').slice(Number(from)).filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return { level: 'error', event: 'unparsed', line: l.slice(0, 80) }; } });
 } catch (e) { recs = [{ level: 'error', event: 'log-unreadable', message: String(e) }]; }
 const last = (e) => recs.filter((r) => r.event === e).at(-1) ?? null;
+const lastWithUsage = (e) => recs.filter((r) => r.event === e && typeof r.inTok === 'number').at(-1) ?? null;
 const q = last('quip.outcome'), s = last('suggest.outcome'), a = last('ask.outcome'), p = last('turn.prompt') ?? last('ask.prompt');
-// A call that writes no line (quips off) logs its usage on suggest.outcome.
-const call = q ?? a ?? (s && typeof s.inTok === 'number' ? s : undefined);
+// A call that writes no line (quips off) logs its usage on suggest.outcome: on a no-line
+// turn a later harness-shown/harness-not-shown record can follow it with no usage, so this
+// takes the latest suggest.outcome record that actually carries it, not just the last one.
+const call = q ?? a ?? lastWithUsage('suggest.outcome');
 const end = endTs ? Date.parse(endTs) : NaN;
 const n = (v) => (typeof v === 'number' ? v : null);
 console.log(JSON.stringify({

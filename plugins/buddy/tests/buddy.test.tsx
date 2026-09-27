@@ -87,7 +87,10 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     return (call.key !== undefined ? { value: {} } : {}) as never;
   });
   on('turn.complete', async () => ({ text: '' }));
-  on('prompt.submit', async (_$, e) => ({ text: e.text }));
+  /** Prompts a hook beneath the plugin drops: the engine never enters them. */
+  const submit = { drop: new Set<string>() };
+  on('prompt.submit', async (_$, e) => (submit.drop.has(e.text) ? { drop: 'dropped beneath' } : { text: e.text }));
+  on('turn.start', async (_$, e) => ({ turnId: e.turnId }));
   on('prompt.suggest', async (_$, e) => {
     suggested.push(e.text);
     origins.push(e.origin.kind);
@@ -163,7 +166,14 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     if (answers.completeDelayMs) await clock.sleep(answers.completeDelayMs);
     return { value: { usage, ...(queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' }) } } as never;
   });
-  return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins };
+  return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins, submit };
+}
+
+/** The user's prompt entering while idle, and the main turn `turnId` it starts. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function prompt($: any, text: string, turnId: string): Promise<void> {
+  await $.prompt.submit({ text, origin: { kind: 'composer' } } as never);
+  await $.turn.start({ text, turnId } as never);
 }
 
 function run(args: string) {
@@ -205,9 +215,9 @@ describe('the band', () => {
     const ui = await band($);
     expect(await shows(ui, /\(d_d\)/)).toBe(true);
     expect(await shows(ui, /Couldn't load broken: persona: required/)).toBe(true);
-    expect(w.logs).toContain('character broken (builtin) is invalid: persona: required');
-    // The host prefixes the plugin's name to every $.ui.log line: the plugin never adds its own.
-    expect(w.logs.filter((l) => l.startsWith('buddy:'))).toEqual([]);
+    expect(w.logs).toContain('buddy: character broken (builtin) is invalid: persona: required');
+    // Claude Code names the plugin only in the debug log: every transcript notice names it itself.
+    expect(w.logs.filter((l) => !l.startsWith('buddy: '))).toEqual([]);
     await ui.unmount();
   });
 
@@ -226,7 +236,7 @@ describe('the band', () => {
     const ui = await band($);
     expect(await shows(ui, /\(d_d\)/)).toBe(true);
     expect(await shows(ui, /^original\.json[ \n]\(builtin\):[ \n]"original"[ \n]is[ \n]reserved[ \n]for[ \n]your[ \n]original[ \n]companion;[ \n]rename[ \n]the[ \n]file[ \n]and[ \n]its[ \n]id;[ \n]\/buddy-personality[ \n]lists[ \n]your[ \n]characters$/)).toBe(true);
-    expect(w.logs).toContain('original.json (builtin): "original" is reserved for your original companion; rename the file and its id');
+    expect(w.logs).toContain('buddy: original.json (builtin): "original" is reserved for your original companion; rename the file and its id');
     await ui.unmount();
   });
 
@@ -298,7 +308,7 @@ describe('/buddy', () => {
     await $.session.start(START);
     const ui = await band($);
     for (let n = 1; n <= 4; n++) {
-      await $.prompt.submit({ text: `ask number ${n}` } as never);
+      await prompt($, `ask number ${n}`, `t${n}`);
       await $.turn.complete({ reason: 'answer', answer: `reply number ${n}`, isAborted: false, turnId: `t${n}` } as never);
       await w.clock.settle();
     }
@@ -390,7 +400,7 @@ describe('/buddy', () => {
     const out = (await $.command.run(run('second?'))).text;
     // The kit turns the refusal into its own rejection: the reply names what failed and the kit's reason.
     expect(out).toMatch(/^Asked Fixy\. \(Its memory: remembering the (question|answer|line) failed: .+\)$/);
-    expect(w.logs.some((l) => /^remembering the (question|answer|line) failed: .+/.test(l))).toBe(true);
+    expect(w.logs.some((l) => /^buddy: remembering the (question|answer|line) failed: .+/.test(l))).toBe(true);
     expect(w.saved.has(`memory:${SESSION}`)).toBe(false);
   });
 
@@ -403,7 +413,7 @@ describe('/buddy', () => {
     const out = (await $.command.run(run('still there?'))).text;
     await w.clock.settle();
     expect(out).toBe('Asked Fixy. (Its memory: reading the memory failed: the stored memory had 1 malformed exchange, dropped)');
-    expect(w.logs).toContain('reading the memory failed: the stored memory had 1 malformed exchange, dropped');
+    expect(w.logs).toContain('buddy: reading the memory failed: the stored memory had 1 malformed exchange, dropped');
     expect(w.completes[0]!.prompt).toContain('Fixy: Still here.');
     expect(w.completes[0]!.prompt).not.toContain('old shape');
   });
@@ -424,7 +434,7 @@ describe('/buddy', () => {
     await $.command.run(run('why?'));
     await w.clock.settle();
     expect(await shows(ui, /^Fixy couldn't answer: api-error 529$/)).toBe(true);
-    expect(w.logs).toContain('a /buddy question got no answer: api-error 529');
+    expect(w.logs).toContain('buddy: a /buddy question got no answer: api-error 529');
     expect(w.completes).toHaveLength(1);
     await ui.unmount();
   });
@@ -498,7 +508,7 @@ describe('/buddy', () => {
     expect(await shows(ui, /^Fixy ponders\.$/)).toBe(true);
     await w.clock.advance(1_000);
     expect(await shows(ui, /^Fixy couldn't answer: no answer in 90 s$/)).toBe(true);
-    expect(w.logs).toContain('a /buddy question got no answer: no answer in 90 s');
+    expect(w.logs).toContain('buddy: a /buddy question got no answer: no answer in 90 s');
     await w.clock.settle();
     const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', reason: 'no answer in 90 s' });
@@ -686,7 +696,7 @@ describe('/buddy-personality', () => {
     const pane = await paneOf($);
     await pane.press({ key: 'use:broken' });
     await w.clock.settle();
-    expect(w.logs).toContain("/buddy-personality: can't pick broken (invalid): persona: required");
+    expect(w.logs).toContain("buddy: /buddy-personality: can't pick broken (invalid): persona: required");
     expect(w.saved.get('character')).toBe('fixy');
     expect(await shows(ui, /\(f_f\)/)).toBe(true);
     await pane.press({ key: 'use:duck' });
@@ -843,7 +853,7 @@ describe('core fixes', () => {
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
     expect(await shows(ui, /A completed answer\./)).toBe(false);
-    expect(w.logs).toContain("Fixy's answer was dropped: Duck Fixture is drawn now");
+    expect(w.logs).toContain("buddy: Fixy's answer was dropped: Duck Fixture is drawn now");
     await ui.unmount();
   });
 
@@ -889,14 +899,15 @@ describe('hook paths', () => {
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
     await $.session.start(START);
     const ui = await band($);
-    await $.prompt.submit({ text: 'list the files' } as never);
+    await prompt($, 'list the files', 't1');
     await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes.length).toBe(1);
     expect(w.completes[0]).toMatchObject({ model: 'opus', effort: 'low' });
     // Past the buddy's own 30 s deadline, so that deadline decides, and the engine still abandons the request.
-    expect(w.completes[0]?.timeoutMs).toBe(35_000);
+    expect(w.completes[0]?.timeoutMs).toBeLessThanOrEqual(35_000);
+    expect(w.completes[0]?.timeoutMs).toBeGreaterThan(34_900);
     expect(w.completes[0]?.prompt).toContain('The user asked Claude:\nlist the files');
     expect(w.completes[0]?.prompt).toContain('Claude answered:\nT1');
     expect(w.completes[0]?.prompt).toContain('Tools used: Bash. Failures: 0. Last shell command: ls.');
@@ -953,7 +964,7 @@ describe('hook paths', () => {
   test('a headless session (-p, the SDK) makes no end-of-turn call: nobody sees the line, and there is no prompt box to suggest into', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start({ ...START, isInteractive: false });
-    await $.prompt.submit({ text: 'list the files' } as never);
+    await prompt($, 'list the files', 't1');
     await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes).toHaveLength(0);
@@ -966,7 +977,7 @@ describe('hook paths', () => {
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
     await $.session.start(START);
     const ui = await band($);
-    await $.prompt.submit({ text: 'list the files' } as never);
+    await prompt($, 'list the files', 't1');
     await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
     await $.tool.call({ tool: 'Grep', agentId: 'sub1' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'sub done', isAborted: false, turnId: 's1', agentId: 'sub1' } as never);
@@ -984,7 +995,7 @@ describe('hook paths', () => {
     await $.session.start(START);
     const ui = await band($);
     for (let n = 1; n <= 4; n++) {
-      await $.prompt.submit({ text: `ask number ${n}` } as never);
+      await prompt($, `ask number ${n}`, `t${n}`);
       await $.turn.complete({ reason: 'answer', answer: `reply number ${n}`, isAborted: false, turnId: `t${n}` } as never);
       await w.clock.settle();
     }
@@ -1118,10 +1129,10 @@ describe('prompt suggestions', () => {
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
     await $.session.start(START);
     const ui = await band($);
-    await $.prompt.submit({ text: 'build the thing' } as never);
+    await prompt($, 'build the thing', 't1');
     await $.turn.complete({ reason: 'answer', answer: 'Built it.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    await $.prompt.submit({ text: 'now list it' } as never);
+    await prompt($, 'now list it', 't2');
     await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
     await $.command.run(run('can you see the main chat?'));
     await w.clock.settle();
@@ -1258,14 +1269,14 @@ describe('the end-of-turn call, turn by turn', () => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: Old news.\nNEXT: old step' }, completeDelayMs: 5_000 });
     await $.session.start(START);
     const ui = await band($);
-    await $.prompt.submit({ text: 'the secret plan' } as never);
+    await prompt($, 'the secret plan', 't1');
     await $.turn.complete({ reason: 'answer', answer: 'Planned.', isAborted: false, turnId: 't1' } as never);
     await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
     await w.clock.advance(5_000);
     await w.clock.settle();
     expect(await shows(ui, /Old news\./)).toBe(false);
     expect(w.suggested).toEqual([]);
-    await $.prompt.submit({ text: 'a fresh start' } as never);
+    await prompt($, 'a fresh start', 't2');
     await $.turn.complete({ reason: 'answer', answer: 'Fresh.', isAborted: false, turnId: 't2' } as never);
     await w.clock.advance(5_000);
     await w.clock.settle();
@@ -1279,10 +1290,11 @@ describe('the end-of-turn call, turn by turn', () => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($);
-    await $.prompt.submit({ text: 'first ask' } as never);
-    await $.prompt.submit({ text: 'second ask', turnId: 't1' } as never);
+    await prompt($, 'first ask', 't1');
+    await $.prompt.submit({ text: 'second ask', origin: { kind: 'composer' }, turnId: 't1' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'first reply', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
+    await $.turn.start({ text: 'second ask', turnId: 't2' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'second reply', isAborted: false, turnId: 't2' } as never);
     await w.clock.settle();
     const last = w.completes.at(-1)!.prompt;
@@ -1345,11 +1357,14 @@ describe('a question\'s one deadline', () => {
     await w.clock.advance(5_000);
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
-    expect(w.completes[0]?.timeoutMs).toBe(95_000);
+    // Sent 5 s into its 90 s: abandoned 5 s past what is left, never 95 s after it was sent
+    // (a millisecond or so of real time may pass between the two clock reads).
+    expect(w.completes[0]?.timeoutMs).toBeLessThanOrEqual(90_000);
+    expect(w.completes[0]?.timeoutMs).toBeGreaterThan(89_900);
     await ui.unmount();
   });
 
-  test('a memory read that never ends still ends the question at 90 s, and frees the slot', async ($, on) => {
+  test('a memory read that never ends still ends the question at 90 s, frees the slot, and no longer blocks later reads', { timeoutMs: 20_000 }, async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($);
@@ -1359,7 +1374,18 @@ describe('a question\'s one deadline', () => {
     await w.clock.settle();
     expect(await shows(ui, /no[ \n]answer[ \n]in[ \n]90[ \n]s/)).toBe(true);
     expect(w.completes).toHaveLength(0);
-    expect((await $.command.run(run('and now?'))).text).toBe('Asked Fixy.');
+    expect((await $.command.run(run('and now?'))).text).toMatch(/^Asked Fixy\./);
+    await w.clock.advance(90_000);
+    await w.clock.settle();
+    // The hung link is abandoned at the deadline: said once, however many reads it cost.
+    expect(w.logs.filter((l) => l.includes('reading the memory failed: no answer in 90 s'))).toHaveLength(1);
+    w.slow.sessionIdMs = 0;
+    await $.command.run(run('and after it?'));
+    // Behind it only the last question's write, itself hung, abandoned at its own 30 s.
+    await w.clock.advance(31_000);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(1);
+    expect(await shows(ui, /A completed answer\./)).toBe(true);
     await ui.unmount();
   });
 
@@ -1373,6 +1399,174 @@ describe('a question\'s one deadline', () => {
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
     expect(await shows(ui, /A completed answer\./)).toBe(true);
+    await ui.unmount();
+  });
+});
+
+describe('the re-audit fixes', () => {
+  test('a peer message delivered into a running turn never takes the next turn\'s prompt, and is never filed as the user\'s', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'first ask', 't1');
+    await $.prompt.submit({ text: 'peer says hi', origin: { kind: 'peer' }, turnId: 't1' } as never);
+    await $.prompt.submit({ text: 'second ask', origin: { kind: 'composer' }, turnId: 't1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'first reply', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    await $.turn.start({ text: 'second ask', turnId: 't2' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'second reply', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    const last = w.completes.at(-1)!.prompt;
+    expect(last).toContain('The user asked Claude:\nsecond ask\n\nClaude answered:\nsecond reply');
+    expect(last).not.toContain('peer says hi');
+    await ui.unmount();
+  });
+
+  test('a turn a peer started is filed under its origin, never as what the user asked', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.prompt.submit({ text: 'hello from a peer', origin: { kind: 'peer' } } as never);
+    await $.turn.start({ text: 'hello from a peer', turnId: 't1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Hi, peer.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes[0]!.prompt).toContain('Claude was sent, not by the user (peer):\nhello from a peer');
+    expect(w.completes[0]!.prompt).not.toContain('The user asked Claude:\nhello from a peer');
+    await ui.unmount();
+  });
+
+  test('a prompt a lower hook dropped is never filed as a turn\'s', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'kept ask', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'kept reply', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    w.submit.drop.add('dropped ask');
+    await $.prompt.submit({ text: 'dropped ask', origin: { kind: 'composer' } } as never);
+    await $.turn.start({ text: '', turnId: 't2' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'went on', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.completes.at(-1)!.prompt).not.toContain('dropped ask');
+    await ui.unmount();
+  });
+
+  test('/clear mid-turn: the next turn is filed with its own prompt, nothing of the old one', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'old ask', 't1');
+    await $.prompt.submit({ text: 'queued old', origin: { kind: 'composer' }, turnId: 't1' } as never);
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+    await prompt($, 'new ask', 't2');
+    await $.turn.complete({ reason: 'answer', answer: 'new reply', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    const last = w.completes.at(-1)!.prompt;
+    expect(last).toContain('The user asked Claude:\nnew ask\n\nClaude answered:\nnew reply');
+    expect(last).not.toContain('old ask');
+    expect(last).not.toContain('queued old');
+    await ui.unmount();
+  });
+
+  test('a resume forgets the chat as /clear does', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'the secret plan', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Planned.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    await $.session.end({ reason: 'resume', sessionId: SESSION, resume: {} } as never);
+    await prompt($, 'a fresh start', 't2');
+    await $.turn.complete({ reason: 'answer', answer: 'Fresh.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(2);
+    expect(w.completes[1]!.prompt).not.toContain('the secret plan');
+    expect(records(w).find((r) => r.event === 'session.forget')).toMatchObject({ reason: 'resume' });
+    await ui.unmount();
+  });
+
+  test('a /buddy question in flight at /clear is neither shown as an answer nor remembered: it is said dropped', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'About the old chat.' }, completeDelayMs: 5_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('what did we do'));
+    await w.clock.settle();
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(await shows(ui, /About the old chat\./)).toBe(false);
+    expect(ring(w, 'fixy').filter((x: { kind: string }) => x.kind === 'question')).toEqual([]);
+    expect(records(w).find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'dropped', reason: 'the conversation it was asked in ended' });
+    await ui.unmount();
+  });
+
+  test('a /buddy question spanning an ordinary turn end still answers', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'Still here.' }, { isAnswered: true, text: 'LINE: ok\nNEXT: NONE' }], completeDelayMs: 5_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('you there'));
+    await w.clock.settle();
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(records(w).find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'answered' });
+    await ui.unmount();
+  });
+
+  test('a suggestion overtaken by a started turn is logged stale, never proposed', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: Nice.\nNEXT: run the tests' }, completeDelayMs: 5_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await $.turn.start({ text: 'go on', turnId: 't2' } as never);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(w.suggested).toEqual([]);
+    expect(records(w).find((r) => r.event === 'suggest.outcome')).toMatchObject({ outcome: 'stale' });
+    await ui.unmount();
+  });
+
+  test('the engine\'s suggestion held before the turn\'s end is shown when the end-of-turn call fails, never erased', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'LINE: Fine.\nNEXT: run the tests' }, { isAnswered: false, reason: 'api-error', status: 529 }] });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['run the tests']);
+    // The engine suggests for t2 before the plugin's turn.complete code runs.
+    expect(await $.prompt.suggest({ text: 'engine step', origin: { kind: 'suggestion' } } as never)).toMatchObject({ isShown: false });
+    await $.turn.complete({ reason: 'answer', answer: 'Again.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['run the tests', 'engine step']);
+    await ui.unmount();
+  });
+
+  test('an end-of-turn call that times out shows the engine\'s held suggestion', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: Late.\nNEXT: late step' }, completeDelayMs: 40_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    expect(await $.prompt.suggest({ text: 'engine step', origin: { kind: 'suggestion' } } as never)).toMatchObject({ isShown: false });
+    await w.clock.advance(30_000);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['engine step']);
+    expect(records(w).find((r) => r.event === 'suggest.outcome')).toMatchObject({ outcome: 'failed', reason: 'timeout' });
+    await w.clock.advance(10_000);
+    await w.clock.settle();
+    await ui.unmount();
+  });
+
+  test('/buddy off during the end-of-turn call: the line is not shown nor remembered, the suggestion not proposed', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: Unseen line.\nNEXT: run the tests' }, completeDelayMs: 5_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await $.command.run(run('off'));
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(w.suggested).toEqual([]);
+    expect(ring(w, 'fixy')).not.toContainEqual({ kind: 'quip', text: 'Unseen line.' });
+    expect(records(w).filter((r) => r.event === 'quip.outcome' || r.event === 'suggest.outcome').map((r) => r.outcome)).toEqual(['hidden', 'stale']);
     await ui.unmount();
   });
 });

@@ -12,6 +12,8 @@ export const MEMORY_TEXT_CAP = 160;
 /** How many sessions' books the store keeps; older ones are deleted. */
 export const MEMORY_SESSIONS = 20;
 export const MEMORY_KEY_PREFIX = 'memory:';
+/** How long one memory write may take before it is abandoned and later reads and writes go ahead; a read is bounded by its caller's deadline. */
+export const MEMORY_WRITE_DEADLINE_MS = 30_000;
 
 /** One slot of the ring: a question and its answer (none when it got none), a line said on its own, or a next prompt the buddy suggested. */
 export type Exchange = { kind: 'question'; question: string; answer?: string } | { kind: 'line' | 'quip' | 'suggestion'; text: string };

@@ -51,7 +51,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 
 - A new behaviour lands in the engine as a pure function with a test watched failing first; the adapter only wires it.
 - `$` is passed only to functions declared at the top level of the adapter and always spelled `$.noun.event(...)`, and `$.env` names are string literals: otherwise Claude Code loads the module with zero hooks, and `npm run validate:plugin` reports it.
-- Every hook catches, logs `{what} failed: {err}` with `$.ui.log` (Claude Code prefixes the plugin's name, so never `buddy:`), and returns `next(e)` or the original result.
+- Every hook catches, logs `{what} failed: {err}` through `say` (Claude Code names the plugin on a command's reply, never on a `$.ui.log` transcript line, so `notice()` adds `buddy:`), and returns `next(e)` or the original result.
 - A failure shows on screen: a missing or invalid character draws the duck with a bubble naming the error and pointing at `/buddy-personality`, which lists it as `(invalid)`.
 - Only a `/buddy` question, or `quips` or `suggestions` when on, calls a model; walking, reactions and every other command stay local.
 - Dev files live outside the plugin directory, which installs whole.

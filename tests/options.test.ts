@@ -75,19 +75,24 @@ describe('resolveEffort', () => {
 });
 
 describe('observeEffort', () => {
-  test("a main-loop request's effort replaces the recorded one, an absent one included", () => {
-    expect(observeEffort(undefined, { effort: 'medium' })).toBe('medium');
-    expect(observeEffort('medium', { effort: 'max' })).toBe('max');
-    expect(observeEffort('medium', { effort: 32000 })).toBe(32000);
-    expect(observeEffort('medium', {})).toBeUndefined();
+  test("a step of the running main turn replaces the recorded effort, an absent one included", () => {
+    expect(observeEffort(undefined, { turnId: 't1', effort: 'medium' }, 't1')).toBe('medium');
+    expect(observeEffort('medium', { turnId: 't1', effort: 'max' }, 't1')).toBe('max');
+    expect(observeEffort('medium', { turnId: 't1', effort: 32000 }, 't1')).toBe(32000);
+    expect(observeEffort('medium', { turnId: 't1' }, 't1')).toBeUndefined();
   });
-  test("a subagent's request leaves the main chat's recorded effort as it was", () => {
-    expect(observeEffort('medium', { agentId: 'sub1', effort: 'max' })).toBe('medium');
-    expect(observeEffort(undefined, { agentId: 'sub1', effort: 'low' })).toBeUndefined();
+  test("a subagent's step leaves the main chat's recorded effort as it was", () => {
+    expect(observeEffort('medium', { turnId: 's1', agentId: 'sub1', effort: 'max' }, 't1')).toBe('medium');
+    expect(observeEffort(undefined, { turnId: 't1', agentId: 'sub1', effort: 'low' }, 't1')).toBeUndefined();
   });
-  test('a main-loop medium then inherit resolves to medium; a later subagent step keeps it', () => {
-    let seen = observeEffort(undefined, { effort: 'medium' });
-    seen = observeEffort(seen, { agentId: 'sub1', effort: 'high' });
+  test('a step outside the running main turn (an engine side request, or none running) leaves it', () => {
+    expect(observeEffort('medium', { turnId: 'side', effort: 'max' }, 't1')).toBe('medium');
+    expect(observeEffort('medium', { turnId: 't1', effort: 'max' }, undefined)).toBe('medium');
+  });
+  test('a main-turn medium then inherit resolves to medium; a later subagent or side step keeps it', () => {
+    let seen = observeEffort(undefined, { turnId: 't1', effort: 'medium' }, 't1');
+    seen = observeEffort(seen, { turnId: 's1', agentId: 'sub1', effort: 'high' }, 't1');
+    seen = observeEffort(seen, { turnId: 'side' }, 't1');
     expect(resolveEffort('inherit', seen)).toBe('medium');
   });
 });

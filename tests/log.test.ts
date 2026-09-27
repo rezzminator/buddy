@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
+import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, notice, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
 
 function disk(refuse = false) {
   const files: Record<string, string> = {};
@@ -170,5 +170,11 @@ describe('usageFields', () => {
   test('no usage, or not an object: no fields', () => {
     expect(usageFields(undefined)).toEqual({});
     expect(usageFields('x')).toEqual({});
+  });
+});
+
+describe('notice', () => {
+  test('a transcript notice names the plugin: Claude Code states its name only for the debug log', () => {
+    expect(notice('reading the memory failed: EIO')).toBe('buddy: reading the memory failed: EIO');
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { dropsHarnessSuggestion } from '../plugins/buddy/src/suggest.ts';
+import { dropsHarnessSuggestion, suggestOutcome } from '../plugins/buddy/src/suggest.ts';
 
 describe('dropsHarnessSuggestion', () => {
   const harness = { kind: 'suggestion' } as const;
@@ -14,5 +14,13 @@ describe('dropsHarnessSuggestion', () => {
   test('a plugin\'s proposal, the buddy\'s own or another\'s, always passes', () => {
     expect(dropsHarnessSuggestion({ kind: 'plugin', name: 'buddy' }, true, false, false)).toBe(false);
     expect(dropsHarnessSuggestion({ kind: 'plugin', name: 'other' }, true, false, false)).toBe(false);
+  });
+});
+
+describe('suggestOutcome', () => {
+  test('shown; not shown by the engine; not shown because a later turn had started, which is stale', () => {
+    expect(suggestOutcome(true, false)).toBe('shown');
+    expect(suggestOutcome(false, false)).toBe('not-shown');
+    expect(suggestOutcome(false, true)).toBe('stale');
   });
 });
