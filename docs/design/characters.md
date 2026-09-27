@@ -79,7 +79,7 @@ A line is never the one said last from the same pool (`pickLine`).
 | `testPass` | a Bash call's output matches the pass pattern and not the fail one, and the call did not fail | always | 6 s, with confetti |
 | `testFail` | a Bash call's output matches the fail pattern | always | 6 s |
 | `petted` | a bare `/buddy` | always | 6 s |
-| `thinking` | a `/buddy` question starts | always | until the answer, the failure or the question's 90 s deadline |
+| `thinking` | a `/buddy` question starts | always | until the answer, the failure or the question's deadline (180 s from a fork's start, 90 s in `complete` mode) |
 | `rest` | the tick a walking rest begins | 1 in 4 | 6 s |
 | `working` | `isWorking` turns true while no bubble shows | 1 in 4 | 6 s |
 | `wake` | the first event after sleep: a tool call, `/buddy` (a pet or a question), a turn ending, work starting | always | 6 s, unless the waking event says its own line at once (a pet, a question, a tool reaction), which replaces it |

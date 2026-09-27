@@ -32,7 +32,7 @@
     "questionMode": {
       "type": "string",
       "title": "/buddy questions: fork (sees the chat, uses its cache), complete, or off",
-      "description": "fork: answers from a fork of this chat (same model, served from its prompt cache), or from quipModel before the chat's first reply, while the main turn runs, or when the fork gives no answer; complete: a fresh call on quipModel that does not see the chat; off: no model call.",
+      "description": "fork: answers only from a fork of this chat (its model and context, served from its prompt cache), never quipModel; asked while the main turn runs, it waits for that turn to end; before the chat's first reply it says there is nothing to fork yet; in a long chat an answer can take a minute. complete: a fast call on quipModel that sees only your last prompt and Claude's last answer; off: no model call.",
       "default": "fork"
     },
     "quips": {

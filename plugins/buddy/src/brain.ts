@@ -13,10 +13,18 @@ import { buildScene, type Scene } from './scene.ts';
 export const BUBBLE_MS = 6000;
 export const ANSWER_MS = 15000;
 export const ERROR_MS = 10000;
-/** One deadline per /buddy question, from when it is asked: every model call it makes shares it. */
-export const ASK_DEADLINE_MS = 90_000;
-/** What the bubble says, after "{name} couldn't answer: ", once the deadline passed. */
-export const ASK_DEADLINE_REASON = `no answer in ${ASK_DEADLINE_MS / 1000} s`;
+/**
+ * A /buddy question's fork: a safety net so the bubble always ends, counted
+ * from when the fork starts, never while the question waits for the main turn.
+ * A fork carries the whole chat on its model and runs past a minute in a long
+ * one; it cannot be cancelled, so past this it runs on unseen.
+ */
+export const FORK_DEADLINE_MS = 180_000;
+
+/** How long a question asked mid-turn waits for the main turn to end before it gives up visibly: a turn end that never comes never leaves the bubble thinking. */
+export const QUEUE_MAX_MS = 600_000;
+/** A `complete`-mode question's deadline, on the quip model. */
+export const COMPLETE_DEADLINE_MS = 90_000;
 export const SLEEP_IDLE_MS = 60000;
 export const REST_LINE_CHANCE = 0.25;
 export const WORKING_LINE_CHANCE = 0.25;
@@ -220,21 +228,20 @@ export function endQuestion(b: Brain): void {
   b.pending = null;
 }
 
-/**
- * How much of a question's deadline a fork may take. A fork carries the whole
- * chat on its model and effort: in a long session it runs past a minute, so past
- * this the quip model answers from the last exchange in the time left.
- */
-export const FORK_BUDGET_MS = 15_000;
-
-/** What a fork may still take of a question asked at `askedAt`, at `now`: its budget, never past the deadline. */
-export function forkLeft(askedAt: number, now: number): number {
-  return Math.min(FORK_BUDGET_MS, askLeft(askedAt, now));
+/** What the bubble says, after "{name} couldn't answer: ", once a deadline of `ms` passed. */
+export function deadlineReason(ms: number): string {
+  return `no answer in ${ms / 1000} s`;
 }
 
-/** What is left of the one deadline of a question asked at `askedAt`, at `now`; 0 once it passed, never more than the whole. */
-export function askLeft(askedAt: number, now: number): number {
-  return Math.min(ASK_DEADLINE_MS, Math.max(0, Math.ceil(askedAt + ASK_DEADLINE_MS - now)));
+/**
+ * Why a model call gave no answer, as the bubble says it: `nothing-to-fork`
+ * (a chat before its first reply) says what to do, `api-error` carries its
+ * status, every other reason reads as itself.
+ */
+export function noAnswerReason(r: { reason: string; status?: number | null }): string {
+  if (r.reason === 'nothing-to-fork') return "nothing to fork yet: ask again after Claude's first reply";
+  if (r.reason === 'api-error') return `api-error ${typeof r.status === 'number' ? r.status : '(no response)'}`;
+  return r.reason;
 }
 
 /** Whether an answer of `askerId` may be said: always without one, else only while that character is drawn. */

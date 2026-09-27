@@ -39,7 +39,7 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (b) it walks | nothing; three samples 2 s apart, after the greeting | the duck's rows change between samples |
 | (c) `/buddy` pets | `/buddy` | the reply reads `{name}: N pets` |
 | (c) `/buddy-personality` marks the current one | the menu, then Esc | `* Quack (duck)` in the pane |
-| (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply, so the quip model answers | the reply says `Asked`, and the bubble holds an answer: not empty, not a `thinking` line, not "couldn't answer" |
+| (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply, so there is nothing to fork | the reply says `Asked`, and the bubble fails visibly: "couldn't answer" with `nothing to fork yet`, no quip model in its place |
 | (e) a test pass shows a `testPass` line | a prompt asking Claude to run `npm test` in the run's work folder, whose `package.json` test script prints `Tests: 3 passed` | a line of the duck's `testPass` pool shows in the bubble |
 | (f) question after a reply | `/buddy what did we just run`, a real fork of the chat | the bubble holds an answer |
 | (g) a menu pick of `{other}` draws it | the menu, Up to the first non-duck character by id (`cat`), Enter | a row unique to its art is in the pane |
@@ -56,9 +56,9 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (j) `/buddy remember the word pineapple` | that question | the reply says `Asked`, and the bubble holds an answer |
 | (j) the next answer remembers `pineapple` | `/buddy what word did I ask you to remember?` | the answer holds `pineapple` |
 | (j) the store holds this session's memory | nothing; the plugin's store file is read | its `memory:{session}` record holds the exchanges under `characters.duck`, no `thinking` filler |
-| (k) a question during a busy main turn | a prompt that writes a marker line, then runs `sleep 8` via Bash; `/buddy do you like yourself?` during it | the reply says `Asked`, and the answer does not hold the marker |
+| (k) a question during a busy main turn | a prompt that writes a marker line, then runs `sleep 8` via Bash; `/buddy do you like yourself?` during it | the reply says `Asked`; the answer arrives after the main turn's `K1` reply, the log holds an `ask.queued` and the last outcome is `answered` via fork, and the answer does not hold the marker |
 | (k) a second immediate ask | `/buddy say ack` right after | its reply refuses out loud (`still thinking about your last question`) or says `Asked` |
-| (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start` and a non-refused `ask.outcome` record |
+| (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start`, an `ask.outcome` answered via fork, and no `ask.outcome` via `complete` |
 | (l) `/buddy log` | `/buddy log` | the reply names the run's log path and holds JSON lines |
 
 ### Why there is no fake HOME

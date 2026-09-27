@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ANSWER_MS, ASK_DEADLINE_MS, ASK_DEADLINE_REASON, FORK_BUDGET_MS, forkLeft, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, askLeft, beginQuestion, createBrain, currentPose, endQuestion, endTurn,
+  ANSWER_MS, COMPLETE_DEADLINE_MS, FORK_DEADLINE_MS, QUEUE_MAX_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
   failAnswer, farewell, holdsAnswer, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
@@ -203,30 +203,28 @@ describe('holdsAnswer', () => {
     failAnswer(b, 'timeout');
     expect(holdsAnswer(b)).toBe(true);
     beginQuestion(b, () => 0);
-    b.now += ASK_DEADLINE_MS * 10;
+    b.now += FORK_DEADLINE_MS * 10;
     expect(holdsAnswer(b)).toBe(true);
     b.talk = { text: 'a canned line', pose: null, until: b.now + BUBBLE_MS };
     expect(holdsAnswer(b)).toBe(false);
   });
 });
 
-describe('one deadline per question', () => {
-  test('a call gets only what is left of the 90 s since the question was asked; none left is the deadline', () => {
-    expect(ASK_DEADLINE_MS).toBe(90_000);
-    expect(askLeft(1000, 1000)).toBe(90_000);
-    // A fork that took 60 s leaves its fallback 30 s, never a fresh 90.
-    expect(askLeft(1000, 61_000)).toBe(30_000);
-    expect(askLeft(1000, 91_000)).toBe(0);
-    expect(askLeft(1000, 500_000)).toBe(0);
-    // A clock stepped back never grants more than the whole deadline.
-    expect(askLeft(1000, 0)).toBe(90_000);
+describe('a question\'s deadline and failures', () => {
+  test('a fork gets 180 s, a safety net counted from its start; a complete-mode question 90 s; the bubble names the one that passed', () => {
+    expect(FORK_DEADLINE_MS).toBe(180_000);
+    expect(COMPLETE_DEADLINE_MS).toBe(90_000);
+    expect(QUEUE_MAX_MS).toBe(600_000);
+    expect(deadlineReason(QUEUE_MAX_MS)).toBe('no answer in 600 s');
+    expect(deadlineReason(FORK_DEADLINE_MS)).toBe('no answer in 180 s');
+    expect(deadlineReason(COMPLETE_DEADLINE_MS)).toBe('no answer in 90 s');
   });
-  test('a fork gets at most 15 s of that deadline; the fallback gets the rest', () => {
-    expect(FORK_BUDGET_MS).toBe(15_000);
-    expect(forkLeft(1000, 1000)).toBe(15_000);
-    expect(forkLeft(1000, 81_000)).toBe(10_000);
-    expect(forkLeft(1000, 91_000)).toBe(0);
-    expect(ASK_DEADLINE_REASON).toBe('no answer in 90 s');
+  test('why a model call gave no answer, as the bubble says it', () => {
+    expect(noAnswerReason({ reason: 'nothing-to-fork' })).toBe("nothing to fork yet: ask again after Claude's first reply");
+    expect(noAnswerReason({ reason: 'api-error', status: 529 })).toBe('api-error 529');
+    expect(noAnswerReason({ reason: 'api-error', status: null })).toBe('api-error (no response)');
+    expect(noAnswerReason({ reason: 'empty-reply' })).toBe('empty-reply');
+    expect(noAnswerReason({ reason: 'aborted' })).toBe('aborted');
   });
 });
 
@@ -261,7 +259,7 @@ describe('a pending question', () => {
     ticks(b, BUBBLE_MS / 200);
     expect(b.talk).toBeNull();
     endQuestion(b);
-    expect(failAnswer(b, ASK_DEADLINE_REASON, 'fixy')).toBe(false);
+    expect(failAnswer(b, deadlineReason(FORK_DEADLINE_MS), 'fixy')).toBe(false);
     expect(b.talk).toBeNull();
   });
   test('ended with no answer to replace it, the thinking line goes at the next tick', () => {

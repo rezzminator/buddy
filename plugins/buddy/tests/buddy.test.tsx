@@ -44,7 +44,7 @@ const FILES: Record<string, string> = {
   'notes.txt': 'not a character',
 };
 
-type Answer = { isAnswered: boolean; text?: string; reason?: string; usage?: object };
+type Answer = { isAnswered: boolean; text?: string; reason?: string; status?: number | null; usage?: object };
 /** Files by absolute path (with their mtimes), whether listing the home folder is refused, a store key prefix whose writes are refused, character files shipped beside FILES. */
 type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseStore?: string; env?: Record<string, string>; builtins?: Record<string, string> };
 
@@ -304,17 +304,35 @@ describe('/buddy', () => {
     await ui.unmount();
   });
 
-  test('nothing to fork falls back to the quip model', async ($, on) => {
+  test('an idle question forks, however long the fork takes, and never asks the quip model', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Took a while.' }, forkDelayMs: 20_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('you there?'));
+    await w.clock.settle();
+    await w.clock.advance(20_000);
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    expect(w.completes).toEqual([]);
+    expect(await shows(ui, /^Took a while\.$/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('nothing to fork yet (before the chat\'s first reply) says so in the bubble, and never asks the quip model', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'nothing-to-fork' }, complete: { isAnswered: true, text: 'Fresh answer.' } });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('hello?'));
     await w.clock.settle();
-    expect(w.completes[0]?.model).toBe('haiku');
-    expect(w.completes[0]?.system).toContain('You are Fixy, a test fixture.');
-    // The greeting the bubble showed is remembered, before the question.
-    expect(w.completes[0]?.prompt).toMatch(/^Recently \(oldest first\):\nFixy: Fixy says hi\.\n[\s\S]*The user asks you directly: hello\?$/);
-    expect(await shows(ui, /Fresh answer\./)).toBe(true);
+    expect(w.forks).toHaveLength(1);
+    expect(w.completes).toEqual([]);
+    expect(await shows(ui, /nothing to fork yet/)).toBe(true);
+    expect(await shows(ui, /Fresh answer/)).toBe(false);
+    const why = "nothing to fork yet: ask again after Claude's first reply";
+    expect(w.logs).toContain(`buddy: a /buddy question got no answer: ${why}`);
+    await w.clock.settle();
+    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', via: 'fork', reason: why });
     await ui.unmount();
   });
 
@@ -346,12 +364,14 @@ describe('/buddy', () => {
     await ui.unmount();
   });
 
-  test('the fresh-session completion carries the memory too', async ($, on) => {
-    const w = world(on, { character: 'fixy', [`memory:${SESSION}`]: { at: 1, characters: { fixy: [{ kind: 'question', question: 'remember pineapple', answer: 'Pineapple, noted.' }] } } }, { fork: { isAnswered: false, reason: 'nothing-to-fork' } });
+  test('a resumed session\'s fork carries the stored memory too', async ($, on) => {
+    const w = world(on, { character: 'fixy', [`memory:${SESSION}`]: { at: 1, characters: { fixy: [{ kind: 'question', question: 'remember pineapple', answer: 'Pineapple, noted.' }] } } });
     await $.session.start(START);
     await $.command.run(run('which word?'));
     await w.clock.settle();
-    expect(w.completes[0]?.prompt).toMatch(/^Recently \(oldest first\):\nYou: remember pineapple\nFixy: Pineapple, noted\.\n[\s\S]*The user asks you directly: which word\?$/);
+    const p = w.forks[0]!;
+    expect(p).toContain('You: remember pineapple\nFixy: Pineapple, noted.\n');
+    expect(p.indexOf('Pineapple, noted.')).toBeLessThan(p.indexOf('The user asks you directly: which word?'));
   });
 
   test('a switched character never claims another one\'s words', async ($, on) => {
@@ -407,43 +427,86 @@ describe('/buddy', () => {
     expect(w.completes).toEqual([]);
   });
 
-  test('a failed answer says so in the bubble, after the quip model was tried too', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'api-error' }, complete: { isAnswered: false, reason: 'aborted' } });
+  test('a failed fork says so in the bubble with its reason and status, and never asks the quip model', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'api-error', status: 529 }, complete: { isAnswered: true, text: 'Fresh answer.' } });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('why?'));
     await w.clock.settle();
-    expect(await shows(ui, /^Fixy couldn't answer: aborted$/)).toBe(true);
-    expect(w.logs).toContain('buddy: a /buddy question got no answer: aborted');
+    expect(await shows(ui, /^Fixy couldn't answer: api-error 529$/)).toBe(true);
+    expect(w.logs).toContain('buddy: a /buddy question got no answer: api-error 529');
+    expect(w.completes).toEqual([]);
     await ui.unmount();
   });
 
-  test('a fork with no answer falls back to the quip model', async ($, on) => {
+  test('a fork with an empty reply fails as empty-reply, and never asks the quip model', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'empty-reply' }, complete: { isAnswered: true, text: 'Fresh answer.' } });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('you there?'));
     await w.clock.settle();
     expect(w.forks.length).toBe(1);
-    expect(w.completes[0]?.prompt).toContain('The user asks you directly: you there?');
-    expect(await shows(ui, /^Fresh answer\.$/)).toBe(true);
+    expect(w.completes).toEqual([]);
+    expect(await shows(ui, /^Fixy couldn't answer: empty-reply$/)).toBe(true);
     await ui.unmount();
   });
 
-  test('during a busy main turn the quip model answers, never a fork carrying the main chat', async ($, on) => {
-    const main = 'Most of the marketing is live. The release is still running.';
-    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: main }, complete: { isAnswered: true, text: 'Quack, I am here.' } });
+  test('a question queued behind a main turn that never ends: at 10 min the bubble says so, with no fork, and the next question is taken', { timeoutMs: 30_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($, { isWorking: true });
+    await $.command.run(run('stuck?'));
+    await w.clock.settle();
+    await w.clock.advance(599_000);
+    expect(await shows(ui, /^Fixy ponders\.$/)).toBe(true);
+    await w.clock.advance(2_000);
+    await w.clock.settle();
+    expect(w.forks).toEqual([]);
+    expect(await shows(ui, /^Fixy couldn't answer: no answer in 600 s$/)).toBe(true);
+    expect((await $.command.run(run('again?'))).text).toBe('Asked Fixy.');
+    await ui.unmount();
+  });
+
+  test('/buddy reload releases a queued question: it forks at once', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($, { isWorking: true });
+    await $.command.run(run('queued?'));
+    await w.clock.settle();
+    expect(w.forks).toEqual([]);
+    await $.command.run(run('reload'));
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    await ui.unmount();
+  });
+
+  test('a question asked during a busy main turn waits for the main turn to end, then forks once; its 180 s start with the fork', { timeoutMs: 30_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Now I can say.' }, forkDelayMs: 100_000, complete: { isAnswered: true, text: 'Quack, I am here.' } });
     await $.session.start(START);
     const ui = await band($, { isWorking: true });
     await $.command.run(run('you like yourself!?'));
     await w.clock.settle();
+    await w.clock.advance(120_000);
     expect(w.forks).toEqual([]);
-    expect(w.completes.length).toBe(1);
-    expect(await shows(ui, /^Quack, I am here\.$/)).toBe(true);
-    expect(await shows(ui, /marketing/)).toBe(false);
+    expect(await shows(ui, /^Fixy ponders\.$/)).toBe(true);
+    // A subagent's turn ending is not the main turn's end.
+    await $.turn.complete({ reason: 'answer', answer: 'Sub done.', isAborted: false, turnId: 't1', agentId: 'agent-1' } as never);
     await w.clock.settle();
+    expect(w.forks).toEqual([]);
+    // The main turn ends, however it ends.
+    await $.turn.complete({ reason: 'aborted', answer: '', isAborted: true, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    await w.clock.advance(100_000);
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    expect(w.completes).toEqual([]);
+    expect(await shows(ui, /^Now I can say\.$/)).toBe(true);
     const ring = (w.saved.get(`memory:${SESSION}`) as { characters: Record<string, { answer?: string }[]> }).characters.fixy!;
-    expect(ring.at(-1)).toMatchObject({ question: 'you like yourself!?', answer: 'Quack, I am here.' });
+    expect(ring.at(-1)).toMatchObject({ question: 'you like yourself!?', answer: 'Now I can say.' });
+    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(records.some((r) => r.event === 'ask.queued')).toBe(true);
+    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'answered', via: 'fork' });
     await ui.unmount();
   });
 
@@ -451,16 +514,16 @@ describe('/buddy', () => {
     const w = world(on, { character: 'fixy' });
     on('tool.call', async () => ({ result: { stdout: '', stderr: 'boom' }, text: 'boom', isError: true }) as never);
     await $.session.start(START);
-    const ui = await band($, { isWorking: true });
+    const ui = await band($);
     await $.command.run(run('say hi'));
     await w.clock.settle();
     await $.tool.call({ tool: 'Bash', command: 'false' } as never);
     await w.clock.settle();
-    expect(await shows(ui, /^A completed answer\.$/)).toBe(true);
+    expect(await shows(ui, /^A forked answer\.$/)).toBe(true);
     await ui.unmount();
   });
 
-  test('a second ask while one is pending is refused out loud; the first still ends visibly', async ($, on) => {
+  test('a second ask while one is pending is refused out loud; the first still ends visibly', { timeoutMs: 30_000 }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { forkDelayMs: 10 * 60 * 1000, completeDelayMs: 10 * 60 * 1000 });
     await $.session.start(START);
     const ui = await band($);
@@ -469,7 +532,7 @@ describe('/buddy', () => {
     const second = (await $.command.run(run('say ack'))).text;
     expect(second).toMatch(/still thinking about your last question/);
     expect(await shows(ui, /still thinking about your last question/)).toBe(true);
-    await w.clock.advance(91 * 1000);
+    await w.clock.advance(181 * 1000);
     expect(await shows(ui, /^Fixy couldn't answer: /)).toBe(true);
     await w.clock.settle();
     const ring = (w.saved.get(`memory:${SESSION}`) as { characters: Record<string, { question?: string }[]> }).characters.fixy!;
@@ -478,46 +541,44 @@ describe('/buddy', () => {
     await ui.unmount();
   });
 
-  test('one 90 s deadline per question: a fork given up at 15 s leaves its fallback 75 s, then the bubble says so and the ask ends', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'empty-reply' }, forkDelayMs: 60_000, complete: { isAnswered: true, text: 'Too late.' }, completeDelayMs: 80_000 });
+  test('a fork past its 180 s: the bubble says so, the ask ends, and the next question is taken', { timeoutMs: 30_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Far too late.' }, forkDelayMs: 10 * 60 * 1000 });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('slow one?'));
     await w.clock.settle();
-    await w.clock.advance(15_000);
-    expect(w.completes.map((c) => c.timeoutMs)).toEqual([75_000]);
-    await w.clock.advance(75_000);
-    expect(await shows(ui, /^Fixy couldn't answer: no answer in 90 s$/)).toBe(true);
-    expect(w.logs).toContain('buddy: a /buddy question got no answer: no answer in 90 s');
+    await w.clock.advance(179_000);
+    expect(await shows(ui, /^Fixy ponders\.$/)).toBe(true);
+    await w.clock.advance(1_000);
+    expect(await shows(ui, /^Fixy couldn't answer: no answer in 180 s$/)).toBe(true);
+    expect(w.logs).toContain('buddy: a /buddy question got no answer: no answer in 180 s');
+    expect(w.completes).toEqual([]);
     await w.clock.settle();
     const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
-    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', reason: 'no answer in 90 s' });
+    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', via: 'fork', reason: 'no answer in 180 s' });
     // The ask is over: the next question is taken, not refused.
     expect((await $.command.run(run('again?'))).text).toBe('Asked Fixy.');
     await ui.unmount();
   });
 
-  test('a fork slower than 15 s hands the question to the quip model, which answers with the time left', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Forked, too late.' }, forkDelayMs: 60_000, complete: { isAnswered: true, text: 'Quick answer.' } });
+  test('a fork slower than a minute still answers: at 100 s the answer shows, the thinking line up until then', { timeoutMs: 30_000 }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Worth the wait.' }, forkDelayMs: 100_000 });
     await $.session.start(START);
     const ui = await band($);
-    await $.command.run(run('you there?'));
+    await $.command.run(run('long chat?'));
     await w.clock.settle();
-    expect(w.forks).toHaveLength(1);
-    expect(w.completes).toHaveLength(0);
-    await w.clock.advance(15_000);
+    await w.clock.advance(99_000);
+    expect(await shows(ui, /^Fixy ponders\.$/)).toBe(true);
+    await w.clock.advance(1_000);
     await w.clock.settle();
-    expect(w.completes.map((c) => c.timeoutMs)).toEqual([75_000]);
-    expect(await shows(ui, /^Quick answer\.$/)).toBe(true);
-    await w.clock.advance(60_000);
-    expect(await shows(ui, /Forked, too late/)).toBe(false);
-    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
-    expect(records.find((r) => r.event === 'ask.fallback')).toMatchObject({ why: 'the fork took over 15 s' });
+    expect(await shows(ui, /^Worth the wait\.$/)).toBe(true);
+    expect(await shows(ui, /Fixy ponders/)).toBe(false);
+    expect(w.completes).toEqual([]);
     await ui.unmount();
   });
 
   test('the thinking line stays up while the question is pending, past 60 s, and ends when the answer arrives', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { forkDelayMs: 10 * 60 * 1000, complete: { isAnswered: true, text: 'Late but here.' }, completeDelayMs: 66_000 });
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Late but here.' }, forkDelayMs: 81_000 });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('take your time'));
@@ -1044,7 +1105,7 @@ describe('prompt suggestions', () => {
     await working.unmount();
     await ui.unmount();
   });
-  test('a question asked while the main turn runs falls back to the quip model and sees the last prompt and answer', async ($, on) => {
+  test('a question asked after a tool ran in this turn waits for the turn\'s end, then forks the chat', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
     await $.session.start(START);
@@ -1055,10 +1116,12 @@ describe('prompt suggestions', () => {
     await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
     await $.command.run(run('can you see the main chat?'));
     await w.clock.settle();
-    const asked = w.completes.find((c) => c.prompt.endsWith('The user asks you directly: can you see the main chat?'));
-    expect(asked?.prompt).toContain('The user last asked Claude:\nbuild the thing');
-    expect(asked?.prompt).toContain('Claude answered:\nBuilt it.');
     expect(w.forks).toEqual([]);
+    await $.turn.complete({ reason: 'answer', answer: 'Listed it.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    expect(w.forks[0]).toContain('The user asks you directly: can you see the main chat?');
+    expect(w.completes.some((c) => c.prompt.includes('The user asks you directly'))).toBe(false);
     await ui.unmount();
   });
   test('one answered turn: ONE call writes the line for the band and the suggestion for the prompt box, as a plugin\'s', async ($, on) => {

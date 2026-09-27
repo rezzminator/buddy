@@ -18,27 +18,27 @@ flowchart TD
   Off -->|no| T["thinking pose and line; reply: Asked name."]
   T --> Mode{"questionMode"}
   Mode -->|fork, main turn idle| F["$.model.fork with forkPrompt"]
-  Mode -->|fork, main turn busy| C
-  F --> N{"nothing-to-fork?"}
-  N -->|yes, or no answer| C["$.model.complete on quipModel"]
-  N -->|no| L["oneLine of the reply"]
-  Mode -->|complete| C
+  Mode -->|fork, main turn busy| W["ask.queued: wait for the main turn to end, of any reason"]
+  W --> F
+  F --> L["oneLine of the reply"]
+  Mode -->|complete| C["$.model.complete on quipModel"]
   C --> L
   L --> A{"a line?"}
   A -->|yes| Ans["the answer, 15 s"]
-  A -->|"no, or none in 90 s"| Lost["name couldn't answer: reason, 15 s"]
+  A -->|"no: nothing-to-fork, an error, or none in 180 s (fork) or 90 s (complete)"| Lost["name couldn't answer: reason, 15 s"]
 ```
 
 - **Fork.** `$.model.fork` replays the main chat's own request with one more user message: the persona, the buddy's recent exchanges ([Memory](./memory.md)), `The user asks you directly: {question}.`, and the one-line rule (`forkPrompt`). It runs on the chat's model, sees the whole conversation, and reads that conversation from the chat's prompt cache instead of writing it again: the probe measured 35,814 tokens read from cache and none written. So the buddy can answer "what did we just run?".
-- **While the main turn runs.** A fork replays the main thread's last request, so mid-turn it continues that turn and answers with the main chat's own words. While the band shows the chat working, or a tool ran since the last turn ended, the question goes to the quip model, as in `complete` mode; the log records the fallback and why. A fork that answers nothing falls back the same way.
-- **Before the first reply.** A new session has no request to replay, and the fork answers `nothing-to-fork`. The question then goes to the quip model alone, as in `complete` mode.
+- **While the main turn runs.** A fork replays the main thread's last request, so mid-turn it would continue that turn and answer with the main chat's own words. While the band shows the chat working, or a tool ran since the last turn ended, the question waits, the `thinking` line up and the log saying `ask.queued`, until the main thread's next `turn.complete` of any reason (answered, aborted, an error; never a subagent's), then forks. Whether the main turn runs is decided once, at `ask.start`, since the band draws the question's own command as work.
+- **Before the first reply.** A new session has no request to replay, and the fork answers `nothing-to-fork`. The bubble says `{name} couldn't answer: nothing to fork yet: ask again after Claude's first reply`.
+- **Only the fork answers.** In `fork` mode the quip model never stands in: a fork that fails, answers nothing or runs past its deadline says so in the bubble.
 - **Complete.** `$.model.complete` on `quipModel`, with the persona and the one-line rule as the system prompt (`oneLineSystem`) and the buddy's recent exchanges ([Memory](./memory.md)) plus the question as the prompt (`questionPrompt`), capped at 100 output tokens (`QUESTION_MAX_TOKENS`). It does not see the chat.
 - **Off.** No model call; the reply says `questions are off (questionMode)`.
 
 The command replies `Asked {name}.` at once, and the model call runs after the handler returns; the `thinking` line holds the bubble meanwhile, until the answer, the failure or the deadline arrives.
-A question has one 90-second deadline, the fork and its fallback together: a fallback gets only the time left.
+A fork has a 180-second deadline (`FORK_DEADLINE_MS`), counted from when it starts, never while it waits for the main turn: in a long chat a fork runs past a minute and still answers. A `complete`-mode question has 90 seconds (`COMPLETE_DEADLINE_MS`).
 The answer replaces the `thinking` line for 15 seconds.
-A call that fails or answers nothing, or a question past its deadline (`no answer in 90 s`), shows `{name} couldn't answer: {reason}` with the `oops` pose, and the log names the reason.
+A call that fails or answers nothing, or a question past its deadline (`no answer in 180 s` for a fork, `no answer in 90 s` in `complete` mode), shows `{name} couldn't answer: {reason}` with the `oops` pose, and the log names the reason (`noAnswerReason`): `nothing-to-fork` reads `nothing to fork yet: ask again after Claude's first reply`, `api-error` carries its status (`api-error 529`), `empty-reply` and `aborted` read as themselves.
 The deadline ends the question in the bubble, not the call: the engine offers no way to cancel a fork, so one already sent runs to its end and may still bill.
 The answer belongs to the character asked: when another is drawn by the time it arrives, the answer or the failure is dropped, never said by the new one, and the log says `{name}'s answer was dropped: {drawn} is drawn now`.
 One question waits at a time: one asked meanwhile is refused out loud, in the reply and the bubble (`{name} is still thinking about your last question`).
@@ -100,15 +100,16 @@ The rule makes the model aim for one line; the cap and the trim catch the rest.
 ## The quip model
 
 `quipModel` (default `haiku`) is an alias such as `haiku` or `sonnet`, or a full model id.
-It serves three calls: the end-of-turn call, questions in `complete` mode, and a fork's fallback: before the first reply, while the main turn runs, or when the fork answers nothing.
-A question it answers carries the last exchange (`lastExchange`) before the question, since a completion cannot see the chat; whether the main turn runs is decided once, at `ask.start`, since the band draws the question's own command as work.
+It serves two calls: the end-of-turn call and questions in `complete` mode; it never stands in for a fork.
+A question it answers carries the last exchange (`lastExchange`) before the question, since a completion cannot see the chat.
 The fork itself always runs on the chat's model.
 Like every option, it is resolved once at load by `resolveOptions`: a value of the wrong type is ignored by name (`option quipModel ignored: not a string`), logged at session start, said once in the first greeting's bubble, and listed under `/buddy help`.
 
 ## Decisions
 
 - **Fork by default.** Rejected: always a plain completion. A completion is blind to the chat, and a buddy that cannot see the work answers nothing useful about it; the fork's context comes from the cache, so it is cheap to read.
-- **Fall back on `nothing-to-fork`.** Rejected: an error until the first reply. A new session's first question still gets an answer.
+- **Fork only, no fallback.** Rejected: the quip model answering when the fork cannot (before the first reply, mid-turn, or past a 15-second budget). It sees only the last exchange, so the answer the user asked the chat's own model for silently became a weaker one; a question mid-turn waits instead, and a fork that cannot answer says why. `complete` mode is the fast path, chosen out loud.
+- **A 180-second safety net, from the fork's start.** Rejected: one deadline from the ask, shared with a fallback. A long chat's fork answers after a minute or more; the deadline only guarantees the bubble ends, since a fork cannot be cancelled.
 - **The rule in the prompt, and a cap, and a trim.** Rejected: a token cap alone, which cuts a rambling answer mid-sentence. The rule shapes the answer; the cap bounds the cost; the trim guarantees one line.
 - **Reply at once, answer later.** Rejected: holding the command until the model answers. The prompt stays free, and the bubble shows the buddy thinking.
 - **One call per turn for the line and the suggestion, on by default.** Rejected: a fork of the chat for the suggestion beside a quip completion. The fork inherits the whole context and the session's effort, cannot be cancelled and has no token cap, so in a long session it answered after the box had moved on; and a buddy that spoke only after tool use, past a cooldown, spoke too little.
@@ -123,7 +124,7 @@ Like every option, it is resolved once at load by `resolveOptions`: a value of t
 | --- | --- |
 | [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `ONE_LINE_RULE`, `QUESTION_MAX_TOKENS`, `TURN_MAX_TOKENS`, `TURN_DEADLINE_MS`, `forkPrompt`, `oneLineSystem`, `questionPrompt`, `lastExchange`, `turnSystem`, `turnPrompt`, `parseTurnReply`, `oneLine`, `lostThread`, `stillThinking`, `TurnSummary`, `suggestionText`, `SUGGESTION_MAX_CHARS` |
 | [`src/suggest.ts`](../../plugins/buddy/src/suggest.ts) | `dropsHarnessSuggestion` |
-| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `beginQuestion`, `endQuestion`, `askLeft`, `answer`, `failAnswer`, `refuseQuestion`, `holdsAnswer`, `endTurn`, `react`, `ASK_DEADLINE_MS`, `ASK_DEADLINE_REASON` |
+| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `holdsAnswer`, `endTurn`, `react`, `FORK_DEADLINE_MS`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason` |
 | [`src/command.ts`](../../plugins/buddy/src/command.ts) | `parseCommand`, `USAGE` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS`, `QUESTION_MODES` |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `onTurnComplete`, `turnCall`, `sayTurnLine`, `proposeTurnNext`, `giveUpSuggestion`, `runCommand`, the `prompt.submit` and `prompt.suggest` hooks |
@@ -131,9 +132,9 @@ Like every option, it is resolved once at load by `resolveOptions`: a value of t
 
 ## How it's tested
 
-- Unit: [`tests/prompts.test.ts`](../../tests/prompts.test.ts) (the fork prompt, the completion and its last exchange, the end-of-turn system, prompt and reply, the trim), [`tests/command.test.ts`](../../tests/command.test.ts), [`tests/options.test.ts`](../../tests/options.test.ts), the end-of-turn cases of [`tests/brain.test.ts`](../../tests/brain.test.ts) (the summary at every end, the line due with quips on and past the cooldown), [`tests/suggest.test.ts`](../../tests/suggest.test.ts) (which suggestion is dropped).
+- Unit: [`tests/prompts.test.ts`](../../tests/prompts.test.ts) (the fork prompt, the completion and its last exchange, the end-of-turn system, prompt and reply, the trim), [`tests/command.test.ts`](../../tests/command.test.ts), [`tests/options.test.ts`](../../tests/options.test.ts), the end-of-turn and question cases of [`tests/brain.test.ts`](../../tests/brain.test.ts) (the summary at every end, the line due with quips on and past the cooldown, the question deadlines and failure reasons), [`tests/suggest.test.ts`](../../tests/suggest.test.ts) (which suggestion is dropped).
 - Hooks, the end-of-turn call (on by default): one answered turn makes one completion and no fork, its line in the band and its suggestion proposed as a plugin's; Claude Code's own is held during the call and shown on `NEXT: NONE`; an aborted or subagent turn makes no call; a held `/buddy` answer keeps the bubble while the suggestion still goes out.
-- Hooks, questions: a question asked while idle forks even when the band turns working meanwhile; one asked mid-turn falls back with the last prompt and answer.
-- Hooks: a question forks the chat with the persona and the rule; `nothing-to-fork` falls back to the quip model; a failed answer says the thread was lost.
-- Live: row (d) asks before the first reply (the quip model answers); row (f) asks after one (a real fork of a Haiku chat).
+- Hooks, questions: a question asked while idle forks even when the band turns working meanwhile; one asked mid-turn (the band working, or a tool ran) waits for the main thread's turn end, a subagent's not counting, then forks once, its deadline counted from the fork.
+- Hooks: a question forks the chat with the persona and the rule, and never calls the quip model: a fork of 20 s or 100 s still answers; `nothing-to-fork` says `nothing to fork yet`, an `api-error` its status, an `empty-reply` itself; past 180 s the bubble says `no answer in 180 s` and the next question is taken.
+- Live: row (d) asks before the first reply (`nothing to fork yet` in the bubble); row (f) asks after one (a real fork of a Haiku chat); row (k) asks mid-turn (a fork after the turn ends); row (l) finds every answer via fork.
 - The end-of-turn call is not checked by the live proof; the unit and hook tests are its proof.

@@ -1,6 +1,6 @@
 import type { EngineInterface, ModelForkResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput } from 'claude-code';
 import {
-  ASK_DEADLINE_REASON, ERROR_MS, FORK_BUDGET_MS, forkLeft, answer, askLeft, beginQuestion, createBrain, endQuestion, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, observeBand, period, pet,
+  COMPLETE_DEADLINE_MS, ERROR_MS, FORK_DEADLINE_MS, QUEUE_MAX_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, observeBand, period, pet,
   react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
@@ -88,6 +88,8 @@ type State = {
   suggestGaveUp: boolean;
   /** The user's last submitted prompt, read by the end-of-turn call and a question's completion. */
   lastPrompt: string;
+  /** Questions asked while the main turn ran, each waiting to fork: the main thread's next turn.complete, of any reason, lets them go. */
+  turnWaiters: (() => void)[];
   /** Claude's answer at the main chat's last answered turn, read by a question's completion. */
   lastAnswer: string;
   /** The options' warnings were said: once, in the first greeting's bubble. */
@@ -369,7 +371,13 @@ async function readStore(st: State, $: EngineInterface): Promise<void> {
   }
 }
 
+/** A question queued behind the main turn goes now: a new session or /buddy reload ends the wait. */
+function releaseQueued(st: State): void {
+  for (const go of st.turnWaiters.splice(0)) go();
+}
+
 async function startSession(st: State, $: EngineInterface): Promise<void> {
+  releaseQueued(st);
   await startLog(st, $);
   for (const e of st.options.errors) warn($, 'option.warning', e);
   await readStore(st, $);
@@ -407,7 +415,8 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     log($, 'reading the session id for the log', error);
   }
-  lg($, 'info', 'session.start', { level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
+  // The install directory's last segment is the installed version: a stale load after an update shows here.
+  lg($, 'info', 'session.start', { build: $.plugin.root.split('/').pop() ?? '', level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
@@ -477,6 +486,8 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
 
 function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): void {
   try {
+    // The main turn ended, however it ended (answered, aborted, an error): a question waiting on it forks now.
+    if (e.agentId === undefined) for (const go of st.turnWaiters.splice(0)) go();
     if (!st.b) return;
     wake(st.b, Math.random);
     st.turnBusy = false;
@@ -906,11 +917,12 @@ function shape(r: ModelForkResult | 'timeout'): LogFields {
 
 /**
  * One /buddy question to its outcome, always visible: an answer, or
- * "{name} couldn't answer: {reason}" in the bubble. A fork replays the main
- * thread's last request, so while the main turn runs it continues that turn
- * and answers with the main chat's words: then, and whenever the fork gives
- * no answer, the quip model answers from persona, memory, the main chat's
- * last exchange and question.
+ * "{name} couldn't answer: {reason}" in the bubble. In `fork` mode the fork of
+ * the main chat (its model, context and prompt cache) answers, and nothing
+ * else: a fork replays the main thread's last request, so one asked while the
+ * main turn runs would continue that turn, and the question waits for the
+ * turn to end first. In `complete` mode the quip model answers from persona,
+ * memory, the main chat's last exchange and question.
  * `memory`: what the buddy remembered before this question; it goes before the question.
  * `busy`: whether the main turn ran when the question was asked, decided once at ask.start.
  */
@@ -923,52 +935,44 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
   const c = b.character;
   const started = Date.now();
   let said = '';
-  let via = 'complete';
-  let fellBack = '';
+  const via = st.options.questionMode === 'fork' ? 'fork' : 'complete';
   let reason = '';
   // The answer belongs to the one asked: a character switched in meanwhile never says it.
   let shown = true;
   try {
-    // One deadline for the whole question, from now: a fallback gets only what the fork left of it.
-    const askedAt = await $.clock.now();
-    const complete = async (): Promise<ModelForkResult | 'timeout'> => {
-      via = 'complete';
-      const left = askLeft(askedAt, await $.clock.now());
-      if (left === 0) return 'timeout';
-      // A completion does not see the chat: the last exchange tells it where the chat stands.
-      const prompt = questionPrompt(question, memory, lastExchange(st.lastPrompt, st.lastAnswer));
-      lg($, 'debug', 'ask.prompt', { via, length: prompt.length, leftMs: left });
-      const r = await within($, $.model.complete({ model: st.options.quipModel, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: left }), left);
-      lg($, 'debug', 'ask.result', { via, ...shape(r) });
-      return r;
-    };
     let r: ModelForkResult | 'timeout';
-    if (st.options.questionMode === 'fork' && !busy) {
-      via = 'fork';
-      const prompt = forkPrompt(c.persona, question, memory);
-      lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
-      r = await within($, $.model.fork({ prompt }), forkLeft(askedAt, await $.clock.now()));
-      lg($, 'debug', 'ask.result', { via, ...shape(r) });
-      // A fork past its budget (a long chat), or with no answer (a new session has no reply to fork yet): the quip model answers.
-      if (r === 'timeout') {
-        fellBack = `the fork took over ${FORK_BUDGET_MS / 1000} s`;
-        r = await complete();
-      } else if (!(r.isAnswered && oneLine(r.text))) {
-        fellBack = r.isAnswered ? 'empty reply' : r.reason;
-        r = await complete();
+    let deadline: number;
+    if (via === 'fork') {
+      let queuedOut = false;
+      if (busy) {
+        lg($, 'info', 'ask.queued', { why: 'the main turn is running' });
+        queuedOut = (await within($, new Promise<void>((go) => st.turnWaiters.push(go)), QUEUE_MAX_MS)) === 'timeout';
+      }
+      if (queuedOut) {
+        deadline = QUEUE_MAX_MS;
+        r = 'timeout';
+      } else {
+        const prompt = forkPrompt(c.persona, question, memory);
+        lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
+        // Counted from here, never while it waited: the safety net that ends the bubble, not a cancel.
+        deadline = FORK_DEADLINE_MS;
+        r = await within($, $.model.fork({ prompt }), deadline);
       }
     } else {
-      if (st.options.questionMode === 'fork') fellBack = 'the main turn is running';
-      r = await complete();
+      // A completion does not see the chat: the last exchange tells it where the chat stands.
+      const prompt = questionPrompt(question, memory, lastExchange(st.lastPrompt, st.lastAnswer));
+      lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
+      deadline = COMPLETE_DEADLINE_MS;
+      r = await within($, $.model.complete({ model: st.options.quipModel, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: deadline }), deadline);
     }
-    if (fellBack) lg($, 'info', 'ask.fallback', { from: 'fork', to: 'complete', why: fellBack });
+    lg($, 'debug', 'ask.result', { via, ...shape(r) });
     const text = r !== 'timeout' && r.isAnswered ? oneLine(r.text) : '';
     if (text) {
       said = text;
       // Hidden by /buddy off while it thought: the answer is never drawn, so never remembered as said.
       shown = !st.hidden && answer(b, text, null, c.id);
     } else {
-      reason = r === 'timeout' ? ASK_DEADLINE_REASON : r.isAnswered ? 'empty reply' : r.reason;
+      reason = r === 'timeout' ? deadlineReason(deadline) : r.isAnswered ? 'empty reply' : noAnswerReason(r);
       $.ui.log(`buddy: a /buddy question got no answer: ${reason}`);
       shown = failAnswer(b, reason, c.id);
     }
@@ -982,7 +986,7 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
   }
   const hidden = !shown && st.hidden;
   if (!shown && !hidden) warn($, 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
-  lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? (fellBack ? 'fallback' : 'answered') : 'failed', via, ...(reason ? { reason } : {}), ms: Date.now() - started });
+  lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', via, ...(reason ? { reason } : {}), ms: Date.now() - started });
   // One exchange: the question with its answer as shown, or the question alone.
   keep(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question });
   refresh(st, $);
@@ -1035,6 +1039,7 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         return { text: `${b.character.name} is back${note}` };
       }
       case 'reload': {
+        releaseQueued(st);
         await loadRoster(st, $);
         applyChoice(st, $);
         startClock(st, $);
@@ -1132,6 +1137,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     harnessSuggestion: null,
     suggestGaveUp: false,
     lastPrompt: '',
+    turnWaiters: [],
     lastAnswer: '',
     warned: false,
   };

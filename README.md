@@ -218,17 +218,17 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
 - **Questions.** In `fork` mode (the default) `/buddy {question}` replays
   this chat's own request with the question added, so it runs on the chat's
   model, sees the whole conversation, and reads the prefix from the chat's
-  prompt cache instead of writing it again. Before the chat's first reply
-  there is nothing to fork, and the question goes to `quipModel` alone; so
-  does a question asked while Claude is busy mid-turn, when a fork would
-  only continue that turn, and one whose fork gives no answer or takes
-  longer than 15 seconds (a long chat forks slowly on its own model): then
-  `quipModel` answers from your last prompt and Claude's last answer. In
-  `complete` mode every question goes to `quipModel` alone, without the
-  conversation; `off` turns questions off. Every question ends in the
-  bubble: its answer, or `{name} couldn't answer: {reason}`, such as
-  `no answer in 90 s`: a question has one 90-second deadline, the fork and
-  its fallback together, the fallback getting only the time left, and the
+  prompt cache instead of writing it again. Only the fork answers: in a long
+  chat that can take a minute. A question asked while Claude is busy
+  mid-turn, when a fork would only continue that turn, waits for the turn
+  to end, however it ends, then forks. Before the chat's first reply there
+  is nothing to fork, and the bubble says `nothing to fork yet: ask again
+  after Claude's first reply`. In `complete` mode every question goes to
+  `quipModel` alone, fast, seeing only your last prompt and Claude's last
+  answer; `off` turns questions off. Every question ends in the bubble: its
+  answer, or `{name} couldn't answer: {reason}`, such as `api-error 529` or
+  `no answer in 180 s`: a fork has 180 seconds from when it starts (never
+  counting the wait for the turn), a `complete` question 90, and the
   thinking line stays up until the answer, the failure or the deadline. The
   deadline ends the question, not a fork already sent: Claude Code offers no
   way to cancel one, so it runs to its end and may still bill. An
@@ -284,7 +284,7 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 | `character` | string | `"duck"` | Character id (see /buddy-personality) |
 | `characterDir` | directory | `""` | Folder of your own character JSON files |
 | `motion` | boolean | `true` | Walk along the prompt line |
-| `questionMode` | string | `"fork"` | /buddy questions: fork (sees the chat, uses its cache), complete, or off |
+| `questionMode` | string | `"fork"` | /buddy questions: fork (only the chat's own model, context and cache answer; waits for a running turn), complete (fast, on quipModel), or off |
 | `quips` | boolean | `true` | The buddy says a line at the end of every answered turn, from one short `quipModel` call that also writes the suggestion (spends tokens); `false` keeps it quiet |
 | `quipModel` | string | `"haiku"` | Model for the end-of-turn call and questions that do not fork |
 | `quipCooldownSec` | number | `0` | Minimum seconds between the buddy's lines; 0 = every answered turn |
@@ -347,11 +347,11 @@ from your account id, with the name and personality Claude Code's config (`~/.cl
 
 Only when a model answers. Walking, reactions, petting and every command
 except a question are local. A question in `fork` mode runs on the chat's
-own model and reads the conversation from its prompt cache; `complete` mode,
-and a question asked while Claude is busy mid-turn, send `quipModel` the
-question, the character's persona, its memory and the ends of your last
+own model and reads the conversation from its prompt cache, and a question
+asked while Claude is busy mid-turn waits for the turn to end before it
+forks; `complete` mode sends `quipModel` the question, the character's persona, its memory and the ends of your last
 prompt and Claude's last answer, never the rest of the conversation.
-A question that reaches its 90-second deadline ends in the bubble, but a
+A fork that reaches its 180-second deadline ends in the bubble, but a
 fork already sent runs on to its end (Claude Code offers no cancel), so it
 may still bill. Quips and prompt suggestions are on by default: one short
 `quipModel` call per answered turn, sent your last prompt, the end of
