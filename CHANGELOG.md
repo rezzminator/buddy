@@ -10,6 +10,7 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 - The buddy remembers the prompts it suggested: a suggestion the prompt box showed joins its memory as its own kind of exchange, so it can say what it suggested last.
 - The `contextTurns` option (default 3, 1 to 10): how many of the chat's latest answered turns each call reads, for questions and the end-of-turn call.
 - The log records each call's token and prompt-cache usage: `ask.outcome` and `quip.outcome` carry `inTok`, `outTok`, `cacheRead`, `cacheWrite` and `cachePct` (the share of the input read from the cache), shown by `/buddy log`.
+- The end-of-turn call's `quip.outcome` and `suggest.outcome` log records carry `ms`, from the turn's end to the reply, as `ask.outcome` does.
 
 ### Changed
 - A `/buddy` question is one direct call on `quipModel`, now `opus` by default, at the new `effort` option's level (default `low`; low, medium, high, xhigh or max), seeing the chat's last 3 turns instead of only the last prompt and answer, and answered at once, even mid-turn. The end-of-turn line and suggestion use the same model, effort and 3-turn window.

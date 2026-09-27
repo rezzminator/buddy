@@ -504,7 +504,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput): vo
         st.suggestGaveUp = false;
       }
       lg($, 'info', 'turn.call', { line: wants.line, next: wants.next, tools: turn.tools.length });
-      turnCall(st, $, turn, gen, wants).catch((error) => log($, 'the end-of-turn call', error));
+      turnCall(st, $, turn, gen, wants, Date.now()).catch((error) => log($, 'the end-of-turn call', error));
     } else {
       const why = !answered ? 'not an answered turn' : !st.interactive ? 'headless' : st.hidden ? 'hidden' : !st.options.quips && !st.options.suggestions ? 'quips and suggestions off' : 'cooldown';
       lg($, 'info', 'turn.skipped', { why });
@@ -552,9 +552,10 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
  * contextTurns turns.
  * A timeout, a refusal, an empty reply or a throw fails the line as a quip
  * fails and gives the suggestion up; a late suggestion is stale by `gen`.
+ * Every outcome logs `ms`, from `started` (the turn's end) to the reply.
  * Never throws.
  */
-async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: number, wants: TurnWants): Promise<void> {
+async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: number, wants: TurnWants, started: number): Promise<void> {
   const b = st.b;
   if (!b) return;
   // The window as this turn ended, before a later turn can move it.
@@ -584,18 +585,19 @@ async function turnCall(st: State, $: EngineInterface, t: TurnSummary, gen: numb
     log($, 'the end-of-turn call', error);
     reason = message(error);
   }
-  if (wants.line) sayTurnLine(st, $, t, reply?.line ?? null, reason || 'no line in the reply', usage);
+  const ms = Date.now() - started;
+  if (wants.line) sayTurnLine(st, $, t, reply?.line ?? null, reason || 'no line in the reply', { ms, ...usage });
   if (wants.next) {
     try {
-      await proposeTurnNext(st, $, gen, reply?.next ?? null, reason, b.character.id);
+      await proposeTurnNext(st, $, gen, reply?.next ?? null, reason, b.character.id, ms);
     } catch (error) {
       log($, 'a prompt suggestion', error);
-      await giveUpSuggestion(st, $, gen).catch((e) => log($, 'showing the engine\'s own suggestion', e));
+      await giveUpSuggestion(st, $, gen, ms).catch((e) => log($, 'showing the engine\'s own suggestion', e));
     }
   }
 }
 
-/** The end-of-turn line in the bubble, or the failure why there is none; a held /buddy answer keeps the bubble. `usage`: the call's usageFields, logged on the outcome. */
+/** The end-of-turn line in the bubble, or the failure why there is none; a held /buddy answer keeps the bubble. `usage`: the call's ms and usageFields, logged on the outcome. */
 function sayTurnLine(st: State, $: EngineInterface, t: TurnSummary, text: string | null, reason: string, usage: Record<string, number>): void {
   const b = st.b;
   if (!b) return;
@@ -622,32 +624,32 @@ function sayTurnLine(st: State, $: EngineInterface, t: TurnSummary, text: string
   refresh(st, $);
 }
 
-/** The end-of-turn suggestion of character `characterId` into the prompt box, remembered once shown; none, or a failed call, gives this turn's up. */
-async function proposeTurnNext(st: State, $: EngineInterface, gen: number, text: string | null, reason: string, characterId: string): Promise<void> {
+/** The end-of-turn suggestion of character `characterId` into the prompt box, remembered once shown; none, or a failed call, gives this turn's up. `ms`: the turn's end to the reply, logged on the outcome. */
+async function proposeTurnNext(st: State, $: EngineInterface, gen: number, text: string | null, reason: string, characterId: string, ms: number): Promise<void> {
   if (text === null) {
-    lg($, 'info', 'suggest.outcome', reason ? { outcome: 'failed', reason } : { outcome: 'none' });
-    return giveUpSuggestion(st, $, gen);
+    lg($, 'info', 'suggest.outcome', reason ? { outcome: 'failed', reason, ms } : { outcome: 'none', ms });
+    return giveUpSuggestion(st, $, gen, ms);
   }
   // A later turn asked for its own, or /buddy off came meanwhile: this one is never proposed.
   if (gen !== st.suggestGen || st.hidden) {
-    lg($, 'info', 'suggest.outcome', { outcome: 'stale' });
+    lg($, 'info', 'suggest.outcome', { outcome: 'stale', ms });
     return;
   }
   const { isShown } = await $.prompt.suggest({ text });
-  lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'shown' : 'not-shown', length: text.length });
+  lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'shown' : 'not-shown', length: text.length, ms });
   // Shown: the buddy remembers it suggested this, so it can say what it suggested last.
   if (isShown) keep(st, $, characterId, { kind: 'suggestion', text });
 }
 
-/** The buddy has no suggestion for turn `gen`: the engine's own, held back meanwhile, is shown, and a later one passes. */
-async function giveUpSuggestion(st: State, $: EngineInterface, gen: number): Promise<void> {
+/** The buddy has no suggestion for turn `gen`: the engine's own, held back meanwhile, is shown, and a later one passes. `ms`: the turn's end to the reply, logged on the outcome. */
+async function giveUpSuggestion(st: State, $: EngineInterface, gen: number, ms: number): Promise<void> {
   if (gen !== st.suggestGen) return;
   st.suggestGaveUp = true;
   const text = st.harnessSuggestion;
   st.harnessSuggestion = null;
   if (text === null || st.hidden) return;
   const { isShown } = await $.prompt.suggest({ text });
-  lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'harness-shown' : 'harness-not-shown' });
+  lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'harness-shown' : 'harness-not-shown', ms });
 }
 
 // ---- the original companion ---------------------------------------------

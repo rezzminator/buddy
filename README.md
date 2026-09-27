@@ -313,8 +313,9 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
   3 seconds, however long the chat.
 - `/buddy log` shows what each question cost: its `ask.outcome` record
   carries its tokens, `cacheRead` (input read from the prompt cache) and
-  `cachePct` (that share of all its input); the end-of-turn call's
-  `quip.outcome` carries the same.
+  `cachePct` (that share of all its input) and `ms`; the end-of-turn call's
+  `quip.outcome` carries the same, and its `suggest.outcome` its `ms`, both
+  counted from the turn's end to the reply.
 
 ## 🎨 Your own character
 
@@ -400,6 +401,7 @@ npm test              # unit tests (vitest) and function-hook tests (claude plug
 npm run typecheck
 npm run validate:plugin
 npm run live          # live proof in tmux, spends a few cents of Haiku
+npm run live:configs  # five sessions, one per configuration, every turn measured; report in /tmp/buddy/configs-*/
 ```
 
 Work lands on `develop`; `main` holds only releases, and each one is tagged

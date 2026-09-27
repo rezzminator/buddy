@@ -898,6 +898,18 @@ describe('hook paths', () => {
     await ui.unmount();
   });
 
+  test('the line\'s and the suggestion\'s outcomes carry ms, from the turn\'s end to the reply, as an ask\'s does', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: Fixy likes that.\nNEXT: run the tests' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(typeof records.find((r) => r.event === 'quip.outcome')?.ms).toBe('number');
+    expect(typeof records.find((r) => r.event === 'suggest.outcome')?.ms).toBe('number');
+    await ui.unmount();
+  });
+
   test('a headless session (-p, the SDK) makes no end-of-turn call: nobody sees the line, and there is no prompt box to suggest into', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start({ ...START, isInteractive: false });

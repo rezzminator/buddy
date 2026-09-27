@@ -40,7 +40,7 @@ At the end of every turn (`turn.complete`), the brain resets the turn's tally an
 The call is made only for an answered turn of the main loop (`reason: 'answer'`, not aborted, no `agentId`), tool use or not, while the buddy is shown, when the line is due or suggestions are on.
 It is one `$.model.complete` on `quipModel` at `effort`, at most 120 output tokens (`TURN_MAX_TOKENS`), within 30 seconds (`TURN_DEADLINE_MS`): about 3 seconds.
 A call that cannot answer (an API error, an empty reply, the deadline) fails the line and gives the suggestion up to the engine's own; a suggestion arriving after the next turn asked for its own is stale (`suggestGen`) and never shown.
-`parseTurnReply` reads the reply, and `quip.outcome` carries the call's usage (`usageFields`: `inTok`, `cacheRead`, `cacheWrite`, `outTok`, `cachePct`).
+`parseTurnReply` reads the reply, and `quip.outcome` carries the call's usage (`usageFields`: `inTok`, `cacheRead`, `cacheWrite`, `outTok`, `cachePct`) and `ms`, from the turn's end to the reply, as `suggest.outcome` does.
 The system prompt is the persona, the character rule when a `LINE:` is wanted, then the tagged lines wanted (`turnSystem`): `LINE:` the buddy's own reaction in character, at most 20 words; `NEXT:` the prompt the user is most likely to send Claude next, in the user's own words, at most 15 words, `NEXT: NONE` only when the work is plainly finished.
 The prompt is the memory, the chat's recent turns (`recentTurns`: the last `contextTurns` answered main-thread turns, `TURN_WINDOW` = 3 by default, 1 to `TURN_WINDOW_MAX` = 10, oldest first, each the end of the user's prompt from `prompt.submit`, capped at 1500 characters, and the end of Claude's answer, capped at 3000), then the turn's tally (`turnPrompt`):
 

@@ -16,7 +16,8 @@
     "typecheck": "npm run types && tsc --noEmit && tsc -p tsconfig.hooks.json",
     "validate:plugin": "claude plugin validate --strict . && claude plugin validate --strict plugins/buddy",
     "release:check": "scripts/release-check.sh",
-    "live": "scripts/live-proof.sh"
+    "live": "scripts/live-proof.sh",
+    "live:configs": "scripts/live-configs.sh"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -13,6 +13,7 @@ Each gate below says what it proves and what it prints when it fails; a gate tha
 | Validate | `npm run validate:plugin` (`claude plugin validate --strict`, the repo and the plugin) | both manifests, and the rule on `$` | the violation; a broken `$` rule would otherwise load the module with zero hooks |
 | Release check | `scripts/release-check.sh [main's version]` | the version agrees in `plugin.json`, `marketplace.json`, `package.json` and the README badge; `CHANGELOG.md` has a dated section; the version moved past `main`'s | one `FAIL` line per disagreement and exit 1; `ERROR` and exit 2 when a file cannot be read |
 | Live proof | `npm run live` (`scripts/live-proof.sh`) | a real session draws, walks, answers, switches, hides, runs the menu and remembers | a table with a `FAIL` row per failed check and its evidence, exit 1; `ERROR` and exit 2 when the session cannot be driven |
+| Live configurations | `npm run live:configs` (`scripts/live-configs.sh`) | five real sessions, one per configuration, two turns each, every turn measured | `report.md` with a `FAIL` row per failed check and its evidence, and `unread` for a metric no record carried, exit 1; a session that could not be driven is `NOT DRIVEN` with its error, exit 2 |
 | CI | `.github/workflows/ci.yml` | `npm test`, the typecheck and the validation on every push to `develop` or `main` and every pull request; the release check on a pull request into `main` and on every push that lands on `main` | the failed step |
 | No leaks | a rule in `CLAUDE.md`, checked with a grep before a commit | no machine-absolute path and no personal data in a tracked file | the matching line |
 
@@ -25,7 +26,8 @@ The script drives a real, interactive Claude Code session and reads the screen.
 
 - **The session.** tmux on a private socket (`-L buddy-proof`), a 160 × 50 window, never your own tmux server. The real Claude binary (`CLAUDE_BIN`, else `claude` resolved past a text wrapper), with `--model haiku --setting-sources project --allowedTools Bash --plugin-dir plugins/buddy`, a fresh `--session-id`, and function hooks on.
 - **The options.** A settings file pins them under `buddy@inline`, the id a `--plugin-dir` copy reads: `quips: false`, `suggestions: false`, `motion: true`, `logLevel: debug`, and `logFile` in the run folder.
-- **The boot.** The trust dialog defaults to "No, exit", so the script presses Down, then Enter.
+- **The boot.** The trust dialog defaults to "No, exit", so the script presses Down, then Enter; the session is up once the prompt glyph shows, followed by a space or the no-break space Claude Code draws.
+- **The helpers.** `scripts/live-lib.sh` holds what both live scripts use: the binary, the store set aside and put back, the boot, the pane, the bubble, the transcript's replies, and sending a prompt or a command.
 - **What it reads.** What is drawn, from the pane (`tmux capture-pane`). The art to look for, from the characters' own JSON: rows of four or more visible characters, and for a second character only rows the duck lacks. The bubble, as the text between the round border's bars. Each command's reply, from the session transcript's `<local-command-stdout>`, so a reply is read as data, not scraped.
 - **The evidence.** A timestamped run directory keeps every pane capture, the drive log and a copy of the transcript; each row of the table prints the evidence it saw.
 
@@ -68,6 +70,25 @@ But a session started with a fake HOME is logged out, and a logged-out session a
 So the proof keeps the real HOME and never reads or prints the "Yours" group, which would show a real account's companion.
 The hook tests prove that path instead, with an invented `~/.claude.json` and backups served from memory.
 
+## The live configuration proof
+
+`scripts/live-configs.sh` proves the buddy per configuration and measures every turn.
+Each session is the live proof's (the helpers in `scripts/live-lib.sh`, the main chat on Haiku, `--plugin-dir plugins/buddy`), on its own tmux socket (`-L buddy-cfg-{S}`) and folder, three at once at most; the options always pin `quipModel: opus`, `effort: low`, `logLevel: debug` and `logFile` in the session's folder.
+Each session sends two prompts (one running `ls` via Bash, one plain reply), waits for the reply in the transcript, then for the end-of-turn records (`turn.call` and its outcomes, or `turn.skipped`), 45 seconds at most.
+
+| Session | Options | Passes when |
+| --- | --- | --- |
+| S1 | the defaults | after each turn a line shows in the bubble (`quip.outcome` answered, its stored text in the pane) and the suggestion in the prompt box (`suggest.outcome` shown, its stored text in the pane); `/buddy remember the word tangerine` is answered, and `/buddy what word did I ask you to remember?` answers `tangerine` from memory |
+| S2 | `quips: false` | no `quip.outcome` after a turn; a suggestion is shown |
+| S3 | `suggestions: false`, `memory: 0` | a line shows after each turn; no `suggest.outcome`; the store holds nothing under `memory:{session}` |
+| S4 | the defaults, headless | `claude -p`, then `claude -p --resume`: two `turn.skipped` with `why: headless`, and no `turn.call`, `turn.settings`, `turn.prompt`, `ask.settings` or `ask.start` |
+| S5 | `characterDir` holding one invalid `broken.json`, `character: broken` | the duck is drawn with a bubble naming the error (`Couldn't load broken: …; /buddy-personality picks another`); the error holds the bubble 10 s from the session's start, part of it behind the trust dialog, so when it is gone by the prompt `/buddy reload` says it again, and the row names which |
+
+A suggestion check also passes on `suggest.outcome` none: the model answered `NEXT: NONE`, which by design hands the prompt box back to Claude Code's own suggestion, and the row says so.
+Per turn the report reads, from the log: `quip.outcome` and `suggest.outcome` with their `ms` (the turn's end to the reply, as the plugin measures it) and the call's `inTok`, `outTok`, `cacheRead` and `cacheWrite`; from the transcript, the reply's timestamp, so `end→line ms` is the `quip.outcome` record's time minus the main turn's end; the number of model calls (`turn.settings`, `ask.settings`); and every error record.
+One pane sample a second after the outcome confirms the bubble: an answered line's stored text is in it, a failure reads `couldn't answer`.
+A metric no record carried is `unread`, never a zero. The run folder `/tmp/buddy/configs-{timestamp}/` keeps `report.md`, `report.json`, and per session the log, the drive log, every pane capture and a copy of the transcript.
+
 ## Logging
 
 The plugin log is for debugging a live session: `src/log.ts` queues one JSON line per record, `{ts, level, event, session?, character?, ...fields}`, and the adapter writes the queue through the calling hook's `$.fs` (a hook's `$` is never kept).
@@ -78,7 +99,7 @@ A failed write goes to the debug log (`$.ui.log`) with every error record in it,
 | Level | Adds |
 | --- | --- |
 | `error` | every failure: what failed, its ids, the message and stack |
-| `info` | session start, roster loads and invalid characters, option warnings, commands (kind and argument length, never the text), menu open, pick and close, character switches, each ask's start and outcome (`answered`, `fallback`, `refused`, `failed`, `dropped`, with reason and ms), another session's `/buddy off` or `/buddy on` read back, a menu pane found gone, each end-of-turn call made or skipped and why (`turn.call`, `turn.skipped`), its line (`quip.outcome`) and its suggestion (`suggest.outcome`) |
+| `info` | session start, roster loads and invalid characters, option warnings, commands (kind and argument length, never the text), menu open, pick and close, character switches, each ask's start and outcome (`answered`, `fallback`, `refused`, `failed`, `dropped`, with reason and ms), another session's `/buddy off` or `/buddy on` read back, a menu pane found gone, each end-of-turn call made or skipped and why (`turn.call`, `turn.skipped`), its line (`quip.outcome`, with usage and ms) and its suggestion (`suggest.outcome`, with ms); an end-of-turn outcome's ms counts from the turn's end to the reply |
 | `debug` | the question text, prompt lengths, each model result's shape (`isAnswered`, reason, length, first 80 characters), band scenes and clock ticks, at most one per second per event |
 
 The identity and `~/.claude.json` never reach the log at any level; the hook test for the original companion checks the log file for the account id.
@@ -93,7 +114,7 @@ The identity and `~/.claude.json` never reach the log at any level; the hook tes
 
 Named here, so none reads as a pass:
 
-- Quips run only in unit tests; the live proof runs with `quips: false`.
+- The live proof runs with `quips: false`; quips and suggestions are proven live by the live configuration proof.
 - Sleep is proven in unit tests only; the live proof would have to run after midnight.
 - The hover card needs a terminal that reports the mouse; it is unit-tested, not tried live.
 - "Yours" is proven by hook tests only (no fake HOME, above).
@@ -112,10 +133,12 @@ Named here, so none reads as a pass:
 
 | File | What |
 | --- | --- |
-| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `types`, `typecheck`, `validate:plugin`, `release:check` and `live` scripts |
+| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `types`, `typecheck`, `validate:plugin`, `release:check`, `live` and `live:configs` scripts |
 | [`tests/`](../../tests/) | one vitest file per engine concern, [`fixtures.ts`](../../tests/fixtures.ts), the hatch fixtures |
 | [`plugins/buddy/tests/buddy.test.tsx`](../../plugins/buddy/tests/buddy.test.tsx) | the hook tests; `world` answers `$.fs`, `$.store`, `$.clock`, `$.model` and the rest from memory |
 | [`scripts/live-proof.sh`](../../scripts/live-proof.sh) | the live proof |
+| [`scripts/live-configs.sh`](../../scripts/live-configs.sh) | the live configuration proof |
+| [`scripts/live-lib.sh`](../../scripts/live-lib.sh) | the helpers both live scripts source |
 | [`scripts/release-check.sh`](../../scripts/release-check.sh) | the release check |
 | [`scripts/gen-wyhash-fixture.mjs`](../../scripts/gen-wyhash-fixture.mjs) | regenerates the Bun cross-check fixture |
 | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), [`release.yml`](../../.github/workflows/release.yml) | CI, and the GitHub release on a `buddy--v*` tag |
