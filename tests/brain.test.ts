@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ANSWER_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, THINKING_MS, answer, beginQuestion, createBrain, currentPose, endTurn, failAnswer, farewell,
-  isSleepHour, observeBand, period, pet, react, sceneOf, setCharacter, tick, wake,
+  ANSWER_MS, ASK_DEADLINE_MS, ASK_DEADLINE_REASON, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, askLeft, beginQuestion, createBrain, currentPose, endQuestion, endTurn,
+  failAnswer, farewell, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { raw } from './fixtures.ts';
@@ -69,11 +69,10 @@ describe('brain', () => {
     beginQuestion(b, never);
     expect(b.questions).toBe(1);
     expect(currentPose(b)).toBe('thinking');
-    expect(b.talk?.until).toBe(b.now + THINKING_MS);
     answer(b, 'Forty-two.');
     expect(b.talk).toMatchObject({ text: 'Forty-two.', pose: null, until: b.now + ANSWER_MS });
     failAnswer(b, 'api-error');
-    expect(b.talk?.text).toBe('(Fixy lost the thread: api-error)');
+    expect(b.talk?.text).toBe("Fixy couldn't answer: api-error");
     expect(farewell(b, never)).toBe('Until next time.');
   });
   test('sleeps 00:00-05:59 after 60 s idle, with the sleep pose; any event wakes him with a line', () => {
@@ -91,6 +90,28 @@ describe('brain', () => {
     expect(b.sleeping).toBe(false);
     expect(b.talk?.text).toBe('Hi from Fixy.');
   });
+  test('a sleeping buddy woken by a pet, a question, a refusal or a reacted tool call says only that: no wake line nobody sees', () => {
+    const asleep = () => {
+      const b = createBrain(char(), true);
+      ticks(b, (2 * SLEEP_IDLE_MS) / 200, NIGHT);
+      expect(b.sleeping).toBe(true);
+      b.said.splice(0);
+      return b;
+    };
+    const woken = (act: (b: ReturnType<typeof createBrain>) => void) => {
+      const b = asleep();
+      act(b);
+      return { sleeping: b.sleeping, said: b.said.length };
+    };
+    expect(woken((b) => pet(b, never))).toEqual({ sleeping: false, said: 1 });
+    expect(woken((b) => beginQuestion(b, never))).toEqual({ sleeping: false, said: 0 });
+    expect(woken((b) => refuseQuestion(b))).toEqual({ sleeping: false, said: 0 });
+    expect(woken((b) => react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, never))).toEqual({ sleeping: false, said: 1 });
+    expect(woken((b) => wake(b, never, { silent: true }))).toEqual({ sleeping: false, said: 0 });
+    // Woken by nothing that speaks, the wake line is the one shown.
+    expect(woken((b) => wake(b, never))).toEqual({ sleeping: false, said: 1 });
+  });
+
   test('work: working pose, no walking, no sleep', () => {
     const b = createBrain(char(), true);
     observeBand(b, { cols: 90, maxRows: 8, isWorking: true }, never);
@@ -137,5 +158,86 @@ describe('brain', () => {
     const s = sceneOf(b)!;
     expect(s.bubble?.side).toBe('left');
     expect(b.motion.x).toBe(s.x);
+  });
+});
+
+describe('a held answer', () => {
+  test('a reaction during it waits, and is said once the answer ends', () => {
+    const b = createBrain(char(), false);
+    answer(b, 'My own answer.');
+    react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, () => 0);
+    expect(b.talk?.text).toBe('My own answer.');
+    for (let i = 0; i < 400 && b.talk?.text === 'My own answer.'; i++) tick(b, 12, () => 0);
+    expect(b.talk?.text).not.toBe('My own answer.');
+    expect(b.talk?.pose).toBe('oops');
+  });
+  test('an answer belongs to the character asked: after a switch it is dropped, never said by the new one', () => {
+    const b = createBrain(char({ id: 'asker', name: 'Asker' }), true);
+    const other = char({ id: 'other', name: 'Other' });
+    setCharacter(b, other, undefined, never);
+    const greeting = b.talk?.text;
+    expect(answer(b, 'the asker\'s answer', null, 'asker')).toBe(false);
+    expect(failAnswer(b, 'timeout', 'asker')).toBe(false);
+    expect(b.talk?.text).toBe(greeting);
+    expect(answer(b, 'its own answer', null, 'other')).toBe(true);
+    expect(b.talk?.text).toBe('its own answer');
+    expect(answer(b, 'unbound', null)).toBe(true);
+  });
+});
+
+describe('one deadline per question', () => {
+  test('a call gets only what is left of the 90 s since the question was asked; none left is the deadline', () => {
+    expect(ASK_DEADLINE_MS).toBe(90_000);
+    expect(askLeft(1000, 1000)).toBe(90_000);
+    // A fork that took 60 s leaves its fallback 30 s, never a fresh 90.
+    expect(askLeft(1000, 61_000)).toBe(30_000);
+    expect(askLeft(1000, 91_000)).toBe(0);
+    expect(askLeft(1000, 500_000)).toBe(0);
+    // A clock stepped back never grants more than the whole deadline.
+    expect(askLeft(1000, 0)).toBe(90_000);
+    expect(ASK_DEADLINE_REASON).toBe('no answer in 90 s');
+  });
+});
+
+describe('a pending question', () => {
+  const lines = { greeting: ['Hi from Fixy.'], thinking: ['Hmm.'], petted: ['Purr.'], toolFail: ['Ouch.'] };
+  test('the thinking line has no timer of its own: it stays past any timer, over reactions, until the question ends', () => {
+    const b = createBrain(char({ lines }), true);
+    beginQuestion(b, never);
+    ticks(b, 120_000 / 200);
+    expect(b.talk).toMatchObject({ text: 'Hmm.', pose: 'thinking' });
+    react(b, { tool: 'Edit', isError: true, denied: false, output: '', command: '' }, never);
+    expect(b.talk?.text).toBe('Hmm.');
+    endQuestion(b);
+    answer(b, 'Done.');
+    ticks(b, ANSWER_MS / 200);
+    // The reaction held back by the thinking line and the answer comes after them; the thinking line never again.
+    expect(b.talk?.text).toBe('Ouch.');
+    ticks(b, BUBBLE_MS / 200);
+    expect(b.talk).toBeNull();
+  });
+  test('a pet or a refusal covers it for its own time, then it comes back; a switched-in character never says it', () => {
+    const b = createBrain(char({ lines }), true);
+    beginQuestion(b, never);
+    pet(b, never);
+    expect(b.talk?.text).toBe('Purr.');
+    ticks(b, BUBBLE_MS / 200);
+    expect(b.talk?.text).toBe('Hmm.');
+    refuseQuestion(b);
+    ticks(b, BUBBLE_MS / 200);
+    expect(b.talk?.text).toBe('Hmm.');
+    setCharacter(b, char({ id: 'other', name: 'Other', lines: { greeting: ['Other here.'] } }), undefined, never);
+    ticks(b, BUBBLE_MS / 200);
+    expect(b.talk).toBeNull();
+    endQuestion(b);
+    expect(failAnswer(b, ASK_DEADLINE_REASON, 'fixy')).toBe(false);
+    expect(b.talk).toBeNull();
+  });
+  test('ended with no answer to replace it, the thinking line goes at the next tick', () => {
+    const b = createBrain(char({ lines }), true);
+    beginQuestion(b, never);
+    endQuestion(b);
+    ticks(b, 1);
+    expect(b.talk).toBeNull();
   });
 });

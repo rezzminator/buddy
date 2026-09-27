@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # The Claude Code the README says buddy is tested on; function hooks are early
+  # access, so CI runs that engine and a bump is deliberate.
+  # scripts/release-check.sh fails when this and the README's "tested on" differ.
+  CLAUDE_CODE_VERSION: "2.1.283"
+
 jobs:
   check:
     name: check
@@ -15,24 +21,30 @@ jobs:
     env:
       CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm install -g @anthropic-ai/claude-code
+      - run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
       - run: npm test
       - run: npm run typecheck
       - run: npm run validate:plugin
 
   release:
     name: release
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    # main is release-only, and installs track main: a pull request into main,
+    # and every push that lands on it, must move the version past main's
+    # previous one and carry its dated CHANGELOG section.
+    if: (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - run: git show origin/main:plugins/buddy/.claude-plugin/plugin.json > /tmp/main-plugin.json 2>/dev/null || echo '{"version":"0.0.0"}' > /tmp/main-plugin.json
+      - name: main's previous version
+        env:
+          BASE: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}
+        run: git show "$BASE:plugins/buddy/.claude-plugin/plugin.json" > /tmp/main-plugin.json 2>/dev/null || echo '{"version":"0.0.0"}' > /tmp/main-plugin.json
       - run: scripts/release-check.sh "$(node -p 'require("/tmp/main-plugin.json").version')"

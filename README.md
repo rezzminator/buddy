@@ -5,7 +5,7 @@
 **Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-0.2.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/ci.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -76,18 +76,36 @@ files (see [Characters](#-characters)).
 
 ## 🚀 Quick start
 
-```sh
-# 1. Turn on function hooks
-export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1
+1. Turn on function hooks: add this `env` block to `~/.claude/settings.json`
+   (merged into the object already there), so every new terminal has them.
 
-# 2. Install
-claude plugin marketplace add rezzminator/buddy
-claude plugin install buddy@buddy
-```
+   ```json
+   { "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } }
+   ```
 
-`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS` also works in the `env` block of
-`settings.json`. Start a new session and Quack walks in above your
-prompt; type `/buddy` to pet it.
+   Or export it in your shell, `export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`;
+   an export vanishes in the next terminal.
+
+2. Install:
+
+   ```sh
+   claude plugin marketplace add rezzminator/buddy
+   claude plugin install buddy@buddy
+   ```
+
+Start a new session and Quack walks in above your prompt; type `/buddy` to
+pet it.
+
+After installing, Claude Code may print `N userConfig options not yet set —
+run /plugin configure`. You can ignore it: every buddy option has a default,
+so nothing needs setting and buddy works as installed. Use
+`/plugin configure` only to change a default.
+
+If function hooks are off, buddy says so when a session starts or resumes:
+`buddy is off: … Add "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } to
+~/.claude/settings.json, then start a new session.` (with `CLAUDE_CONFIG_DIR`
+set it names `$CLAUDE_CONFIG_DIR/settings.json`). The line goes away once
+the variable is set.
 
 > **Early access.** buddy is built on Claude Code's function hooks, an
 > early-access surface that may change between releases. A plugin built on
@@ -104,26 +122,32 @@ prompt; type `/buddy` to pet it.
 | Command | What it does |
 | --- | --- |
 | `/buddy` | Pet it: a happy pose, a line, and the count so far (`Quack: 3 pets`). |
-| `/buddy off` / `/buddy on` | Hide or show it, remembered across restarts. |
+| `/buddy off` / `/buddy on` | Hide or show it, remembered across restarts and shared with your other sessions. |
 | `/buddy reload` | Rescan the characters, after you edit one. |
-| `/buddy help` | Usage. |
-| `/buddy {anything else}` | A question: it thinks, then answers in one line, in character (see `questionMode`). |
+| `/buddy help` | Usage, then every option that was ignored or capped, and why. |
+| `/buddy log` | The log file's path and its last 20 lines, to paste into an issue. |
+| `/buddy list` / `/buddy use {id}` | `Switching characters moved to /buddy-personality.` — no model call. |
+| `/buddy {anything else}` | A question: it thinks, then answers in one line, in character (see `questionMode`). While hidden it replies `{name} is hidden; /buddy on first`. |
 | `/buddy-personality` | The one place to see every character and switch: a menu with a live preview, `*` on the current one, `(invalid)` on one that failed to load; Enter switches and remembers it, Esc closes (see [Pick a personality](#-pick-a-personality)). |
 
 ## 🎭 Characters
 
 | id | |
 | --- | --- |
-| `duck` | Quack, a sarcastic little duck with a sharp tongue and a mischievous streak, waddling through your code with smug confidence. The default companion. |
+| `duck` | Quack: a sarcastic little duck with a sharp tongue, waddling through your code with smug confidence. The default. |
 | `professor` | A warm, precise professor with a cup of tea. |
 | `cat` | An aloof cat who supervises your terminal and pretends not to care. |
 | `robot` | A literal little robot on one wheel that reports exactly what happened. |
 | `ghost` | A gentle ghost that drifts along your prompt line, softly spooky. |
 | `dragon` | A very small dragon with very large pride, guarding your code. |
+| `yellow-duck` | A listening duck: explain your bug out loud, get a quack back. |
 
 The choice is, in order: your last pick in `/buddy-personality`, then the
 `character` option, then `duck`. Your own characters sit beside these, and one with
-a built-in's id replaces it.
+a built-in's id replaces it. The id `original` is reserved for your original
+companion: a file that takes it is refused, never drawn, with an error
+naming the file in the Your folder group of `/buddy-personality`, and in
+the bubble when a session starts and after `/buddy reload`.
 
 ## 🐣 Pick a personality
 
@@ -132,8 +156,12 @@ the left, a live preview of the highlighted one on the right.
 
 - **Shipped**: the characters that come with the plugin.
 - **Yours**: the companion Claude Code's own `/buddy` hatched for your
-  account, when `~/.claude.json` still holds its name and personality, or a
-  backup of it does (`~/.claude.json.*`, `~/.claude/backups/`). It is listed
+  account, when Claude Code's config still holds its name and personality,
+  or one of its ten newest backups does. The config is `~/.claude.json`, its
+  backups beside it and in `~/.claude/backups/`; with `CLAUDE_CONFIG_DIR`
+  set, `$CLAUDE_CONFIG_DIR/.claude.json` and `$CLAUDE_CONFIG_DIR/backups/`
+  instead. Only real backups count: an unfinished `.tmp.*` write, an empty
+  file or one over 5 MB is skipped. It is listed
   twice, as the native install and as the npm install rolled it: the two
   turned your account id into a different species, eyes, hat and stats, and
   the preview lets you recognise yours.
@@ -147,7 +175,7 @@ drawn now. Enter switches to the highlighted one and remembers it: it is still t
 after `/reload` and a restart. Esc
 closes the menu and changes nothing.
 
-The menu only reads `~/.claude.json`; it never writes it. A file it cannot
+The menu only reads the config and its backups; it never writes them. A file it cannot
 read shows as one line in the "Yours" group, saying why. Your account id is
 never shown, saved or logged. To go back to your usual character, pick it
 in the menu: the `character` option's one is listed under Shipped, or under
@@ -166,15 +194,23 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   midnight to 6 am, after a minute with nothing happening, it falls asleep
   with a `z Z` drifting above it; anything that happens wakes it up.
 - **Reactions.** A tool call that fails or is denied: the `oops` pose and a
-  line. The output of a Bash command that reads like a test pass (`12
-  passed`, `3 passing`, `PASS`, `Tests: 5 passed`, a line starting `ok`):
-  the `yay` pose, a line and two seconds of confetti. One that reads like a
-  failure (`2 failed`, `1 failing`, `FAILED`, a line starting `FAIL` or
-  `--- FAIL`): the `oops` pose and a line. A failure pattern always wins.
-- **The bubble** is one line in a rounded box beside the character, opening
-  toward the free side. A line stays 6 seconds, a model answer 15. Below 40
-  columns the bubble and the confetti are left out, and a terminal too
-  narrow for the sprite leaves it out as well.
+  line. The output of a Bash command that runs a test runner (npm/pnpm/yarn/bun
+  test, vitest, jest, mocha, ava, tap, pytest, unittest, go test, cargo test
+  or nextest, rspec, rake or rails test, mix test, dotnet test, mvn/gradle
+  test, deno test, phpunit, ctest) is read from its summary lines: a pass (a count of zero
+  never passes) gives the `yay` pose, a line and two seconds of confetti; a
+  failure gives the `oops` pose and a line. A failure always wins, and any
+  other command's output never counts as a test. Not recognised yet: a
+  gradle pass (gradle prints no count), `make test`, a runner inside docker
+  or `bash -c`, and `node --test`.
+- **The bubble** holds one line, wrapped to fit a rounded box beside the
+  character, opening toward the free side. A line stays 6 seconds, a model
+  answer 15. Below 40 columns the bubble is drawn above the sprite, across
+  the whole width, and the confetti is left out; a window too narrow for the
+  sprite shows the bubble alone. A long bubble is cut with `…` to fit the
+  rows it has. Text is measured in terminal cells, so CJK text and emoji
+  line up; if your terminal draws East Asian ambiguous-width characters two
+  columns wide, as a CJK locale often does, set `ambiguousWidth` to `wide`.
 - **Hover card.** Hover over the character to see its name, description,
   pets, mood and the questions asked this session. It needs a terminal that
   reports the mouse; elsewhere the card never shows.
@@ -182,10 +218,33 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   this chat's own request with the question added, so it runs on the chat's
   model, sees the whole conversation, and reads the prefix from the chat's
   prompt cache instead of writing it again. Before the chat's first reply
-  there is nothing to fork, and the question goes to `quipModel` alone. In
+  there is nothing to fork, and the question goes to `quipModel` alone; so
+  does a question asked while Claude is busy mid-turn, when a fork would
+  only continue that turn, and one whose fork gives no answer. In
   `complete` mode every question goes to `quipModel` alone, without the
-  conversation; `off` turns questions off. A question that fails shows why
-  in the bubble.
+  conversation; `off` turns questions off. Every question ends in the
+  bubble: its answer, or `{name} couldn't answer: {reason}`, such as
+  `no answer in 90 s`: a question has one 90-second deadline, the fork and
+  its fallback together, the fallback getting only the time left, and the
+  thinking line stays up until the answer, the failure or the deadline. The
+  deadline ends the question, not a fork already sent: Claude Code offers no
+  way to cancel one, so it runs to its end and may still bill. An
+  answer holds the bubble for its 15 seconds; a reaction or other line
+  nobody asked for waits, and the latest one shows once it ends. An answer
+  that arrives after you switched characters is dropped, never said by the
+  new one. One
+  question at a time: asking again before the answer gets `{name} is still
+  thinking about your last question; ask again once it answers.`
+- **The log.** buddy keeps its own log in `logFile` (default
+  `~/.claude/buddy/buddy.log`, or `$CLAUDE_CONFIG_DIR/buddy/buddy.log` when
+  `CLAUDE_CONFIG_DIR` is set; a path you set is used with `~` and a leading `$CLAUDE_CONFIG_DIR` expanded), one JSON
+  line per record; a write another session overwrote is retried, and a record
+  lost after the retries is reported, though two writes landing at the same instant can still drop one unseen; capped at 1 MB with one rotation (`buddy.log.1`). `logLevel` `error` writes failures
+  only; `info`, the default, adds sessions, commands, questions and their
+  outcomes, quips and menu picks; `debug` adds the question text and the
+  model's result shapes. It never holds your account id or anything from
+  `~/.claude.json`. `/buddy log` shows the path and the last 20 lines, to
+  paste into an issue; an empty `logFile` writes no file.
 - **Quips** (off by default). At the end of a turn that used at least one
   tool, and no sooner than `quipCooldownSec` after the last one,
   `quipModel` writes a one-line reaction to the turn: the tools it used,
@@ -198,9 +257,11 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
 
 ## ⚙️ Configuration
 
-Set these through `/config`, or under `pluginConfigs["buddy@buddy"].options`
+Set these through `/plugin configure`, or under `pluginConfigs["buddy@buddy"].options`
 in `settings.json`. The key must be the full plugin id: Claude Code silently
-ignores options under any other key.
+ignores options under any other key. A value buddy cannot use is ignored by
+name and its default kept (a `memory` above 30 is capped to 30): the first
+greeting's bubble says so once, and `/buddy help` and the log list it.
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -209,9 +270,12 @@ ignores options under any other key.
 | `motion` | boolean | `true` | Walk along the prompt line |
 | `questionMode` | string | `"fork"` | /buddy questions: fork (sees the chat, uses its cache), complete, or off |
 | `quips` | boolean | `false` | Model-written one-liners at the end of a turn (spends tokens) |
-| `quipModel` | string | `"haiku"` | Model for quips and fresh-session answers |
+| `quipModel` | string | `"haiku"` | Model for quips and questions that do not fork |
 | `quipCooldownSec` | number | `45` | Minimum seconds between quips |
-| `memory` | number | `6` | How many recent exchanges the buddy remembers (0 = off): a /buddy question with its answer, or one line it said on its own; kept per session and per character, they go into its next answer or quip; at most 30 |
+| `memory` | number | `6` | How many recent exchanges the buddy remembers (0 = off). Counts exchanges, not lines or tokens: an exchange is a /buddy question with its answer (or the question alone if it got none), or one line the buddy said. They go into its next answer or quip, kept per session and per character; at most 30 |
+| `logLevel` | string | `"info"` | Log level: error, info or debug |
+| `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, capped at 1 MB with one rotation; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
+| `ambiguousWidth` | string | `"narrow"` | Ambiguous-width characters: narrow or wide; `wide` for a terminal that draws them two columns wide, as a CJK locale often does |
 
 ```json
 {
@@ -233,7 +297,7 @@ Put yours in a folder, point `characterDir` at it, and `/buddy reload`.
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in built-ins |
-| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique; the id `/buddy-personality` stores |
+| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original` (reserved); the id `/buddy-personality` stores |
 | `name` | string ≤ 40 | yes | display name |
 | `description` | string ≤ 100 | yes | one line for the menu's preview and the hover card |
 | `author` | string ≤ 60 | no | credit |
@@ -257,7 +321,8 @@ of the removed code. You choose a character, and its reactions come from its
 own lines and from your own model calls, not from a server. But the
 "Yours" group of `/buddy-personality` does bring back the companion the
 removed `/buddy` hatched for your account: the same species, rarity, eyes, hat and stats, recomputed
-from your account id, with the name and personality `~/.claude.json` kept.
+from your account id, with the name and personality Claude Code's config (`~/.claude.json`, or
+`$CLAUDE_CONFIG_DIR/.claude.json`) kept.
 </details>
 
 <details>
@@ -265,16 +330,21 @@ from your account id, with the name and personality `~/.claude.json` kept.
 
 Only when a model answers. Walking, reactions, petting and every command
 except a question are local. A question in `fork` mode runs on the chat's
-own model and reads the conversation from its prompt cache; `complete` mode
-sends only the question to `quipModel`. Quips are off until you turn them
-on.
+own model and reads the conversation from its prompt cache; `complete` mode,
+and a question asked while Claude is busy mid-turn, send `quipModel` the
+question, the character's persona and its memory, never the conversation.
+A question that reaches its 90-second deadline ends in the bubble, but a
+fork already sent runs on to its end (Claude Code offers no cancel), so it
+may still bill. Quips are off until you turn them on.
 </details>
 
 <details>
 <summary><b>I installed it and nothing shows.</b></summary>
 
 Check that `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` was set before Claude Code
-started, that you are in the terminal or the desktop app (the VS Code
+started: with it off, a new session prints `buddy is off: …` and names what
+to add to `settings.json` (see [Quick start](#-quick-start)). Then check
+that you are in the terminal or the desktop app (the VS Code
 extension and mobile do not draw the line above the prompt), that the
 window is wide enough for the character, and that `/buddy on` is in effect.
 </details>

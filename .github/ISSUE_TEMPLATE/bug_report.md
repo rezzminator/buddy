@@ -23,9 +23,14 @@ assignees: ''
 - buddy version (see `/plugin`, or the plugin's `plugin.json`):
 - Where: terminal (which one) / desktop app
 - OS:
-- `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` set before Claude Code started: yes / no
+- `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` set before Claude Code started (in `settings.json` or exported): yes / no
+- Did the session start with `buddy is off: …`? yes / no
 - Character in use (`duck` is the default):
-- Options you changed (`motion`, `questionMode`, `quips`, `memory`, `characterDir`, …):
+- Options you changed (`motion`, `questionMode`, `quips`, `memory`, `characterDir`, `ambiguousWidth`, …):
+
+**`/buddy log`**
+
+<!-- Paste its reply: the log's path and last 20 lines. It never holds your account id; set logLevel to debug and retry for more. -->
 
 **Anything else**
 

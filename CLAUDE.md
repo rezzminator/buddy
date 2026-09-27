@@ -13,7 +13,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - marketplace: installs the plugin directory from `main` (`git-subdir`) · `.claude-plugin/marketplace.json`
 - unit tests: one vitest file per engine concern · `tests/`
 - hook tests: function-hook tests on the testing kit of the `claude-code` module; `claude plugin test` requires them inside the plugin directory · `plugins/buddy/tests/`
-- plugin API: every hook's shape; grep it before using an event · `types/claude-code.d.ts`
+- plugin API: every hook's shape; grep it before using an event · `types/claude-code.d.ts`, untracked, written by `npm run types` (run by `npm run typecheck`)
 - live proof: a real Haiku session driven in tmux · `scripts/live-proof.sh`
 - release check: the version agrees everywhere and the CHANGELOG section is dated · `scripts/release-check.sh`
 - CI: the gates on push and pull request, and the GitHub release on a tag · `.github/workflows/`

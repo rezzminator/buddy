@@ -47,5 +47,10 @@ export function oneLine(reply: string): string {
 
 /** A failed model call, shown in the bubble. */
 export function lostThread(name: string, reason: string): string {
-  return `(${name} lost the thread: ${reason})`;
+  return `${name} couldn't answer: ${reason}`;
+}
+
+/** An ask refused because the last one has no outcome yet, shown in the bubble and the reply. */
+export function stillThinking(name: string): string {
+  return `${name} is still thinking about your last question; ask again once it answers.`;
 }

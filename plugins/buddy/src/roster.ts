@@ -1,4 +1,5 @@
 import { validateCharacter, type Character } from './character.ts';
+import { ORIGINAL_ID } from './original.ts';
 
 // Every character the buddy knows: the built-ins, then the user's folder, an
 // id in both taken from the user's. An invalid file stays in the roster with
@@ -39,9 +40,16 @@ export function loadEntries(files: readonly LoadedFile[], source: Source): Entry
 
 export function mergeRoster(builtins: readonly Entry[], users: readonly Entry[], errors: readonly string[] = []): Roster {
   const byId = new Map<string, Entry>();
-  for (const e of builtins) byId.set(e.id, e);
-  for (const e of users) byId.set(e.id, e);
-  return { entries: [...byId.values()].sort((a, b) => a.id.localeCompare(b.id)), errors: [...errors] };
+  const errs = [...errors];
+  for (const e of [...builtins, ...users]) {
+    // The original companion's id is reserved: a file taking it is said, never drawn in its place.
+    if (e.id === ORIGINAL_ID) {
+      errs.push(`${e.id}.json (${e.source}): "${ORIGINAL_ID}" is reserved for your original companion; rename the file and its id`);
+      continue;
+    }
+    byId.set(e.id, e);
+  }
+  return { entries: [...byId.values()].sort((a, b) => a.id.localeCompare(b.id)), errors: errs };
 }
 
 /** The roster with `e` in it, replacing any entry of its id. */
@@ -76,6 +84,18 @@ const STANDIN = validateCharacter({
 });
 if (!STANDIN.ok) throw new Error(`buddy: the built-in stand-in is invalid: ${STANDIN.error}`);
 export const STANDIN_DEFAULT: Character = STANDIN.character;
+
+/**
+ * What the first greeting's bubble says instead of a greeting: the choice's
+ * error, the roster's errors (a folder that did not list, a file taking a
+ * reserved id) pointing at /buddy-personality, and every ignored option,
+ * joined; undefined when none.
+ */
+export function startWarning(choiceError: string | undefined, rosterErrors: readonly string[], optionErrors: readonly string[]): string | undefined {
+  const roster = rosterErrors.length > 0 ? `${rosterErrors.join('; ')}; /buddy-personality lists your characters` : '';
+  const all = [choiceError ?? '', roster, ...optionErrors].filter(Boolean);
+  return all.length > 0 ? all.join('; ') : undefined;
+}
 
 /**
  * The character to draw: the stored choice, else the option, else the duck

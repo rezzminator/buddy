@@ -9,11 +9,11 @@ Each gate below says what it proves and what it prints when it fails; a gate tha
 | --- | --- | --- | --- |
 | Unit tests | `npm run test:unit` (vitest over `tests/`) | every decision in `plugins/buddy/src/` | the failing test by name; a hatch mismatch lists each vector as `#i (id length n): got …, want …` |
 | Hook tests | `npm run test:hooks` (`claude plugin test plugins/buddy`) | the adapter wired to Claude Code's own testing kit, over an in-memory world | the failing test by name |
-| Typecheck | `npm run typecheck` (`tsc`, then `tsc -p tsconfig.hooks.json`) | the engine, the tests and the adapter against `types/claude-code.d.ts` | each type error by file and line |
+| Typecheck | `npm run typecheck` (`npm run types`, then `tsc`, then `tsc -p tsconfig.hooks.json`) | the engine, the tests and the adapter against `types/claude-code.d.ts`, which `npm run types` writes from the installed Claude Code (`/plugin-types`, no login needed) and git ignores | each type error by file and line |
 | Validate | `npm run validate:plugin` (`claude plugin validate --strict`, the repo and the plugin) | both manifests, and the rule on `$` | the violation; a broken `$` rule would otherwise load the module with zero hooks |
 | Release check | `scripts/release-check.sh [main's version]` | the version agrees in `plugin.json`, `marketplace.json`, `package.json` and the README badge; `CHANGELOG.md` has a dated section; the version moved past `main`'s | one `FAIL` line per disagreement and exit 1; `ERROR` and exit 2 when a file cannot be read |
 | Live proof | `npm run live` (`scripts/live-proof.sh`) | a real session draws, walks, answers, switches, hides, runs the menu and remembers | a table with a `FAIL` row per failed check and its evidence, exit 1; `ERROR` and exit 2 when the session cannot be driven |
-| CI | `.github/workflows/ci.yml` | `npm test`, the typecheck and the validation on every push to `develop` or `main` and every pull request; the release check on a pull request into `main` | the failed step |
+| CI | `.github/workflows/ci.yml` | `npm test`, the typecheck and the validation on every push to `develop` or `main` and every pull request; the release check on a pull request into `main` and on every push that lands on `main` | the failed step |
 | No leaks | a rule in `CLAUDE.md`, checked with a grep before a commit | no machine-absolute path and no personal data in a tracked file | the matching line |
 
 The hook tests and the validation need `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, as a real session does.
@@ -39,12 +39,12 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (b) it walks | nothing; three samples 2 s apart, after the greeting | the duck's rows change between samples |
 | (c) `/buddy` pets | `/buddy` | the reply reads `{name}: N pets` |
 | (c) `/buddy-personality` marks the current one | the menu, then Esc | `* Quack (duck)` in the pane |
-| (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply, so the quip model answers | the reply says `Asked`, and the bubble holds an answer: not empty, not a `thinking` line, not "lost the thread" |
-| (e) a test pass shows a `testPass` line | a prompt asking Claude to run `echo 'Tests: 3 passed'` | a line of the duck's `testPass` pool shows in the bubble |
+| (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply, so the quip model answers | the reply says `Asked`, and the bubble holds an answer: not empty, not a `thinking` line, not "couldn't answer" |
+| (e) a test pass shows a `testPass` line | a prompt asking Claude to run `npm test` in the run's work folder, whose `package.json` test script prints `Tests: 3 passed` | a line of the duck's `testPass` pool shows in the bubble |
 | (f) question after a reply | `/buddy what did we just run`, a real fork of the chat | the bubble holds an answer |
-| (g) a menu pick of `{other}` draws it | the menu, Down to the first non-duck character by id (`cat`), Enter | a row unique to its art is in the pane |
+| (g) a menu pick of `{other}` draws it | the menu, Up to the first non-duck character by id (`cat`), Enter | a row unique to its art is in the pane |
 | (g) reopened, the menu marks `{other}` | the menu, then Esc | `* {name} ({other})` in the pane |
-| (g) picking the default returns | the menu, Up to the duck, Enter | the duck's rows are back |
+| (g) picking the default returns | the menu, Down to the duck, Enter | the duck's rows are back |
 | (h) `/buddy off` hides | `/buddy off` | no duck row in the pane |
 | (h) `/buddy on` shows | `/buddy on` | the duck's rows are back |
 | (i) the menu opens | `/buddy-personality` | `* Quack (duck)`, `Shipped`, `Your folder` and the duck's description in the pane, never its persona prompt |
@@ -56,6 +56,10 @@ Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, rea
 | (j) `/buddy remember the word pineapple` | that question | the reply says `Asked`, and the bubble holds an answer |
 | (j) the next answer remembers `pineapple` | `/buddy what word did I ask you to remember?` | the answer holds `pineapple` |
 | (j) the store holds this session's memory | nothing; the plugin's store file is read | its `memory:{session}` record holds the exchanges under `characters.duck`, no `thinking` filler |
+| (k) a question during a busy main turn | a prompt that writes a marker line, then runs `sleep 8` via Bash; `/buddy do you like yourself?` during it | the reply says `Asked`, and the answer does not hold the marker |
+| (k) a second immediate ask | `/buddy say ack` right after | its reply refuses out loud (`still thinking about your last question`) or says `Asked` |
+| (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start` and a non-refused `ask.outcome` record |
+| (l) `/buddy log` | `/buddy log` | the reply names the run's log path and holds JSON lines |
 
 ### Why there is no fake HOME
 
@@ -64,10 +68,26 @@ But a session started with a fake HOME is logged out, and a logged-out session a
 So the proof keeps the real HOME and never reads or prints the "Yours" group, which would show a real account's companion.
 The hook tests prove that path instead, with an invented `~/.claude.json` and backups served from memory.
 
+## Logging
+
+The plugin log is for debugging a live session: `src/log.ts` queues one JSON line per record, `{ts, level, event, session?, character?, ...fields}`, and the adapter writes the queue through the calling hook's `$.fs` (a hook's `$` is never kept).
+`logLevel` (`error`, `info` or `debug`; default `info`) sets what is written, and `logFile` where: by default `$CLAUDE_CONFIG_DIR/buddy/buddy.log` when `CLAUDE_CONFIG_DIR` is set, else `~/.claude/buddy/buddy.log`; a path set in the option is used as written, `~` expanded to HOME and a leading `$CLAUDE_CONFIG_DIR` to the config folder; empty for no file.
+`$.fs` has no append, so each flush writes the whole file, reads it back and puts back records another session wrote over, up to `WRITE_ATTEMPTS` (3) tries; a loss the re-read sees is reported on the fallback (`buddy: the log {file} lost N records to another writer at the same time`), never dropped silently; past 1 MB the file moves to `{logFile}.1`, one rotation.
+A failed write goes to the debug log (`$.ui.log`) with every error record in it, and never throws into a hook; an empty `logFile` writes no file and errors still reach the debug log.
+
+| Level | Adds |
+| --- | --- |
+| `error` | every failure: what failed, its ids, the message and stack |
+| `info` | session start, roster loads and invalid characters, option warnings, commands (kind and argument length, never the text), menu open, pick and close, character switches, each ask's start and outcome (`answered`, `fallback`, `refused`, `failed`, `dropped`, with reason and ms), another session's `/buddy off` or `/buddy on` read back, a menu pane found gone, quips fired or skipped and why |
+| `debug` | the question text, prompt lengths, each model result's shape (`isAnswered`, reason, length, first 80 characters), band scenes and clock ticks, at most one per second per event |
+
+The identity and `~/.claude.json` never reach the log at any level; the hook test for the original companion checks the log file for the account id.
+`/buddy log` replies with the path and the last 20 lines.
+
 ## Bugs the gates caught
 
 - **A flaky random rest.** The hook test "walks once the greeting ends" waits out the greeting, then expects the band to change within one second. Its fixture character had the default `restChance` of 0.02, so some runs rolled a rest that covered that second and saw no step. The adapter passes `Math.random`, which a hook test cannot seed, so the fixture now sets `restChance: 0` ("a test that waits for a step must see one"), and the test passes every run.
-- **"3 passed; 0 failed" read as a failure.** The fail pattern matched any count, so a clean `cargo test` summary set off `oops` and a `testFail` line. Both patterns now need a non-zero count (`[1-9]\d*`). The regression tests (a zero count is not a fail, a zero count is not a pass, a cargo run with 0 failed is a pass) were watched failing against the old patterns before the fix.
+- **"3 passed; 0 failed" read as a failure.** The fail pattern matched any count, so a clean `cargo test` summary set off `oops` and a `testFail` line. Their counted forms now need a non-zero count (`[1-9]\d*`). The regression tests (a zero count is not a fail, a zero count is not a pass, a cargo run with 0 failed is a pass) were watched failing against the old patterns before the fix.
 
 ## Known gaps
 
@@ -92,7 +112,7 @@ Named here, so none reads as a pass:
 
 | File | What |
 | --- | --- |
-| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `typecheck`, `validate:plugin`, `release:check` and `live` scripts |
+| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `types`, `typecheck`, `validate:plugin`, `release:check` and `live` scripts |
 | [`tests/`](../../tests/) | one vitest file per engine concern, [`fixtures.ts`](../../tests/fixtures.ts), the hatch fixtures |
 | [`plugins/buddy/tests/buddy.test.tsx`](../../plugins/buddy/tests/buddy.test.tsx) | the hook tests; `world` answers `$.fs`, `$.store`, `$.clock`, `$.model` and the rest from memory |
 | [`scripts/live-proof.sh`](../../scripts/live-proof.sh) | the live proof |

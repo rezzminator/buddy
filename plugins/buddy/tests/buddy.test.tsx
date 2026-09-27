@@ -45,24 +45,29 @@ const FILES: Record<string, string> = {
 };
 
 type Answer = { isAnswered: boolean; text?: string; reason?: string; usage?: object };
-/** Files by absolute path (with their mtimes), whether listing the home folder is refused, a store key prefix whose writes are refused. */
-type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseStore?: string };
+/** Files by absolute path (with their mtimes), whether listing the home folder is refused, a store key prefix whose writes are refused, character files shipped beside FILES. */
+type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseStore?: string; env?: Record<string, string>; builtins?: Record<string, string> };
 
 const HOME = '/test-home';
 const SESSION = 'test-session';
 
-function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: Answer; complete?: Answer; queue?: Answer[] } = {}, disk: Disk = {}) {
+function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: Answer; complete?: Answer; queue?: Answer[]; forkDelayMs?: number; completeDelayMs?: number } = {}, disk: Disk = {}) {
   const logs: string[] = [];
   const forks: string[] = [];
-  const completes: { model: string; system?: string; prompt: string }[] = [];
+  const completes: { model: string; system?: string; prompt: string; timeoutMs?: number }[] = [];
   const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const commands: string[] = [];
   const writes: string[] = [];
   const queue = [...(answers.queue ?? [])];
   const saved = new Map(Object.entries(store));
   const files = disk.files ?? {};
+  const shipped: Record<string, string> = { ...FILES, ...disk.builtins };
   const opens: object[] = [];
   const closes: string[] = [];
+  const focuses: string[] = [];
+  const gets: string[] = [];
+  /** A read of `hidden` answers what the store held when asked, this long later: a read in flight. */
+  const slow = { hiddenMs: 0 };
   on('ui.open', async (_$, e) => {
     opens.push(e);
     return { value: { isPlaced: true as const } };
@@ -72,17 +77,29 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
     return { value: undefined };
   });
   // Beneath the plugins, the ring lands where it was asked to.
-  on('ui.focus', async () => ({}));
-  on('env.get', async (_$, e) => ({ value: e.name === 'HOME' ? HOME : undefined }));
+  on('ui.focus', async (_$, e) => {
+    // The person's ring moves (the event) and the plugin's own $.ui.focus({ requestId, key }) (the call) both land.
+    const call = e as { element?: string; key?: string };
+    focuses.push(String(call.element ?? call.key));
+    return (call.key !== undefined ? { value: {} } : {}) as never;
+  });
+  on('turn.complete', async () => ({ text: '' }));
+  on('env.get', async (_$, e) => ({ value: e.name === 'HOME' ? HOME : disk.env?.[e.name] }));
   on('fs.write', async (_$, e) => {
     writes.push(e.path);
+    files[e.path] = e.text;
     return { value: undefined };
   });
   on('fs.stat', async (_$, e) => {
     if (files[e.path] === undefined) throw new Error(`ENOENT: ${e.path}`);
     return { value: { kind: 'file' as const, size: files[e.path]!.length, mtimeMs: disk.mtimes?.[e.path] ?? 0, isLink: false } };
   });
-  on('store.get', async (_$, e) => ({ value: saved.get(e.key) }));
+  on('store.get', async (_$, e) => {
+    gets.push(e.key);
+    const value = saved.get(e.key);
+    if (e.key === 'hidden' && slow.hiddenMs > 0) await clock.sleep(slow.hiddenMs);
+    return { value };
+  });
   on('store.set', async (_$, e) => {
     if (disk.refuseStore && e.key.startsWith(disk.refuseStore)) throw new Error(`EACCES: not allowed to write ${e.key}`);
     saved.set(e.key, e.value);
@@ -113,26 +130,28 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
       return { value: names.map((f) => ({ name: f.slice(e.path.length + 1), kind: 'file' as const, size: files[f]!.length, isLink: false })) };
     }
     if (!e.path.endsWith('/characters')) throw new Error(`ENOENT: ${e.path}`);
-    return { value: Object.entries(FILES).map(([name, text]) => ({ name, kind: 'file' as const, size: text.length, isLink: false })) };
+    return { value: Object.entries(shipped).map(([name, text]) => ({ name, kind: 'file' as const, size: text.length, isLink: false })) };
   });
   on('fs.read', async (_$, e) => {
     if (files[e.path] !== undefined) return { value: files[e.path]! };
     const art = /\/species\/([a-z]+)\.json$/.exec(e.path);
     if (art) return { value: art[1] === 'hats' ? HAT_ART : speciesArt(art[1]!) };
     if (e.path.startsWith(`${HOME}/`)) throw new Error(`ENOENT: ${e.path}`);
-    const text = FILES[e.path.split('/').pop() ?? ''];
+    const text = shipped[e.path.split('/').pop() ?? ''];
     if (text === undefined) throw new Error(`ENOENT: ${e.path}`);
     return { value: text };
   });
   on('model.fork', async (_$, e) => {
     forks.push(e.prompt);
+    if (answers.forkDelayMs) await clock.sleep(answers.forkDelayMs);
     return { value: { usage, ...(answers.fork ?? { isAnswered: true, text: 'A forked answer.' }) } } as never;
   });
   on('model.complete', async (_$, e) => {
-    completes.push({ model: e.model, system: e.system, prompt: e.prompt });
+    completes.push({ model: e.model, system: e.system, prompt: e.prompt, timeoutMs: e.timeoutMs });
+    if (answers.completeDelayMs) await clock.sleep(answers.completeDelayMs);
     return { value: { usage, ...(queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' }) } } as never;
   });
-  return { logs, forks, completes, clock, commands, saved, writes, opens, closes };
+  return { logs, forks, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow };
 }
 
 function run(args: string) {
@@ -182,7 +201,18 @@ describe('the band', () => {
     world(on, { character: 'ghost' });
     await $.session.start(START);
     const ui = await band($);
-    expect(await shows(ui, /Couldn't load ghost: no such character; \/buddy-personality picks another/)).toBe(true);
+    // A long bubble wraps to its inner width: the same words, a line break where a space was.
+    expect(await shows(ui, /Couldn't[ \n]load[ \n]ghost:[ \n]no[ \n]such[ \n]character;[ \n]\/buddy-personality[ \n]picks[ \n]another/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('a character file taking the reserved id "original" is said in the first greeting, pointing at /buddy-personality', async ($, on) => {
+    const w = world(on, {}, {}, { builtins: { 'original.json': fixture('original', 'Impostor', 'i_i') } });
+    await $.session.start(START);
+    const ui = await band($);
+    expect(await shows(ui, /\(d_d\)/)).toBe(true);
+    expect(await shows(ui, /^original\.json[ \n]\(builtin\):[ \n]"original"[ \n]is[ \n]reserved[ \n]for[ \n]your[ \n]original[ \n]companion;[ \n]rename[ \n]the[ \n]file[ \n]and[ \n]its[ \n]id;[ \n]\/buddy-personality[ \n]lists[ \n]your[ \n]characters$/)).toBe(true);
+    expect(w.logs).toContain('buddy: original.json (builtin): "original" is reserved for your original companion; rename the file and its id');
     await ui.unmount();
   });
 
@@ -354,15 +384,135 @@ describe('/buddy', () => {
     expect(w.forks[0]).not.toContain('old shape');
   });
 
-  test('a failed answer says the thread was lost', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'api-error' } });
+  test('/buddy list and /buddy use {id}, from 0.1.0, point to the menu with no model call', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    expect((await $.command.run(run('list'))).text).toBe('Switching characters moved to /buddy-personality.');
+    expect((await $.command.run(run('use cat'))).text).toBe('Switching characters moved to /buddy-personality.');
+    await w.clock.settle();
+    expect(w.forks).toEqual([]);
+    expect(w.completes).toEqual([]);
+  });
+
+  test('a failed answer says so in the bubble, after the quip model was tried too', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'api-error' }, complete: { isAnswered: false, reason: 'aborted' } });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('why?'));
     await w.clock.settle();
-    expect(await shows(ui, /\(Fixy lost the thread: api-error\)/)).toBe(true);
-    expect(w.logs).toContain('buddy: a /buddy question got no answer: api-error');
+    expect(await shows(ui, /^Fixy couldn't answer: aborted$/)).toBe(true);
+    expect(w.logs).toContain('buddy: a /buddy question got no answer: aborted');
     await ui.unmount();
+  });
+
+  test('a fork with no answer falls back to the quip model', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'empty-reply' }, complete: { isAnswered: true, text: 'Fresh answer.' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('you there?'));
+    await w.clock.settle();
+    expect(w.forks.length).toBe(1);
+    expect(w.completes[0]?.prompt).toContain('The user asks you directly: you there?');
+    expect(await shows(ui, /^Fresh answer\.$/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('during a busy main turn the quip model answers, never a fork carrying the main chat', async ($, on) => {
+    const main = 'Most of the marketing is live. The release is still running.';
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: main }, complete: { isAnswered: true, text: 'Quack, I am here.' } });
+    await $.session.start(START);
+    const ui = await band($, { isWorking: true });
+    await $.command.run(run('you like yourself!?'));
+    await w.clock.settle();
+    expect(w.forks).toEqual([]);
+    expect(w.completes.length).toBe(1);
+    expect(await shows(ui, /^Quack, I am here\.$/)).toBe(true);
+    expect(await shows(ui, /marketing/)).toBe(false);
+    await w.clock.settle();
+    const ring = (w.saved.get(`memory:${SESSION}`) as { characters: Record<string, { answer?: string }[]> }).characters.fixy!;
+    expect(ring.at(-1)).toMatchObject({ question: 'you like yourself!?', answer: 'Quack, I am here.' });
+    await ui.unmount();
+  });
+
+  test('an answer stays in the bubble while tool calls go by', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('tool.call', async () => ({ result: { stdout: '', stderr: 'boom' }, text: 'boom', isError: true }) as never);
+    await $.session.start(START);
+    const ui = await band($, { isWorking: true });
+    await $.command.run(run('say hi'));
+    await w.clock.settle();
+    await $.tool.call({ tool: 'Bash', command: 'false' } as never);
+    await w.clock.settle();
+    expect(await shows(ui, /^A completed answer\.$/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('a second ask while one is pending is refused out loud; the first still ends visibly', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { forkDelayMs: 10 * 60 * 1000 });
+    await $.session.start(START);
+    const ui = await band($);
+    expect((await $.command.run(run('say hi'))).text).toBe('Asked Fixy.');
+    await w.clock.settle();
+    const second = (await $.command.run(run('say ack'))).text;
+    expect(second).toMatch(/still thinking about your last question/);
+    expect(await shows(ui, /still thinking about your last question/)).toBe(true);
+    await w.clock.advance(91 * 1000);
+    expect(await shows(ui, /^Fixy couldn't answer: /)).toBe(true);
+    await w.clock.settle();
+    const ring = (w.saved.get(`memory:${SESSION}`) as { characters: Record<string, { question?: string }[]> }).characters.fixy!;
+    expect(ring.at(-1)).toMatchObject({ question: 'say hi' });
+    expect((await $.command.run(run('say ack'))).text).toBe('Asked Fixy.');
+    await ui.unmount();
+  });
+
+  test('one 90 s deadline per question: a fork that took 60 s leaves its fallback 30 s, then the bubble says so and the ask ends', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'empty-reply' }, forkDelayMs: 60_000, complete: { isAnswered: true, text: 'Too late.' }, completeDelayMs: 60_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('slow one?'));
+    await w.clock.settle();
+    await w.clock.advance(60_000);
+    expect(w.completes.map((c) => c.timeoutMs)).toEqual([30_000]);
+    await w.clock.advance(30_000);
+    expect(await shows(ui, /^Fixy couldn't answer: no answer in 90 s$/)).toBe(true);
+    expect(w.logs).toContain('buddy: a /buddy question got no answer: no answer in 90 s');
+    await w.clock.settle();
+    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', reason: 'no answer in 90 s' });
+    // The ask is over: the next question is taken, not refused.
+    expect((await $.command.run(run('again?'))).text).toBe('Asked Fixy.');
+    await ui.unmount();
+  });
+
+  test('the thinking line stays up while the question is pending, past 60 s, and ends when the answer arrives', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Late but here.' }, forkDelayMs: 80_000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('take your time'));
+    await w.clock.settle();
+    expect(await shows(ui, /^Fixy ponders\.$/)).toBe(true);
+    await w.clock.advance(75_000);
+    expect(await shows(ui, /^Fixy ponders\.$/)).toBe(true);
+    await w.clock.advance(6_000);
+    expect(await shows(ui, /^Late but here\.$/)).toBe(true);
+    expect(await shows(ui, /Fixy ponders/)).toBe(false);
+    await ui.unmount();
+  });
+
+  test('an ask writes its start and outcome to the log file; /buddy log shows the path and the last lines', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    await $.command.run(run('what is up'));
+    await w.clock.settle();
+    await w.clock.settle();
+    const file = `${HOME}/.claude/buddy/buddy.log`;
+    const records = (w.files[file] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(records.some((r) => r.event === 'ask.start' && r.level === 'info' && r.session === SESSION)).toBe(true);
+    expect(records.some((r) => r.event === 'ask.outcome' && r.outcome === 'answered' && typeof r.ms === 'number')).toBe(true);
+    expect(JSON.stringify(records.filter((r) => r.level === 'info'))).not.toContain('what is up');
+    const out = (await $.command.run(run('log'))).text;
+    expect(out!.split('\n')[0]).toBe(`Log: ${file}`);
+    expect(out).toContain('"event":"ask.outcome"');
   });
 });
 
@@ -571,7 +721,9 @@ describe('/buddy-personality', () => {
     const again = await paneOf($);
     expect(await label(again, 'original:npm')).toBe('* Mochi — npm install');
     await again.unmount();
-    expect(w.writes).toEqual([]);
+    // The plugin's own log is its only file write, and it never holds the identity.
+    expect(w.writes.filter((p) => !p.endsWith('/.claude/buddy/buddy.log'))).toEqual([]);
+    expect(w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').not.toContain(UUID);
     expect(w.logs.join('\n')).not.toContain(UUID);
     expect(JSON.stringify([...w.saved.entries()])).not.toContain(UUID);
     await ui.unmount();
@@ -635,5 +787,183 @@ describe('/buddy-personality', () => {
     await $.command.run(menu());
     const pane = await paneOf($);
     expect(await shows(pane, /^No companion in ~\/\.claude\.json or its backups\.$/)).toBe(true);
+  });
+});
+
+describe('core fixes', () => {
+  test('a session whose band never draws (claude -p, the SDK) remembers no line; once drawn, the lines it shows are kept', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    await $.command.run(run(''));
+    await w.clock.advance(5000);
+    const memory = () => JSON.stringify([...w.saved.entries()].filter(([k]) => k.startsWith('memory')));
+    expect(memory()).not.toMatch(/Fixy (says hi|purrs)/);
+    const ui = await band($);
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(memory()).toMatch(/Fixy purrs\./);
+    await ui.unmount();
+  });
+
+  test('an answer in flight is dropped, and the log says so, when another character was picked meanwhile', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { forkDelayMs: 5000 }, { files: { [CONFIG]: config() } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('what is up'));
+    await $.command.run(menu());
+    const pane = await paneOf($);
+    await pane.press({ key: 'use:duck' });
+    await w.clock.settle();
+    await pane.unmount();
+    await w.clock.advance(5000);
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    expect(await shows(ui, /A forked answer\./)).toBe(false);
+    expect(w.logs).toContain("buddy: Fixy's answer was dropped: Duck Fixture is drawn now");
+    await ui.unmount();
+  });
+
+  test('two sessions on one store: a pet counts on from the other one\'s count, and /buddy off there hides the band here', async ($, on) => {
+    const w = world(on, { character: 'fixy', pets: 3 });
+    await $.session.start(START);
+    const ui = await band($);
+    w.saved.set('pets', 10);
+    expect((await $.command.run(run(''))).text).toBe('Fixy: 11 pets');
+    expect(await shows(ui, /f_f/)).toBe(true);
+    w.saved.set('hidden', true);
+    await w.clock.advance(20_000);
+    await w.clock.settle();
+    expect((await $.command.run(run('what now'))).text).toBe('Fixy is hidden; /buddy on first');
+    await ui.unmount();
+  });
+
+  test('a menu pane gone without ui.close stops its preview clock', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
+    await $.session.start(START);
+    await $.command.run(menu());
+    await w.clock.advance(10_000);
+    const pane = await paneOf($);
+    expect(await shows(pane, /^The menu closed; \/buddy-personality opens it again\.$/)).toBe(true);
+    await pane.unmount();
+  });
+
+  test('with CLAUDE_CONFIG_DIR set, the companion is read from its .claude.json, not from HOME', async ($, on) => {
+    const ccd = '/test-ccd';
+    const w = world(on, { character: 'fixy' }, {}, { files: { [`${ccd}/.claude.json`]: config(MOCHI) }, env: { CLAUDE_CONFIG_DIR: ccd } });
+    await $.session.start(START);
+    await $.command.run(menu());
+    const pane = await paneOf($);
+    expect({ native: await label(pane, 'original:native'), logs: w.logs }).toMatchObject({ native: expect.any(String) });
+    expect(await label(pane, 'original:npm')).toBeDefined();
+    await pane.unmount();
+  });
+});
+
+describe('hook paths', () => {
+  test('turn.complete with quips off (the default): the turn ends with no model call', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
+    await $.session.start(START);
+    const ui = await band($);
+    await $.tool.call({ tool: 'Bash', command: 'ls' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'T1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toEqual([]);
+    expect(w.forks).toEqual([]);
+    expect(await shows(ui, /\(f_f\)/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('/buddy reload reads the roster again and keeps drawing the stored choice', async ($, on) => {
+    world(on, { character: 'fixy' });
+    await $.session.start(START);
+    expect((await $.command.run(run('reload'))).text).toBe('Reloaded 3 characters (1 invalid); drawing Fixy');
+  });
+
+  // The kit cannot raise the person's Esc: the menu closes here by a pick, the plugin's own ui.close.
+  test('/buddy off stops the band clock; a closed menu stops its preview clock', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
+    await $.session.start(START);
+    const reads = () => w.gets.filter((k) => k === 'hidden').length;
+    const before = reads();
+    await w.clock.advance(30_000);
+    expect(reads()).toBeGreaterThan(before);
+    await $.command.run(run('off'));
+    const off = reads();
+    await w.clock.advance(30_000);
+    expect(reads()).toBe(off);
+    await $.command.run(run('on'));
+    await $.command.run(menu());
+    const open = await paneOf($);
+    await open.press({ key: 'use:duck' });
+    await w.clock.settle();
+    await open.unmount();
+    await w.clock.advance(5000);
+    const pane = await paneOf($);
+    expect(await shows(pane, /^The menu closed; \/buddy-personality opens it again\.$/)).toBe(true);
+    await pane.unmount();
+  });
+});
+
+describe('pre-release fixes', () => {
+  test('the default log follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log, never under HOME', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { env: { CLAUDE_CONFIG_DIR: '/test-ccd' } });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(w.writes).toContain('/test-ccd/buddy/buddy.log');
+    expect(w.writes.filter((p) => p.startsWith(`${HOME}/`))).toEqual([]);
+    expect((await $.command.run(run('log'))).text).toMatch(/^Log: \/test-ccd\/buddy\/buddy\.log\n/);
+  });
+
+  test('without CLAUDE_CONFIG_DIR the default log is ~/.claude/buddy/buddy.log', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(w.writes).toContain(`${HOME}/.claude/buddy/buddy.log`);
+  });
+
+  test('an answer arriving after /buddy off is never remembered as said; the question alone is', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { forkDelayMs: 5000 });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('what is up'));
+    await $.command.run(run('off'));
+    await w.clock.advance(5000);
+    await w.clock.settle();
+    await $.command.run(run('on'));
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    const ring = JSON.stringify(w.saved.get(`memory:${SESSION}`) ?? null);
+    expect(ring).toContain('what is up');
+    expect(ring).not.toContain('A forked answer.');
+    await ui.unmount();
+  });
+
+  test('a read of the shared `hidden` in flight across /buddy off never undoes it', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    w.slow.hiddenMs = 2000;
+    const reads = () => w.gets.filter((k) => k === 'hidden').length;
+    const before = reads();
+    for (let i = 0; i < 200 && reads() === before; i++) await w.clock.advance(100);
+    expect(reads()).toBeGreaterThan(before);
+    await $.command.run(run('off'));
+    await w.clock.advance(2000);
+    await w.clock.settle();
+    expect((await $.command.run(run('what now'))).text).toBe('Fixy is hidden; /buddy on first');
+    await ui.unmount();
+  });
+
+  test('/buddy with arguments that are not text answers a failure line, never a thrown hook', async ($, on) => {
+    world(on, { character: 'fixy' });
+    await $.session.start(START);
+    let out: unknown;
+    try {
+      out = await $.command.run({ ...run(''), args: undefined as never });
+    } catch (error) {
+      out = { threw: String(error) };
+    }
+    expect(out).toMatchObject({ text: expect.stringMatching(/^\/buddy failed: /) });
   });
 });

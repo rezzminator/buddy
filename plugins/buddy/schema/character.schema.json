@@ -8,7 +8,7 @@
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
-    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$", "description": "Unique; the id /buddy-personality stores. Equal to the file name." },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$", "not": { "const": "original" }, "description": "Unique; the id /buddy-personality stores. Equal to the file name. \"original\" is reserved for your original companion." },
     "name": { "type": "string", "minLength": 1, "maxLength": 40, "description": "Display name." },
     "description": { "type": "string", "minLength": 1, "maxLength": 100, "description": "One line for the /buddy-personality preview and the hover card." },
     "author": { "type": "string", "maxLength": 60, "description": "Credit." },
@@ -22,7 +22,7 @@
     },
     "poses": {
       "type": "object",
-      "description": "Pose name to frames; frames alternate each tick, a single frame is static.",
+      "description": "Pose name to frames; a walk turns one frame per step, any other pose one every 0.9 s; a single frame is static.",
       "required": ["idle"],
       "additionalProperties": false,
       "properties": {

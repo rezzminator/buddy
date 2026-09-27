@@ -1,7 +1,7 @@
 import type { EngineInterface, ModelForkResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult } from 'claude-code';
 import {
-  ERROR_MS, answer, beginQuestion, createBrain, endTurn, failAnswer, farewell, greet, observeBand, period, pet, react, sceneOf, setCharacter, speak,
-  tick, wake,
+  ASK_DEADLINE_REASON, ERROR_MS, answer, askLeft, beginQuestion, createBrain, endQuestion, refuseQuestion, endTurn, failAnswer, farewell, greet, observeBand, period, pet,
+  react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
 import type { Character } from '../src/character.ts';
@@ -11,16 +11,18 @@ import {
   type Item, type Menu, type Originals,
 } from '../src/menu.ts';
 import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, staleKeys, storeKey, type Book, type Exchange, type Stored } from '../src/memory.ts';
-import { expandHome, resolveOptions, type Options } from '../src/options.ts';
-import { QUESTION_MAX_TOKENS, QUIP_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, questionPrompt, quipPrompt, type TurnSummary } from '../src/prompts.ts';
+import { Logger, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
+import { expandHome, logPath, resolveOptions, type Options } from '../src/options.ts';
+import { QUESTION_MAX_TOKENS, QUIP_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, questionPrompt, quipPrompt, stillThinking, type TurnSummary } from '../src/prompts.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
 import {
-  CONFIG_NAME, ORIGINAL_ID, SHOWN_CONFIG, VARIANTS, companionOf, identityOf, isBackupName, newestFirst, originalCharacter, savedOriginalOf,
+  ORIGINAL_ID, VARIANTS, companionOf, identityOf, originalCharacter, savedOriginalOf,
   type SavedOriginal, type Soul,
 } from '../src/original.ts';
+import { BACKUP_LIMITS, backupCandidates, configSources, type ConfigSources, type Listed } from '../src/config-source.ts';
 import { bashCommand, toolOutput } from '../src/reactions.ts';
 import {
-  choose, isCharacterFile, loadEntries, mergeRoster, withEntry,
+  choose, isCharacterFile, loadEntries, mergeRoster, startWarning, withEntry,
   type Entry, type LoadedFile, type Roster, type Source,
 } from '../src/roster.ts';
 import type { Scene } from '../src/scene.ts';
@@ -30,6 +32,12 @@ import { validateHats, validateSpecies, type HatArt, type SpeciesTemplate } from
 // this wires Claude Code's events to it, grouped by event, and draws the scene.
 
 const COMMAND = 'buddy';
+/** Every this many clock ticks a drawing session reads back `hidden`, which another session sharing the store may have set. */
+const SHARED_TICKS = 15;
+/** How often a hidden session, drawn, reads `hidden` back. */
+const SHARED_MS = 3000;
+/** Preview frames the menu pane may go undrawn before its clock stops: the pane is gone. */
+const MENU_UNDRAWN_TICKS = 10;
 
 type State = {
   options: Options;
@@ -56,10 +64,23 @@ type State = {
   memoryChain: Promise<void>;
   /** The last memory failure, said in the next /buddy question's reply; '' when none since. */
   memoryError: string;
+  /** The /buddy question waiting for its answer, one at a time; null when none. */
+  asking: { since: number } | null;
+  /** A tool ran since the last turn.complete, or the band reports work: the main turn is running. */
+  turnBusy: boolean;
+  /** The band has drawn in this session: before that (a headless session, ever) no line was shown, so none is remembered. */
+  bandSeen: boolean;
+  /** Clock ticks since the start, and when `hidden` was last read back from the store. */
+  ticks: number;
+  sharedAt: number;
+  /** Bumped by this session's /buddy off and on: a read of `hidden` begun before the latest is stale and dropped. */
+  hiddenGen: number;
+  /** The options' warnings were said: once, in the first greeting's bubble. */
+  warned: boolean;
 };
 
 /** The open menu: its rows, the one drawn now, where the focus started and is, the preview's frame. */
-type MenuState = { model: Menu; current: string; start: string; focused: string; frame: number; timer: Timer | null; soul: Soul | null };
+type MenuState = { model: Menu; current: string; start: string; focused: string; frame: number; timer: Timer | null; soul: Soul | null; undrawn: number };
 
 type BandProps = { hasSurvey: boolean; isWorking: boolean; maxRows: number; bodyColumns: number };
 
@@ -67,8 +88,46 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function log($: EngineInterface, what: string, error: unknown): void {
+/** The plugin's log (src/log.ts): records queue here; each `lg` writes them through that hook's `$`. */
+const L = new Logger();
+
+/** The log's file I/O through this hook's `$`. */
+function logIO($: EngineInterface): LogIO {
+  return {
+    read: async (path) => {
+      if (!(await $.fs.exists(path))) return undefined;
+      const text = await $.fs.read(path);
+      if (typeof text !== 'string') throw new Error(`${path} is not text`);
+      return text;
+    },
+    write: async (path, text) => $.fs.write(path, text),
+    fallback: (line) => $.ui.log(line),
+  };
+}
+
+/** One record, written now through `$`; never throws. */
+function lg($: EngineInterface, level: LogLevel, event: string, fields: LogFields = {}): void {
+  L.log(level, event, fields);
+  L.flush(logIO($)).catch(() => undefined);
+}
+
+/** A debug record at most once a second per event. */
+function lgT($: EngineInterface, event: string, fields: LogFields = {}): void {
+  L.throttled(event, fields);
+  L.flush(logIO($)).catch(() => undefined);
+}
+
+/** Every failure: the debug log line as before, and an error record with its context and stack. */
+function log($: EngineInterface, what: string, error: unknown, fields: LogFields = {}): void {
   $.ui.log(`buddy: ${what} failed: ${message(error)}`);
+  L.error(what, error, fields);
+  L.flush(logIO($)).catch(() => undefined);
+}
+
+/** A problem said in the debug log and the plugin log alike. */
+function warn($: EngineInterface, event: string, text: string, fields: LogFields = {}): void {
+  $.ui.log(`buddy: ${text}`);
+  lg($, 'info', event, { ...fields, text });
 }
 
 // ---- roster -------------------------------------------------------------
@@ -110,23 +169,30 @@ async function loadRoster(st: State, $: EngineInterface): Promise<void> {
   }
   st.roster = mergeRoster(builtin.entries, user, errors);
   if (st.original) st.roster = withEntry(st.roster, st.original);
-  for (const e of errors) $.ui.log(`buddy: ${e}`);
-  for (const e of st.roster.entries) if (e.error) $.ui.log(`buddy: character ${e.id} (${e.source}) is invalid: ${e.error}`);
+  // The merged roster's errors: the listing failures, and a file taking a reserved id.
+  for (const e of st.roster.errors) warn($, 'roster.error', e);
+  for (const e of st.roster.entries) if (e.error) warn($, 'roster.invalid', `character ${e.id} (${e.source}) is invalid: ${e.error}`, { id: e.id, source: e.source });
+  lg($, 'info', 'roster.load', { characters: st.roster.entries.length, invalid: st.roster.entries.filter((e) => !e.character).length });
 }
 
 /** Draws the stored/option/default choice; a bad one draws the default (the duck) and says why. */
 function applyChoice(st: State, $: EngineInterface): void {
   const choice = choose(st.roster, st.storeChoice, st.options.character);
-  if (choice.error) $.ui.log(`buddy: ${choice.error}`);
-  if (!st.b) st.b = createBrain(choice.character, st.options.motion);
+  if (choice.error) warn($, 'character.choice', choice.error);
+  // An ignored option is said once, in the first greeting's bubble, as a character or roster error is: never a silent revert.
+  const warning = startWarning(choice.error, st.roster.errors, st.warned ? [] : st.options.errors);
+  st.warned = true;
+  if (!st.b) st.b = createBrain(choice.character, st.options.motion, st.options.ambiguousWidth === 'wide');
   st.b.pets = st.pets;
-  setCharacter(st.b, choice.character, choice.error, Math.random);
+  setCharacter(st.b, choice.character, warning, Math.random);
+  L.context.character = choice.character.id;
+  lg($, 'info', 'character.switch', { id: choice.character.id, via: 'start' });
 }
 
 // ---- memory ---------------------------------------------------------------
 
 function memoryFailed(st: State, $: EngineInterface, what: string, error: unknown): void {
-  log($, what, error);
+  log($, what, error, { area: 'memory' });
   st.memoryError = `${what} failed: ${message(error)}`;
 }
 
@@ -192,6 +258,11 @@ async function recollect(st: State, $: EngineInterface, c: Character): Promise<s
 function heard(st: State, $: EngineInterface): void {
   const b = st.b;
   if (!b || b.said.length === 0) return;
+  // Before the band first draws (a headless `claude -p` or SDK session never does) only the newest line can still be shown.
+  if (!st.bandSeen) {
+    b.said.splice(0, b.said.length - 1);
+    return;
+  }
   const said = b.said.splice(0);
   if (st.hidden) return;
   for (const s of said) keep(st, $, s.id, { kind: 'line', text: s.text });
@@ -224,6 +295,8 @@ function onTick(st: State, $: EngineInterface): void {
   try {
     if (!st.b) return;
     tick(st.b, new Date().getHours(), Math.random);
+    if (++st.ticks % SHARED_TICKS === 0) syncHidden(st, $);
+    lgT($, 'clock.tick', { period: st.clockPeriod, talking: st.b.talk !== null, working: st.b.working });
     refresh(st, $);
     if (period(st.b) !== st.clockPeriod) startClock(st, $);
   } catch (error) {
@@ -231,6 +304,27 @@ function onTick(st: State, $: EngineInterface): void {
     st.lastTickError = message(error);
     log($, 'a clock tick', error);
   }
+}
+
+/** `hidden` read back from the store: `/buddy off` or `on` in another session sharing it reaches this one. */
+function syncHidden(st: State, $: EngineInterface): void {
+  st.sharedAt = Date.now();
+  const gen = st.hiddenGen;
+  $.store
+    .get('hidden')
+    .then((v) => {
+      const hidden = v === true;
+      // Asked before this session's own /buddy off or on: what it read is older than that.
+      if (gen !== st.hiddenGen) return;
+      if (!st.b || hidden === st.hidden) return;
+      st.hidden = hidden;
+      lg($, 'info', 'hidden.shared', { hidden });
+      if (hidden) stopClock(st);
+      else startClock(st, $);
+      st.lastKey = '';
+      $.ui.invalidate('ui.render');
+    })
+    .catch((error) => log($, 'reading /buddy off back from the store', error));
 }
 
 // ---- session.start ------------------------------------------------------
@@ -261,13 +355,14 @@ async function readStore(st: State, $: EngineInterface): Promise<void> {
 }
 
 async function startSession(st: State, $: EngineInterface): Promise<void> {
-  for (const e of st.options.errors) $.ui.log(`buddy: ${e}`);
+  await startLog(st, $);
+  for (const e of st.options.errors) warn($, 'option.warning', e);
   await readStore(st, $);
   await loadRoster(st, $);
   if ((st.storeChoice ?? st.options.character) === ORIGINAL_ID) await restoreOriginal(st, $);
   applyChoice(st, $);
   try {
-    await $.command.register({ name: COMMAND, description: 'Pet your buddy, ask it something, or: off, on, reload, help; /buddy-personality switches character', argumentHint: '[question] | off | on | reload | help', immediate: true });
+    await $.command.register({ name: COMMAND, description: 'Pet your buddy, ask it something, or: off, on, reload, log, help; /buddy-personality switches character', argumentHint: '[question] | off | on | reload | log | help', immediate: true });
   } catch (error) {
     log($, `registering /${COMMAND}`, error);
   }
@@ -281,13 +376,36 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
   $.ui.invalidate('ui.render');
 }
 
+/** The log's level, file (logPath: the config folder's by default) and session; a failure here leaves file logging off, said. */
+async function startLog(st: State, $: EngineInterface): Promise<void> {
+  L.level = st.options.logLevel;
+  try {
+    const where = logPath(st.options.logFile, { HOME: await $.env.get('HOME'), CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') });
+    if ('error' in where) throw new Error(where.error);
+    L.file = where.path;
+  } catch (error) {
+    L.file = '';
+    log($, 'opening the log file', error, { logFile: st.options.logFile });
+  }
+  try {
+    L.context.session = await $.session.id();
+  } catch (error) {
+    log($, 'reading the session id for the log', error);
+  }
+  lg($, 'info', 'session.start', { level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, memory: st.options.memory });
+}
+
 // ---- ui.render: AbovePrompt ---------------------------------------------
 
 function bandScene(st: State, $: EngineInterface, p: BandProps): Scene | null {
   if (p.hasSurvey || !st.b || st.hidden) return null;
+  st.bandSeen = true;
   observeBand(st.b, { cols: p.bodyColumns, maxRows: p.maxRows, isWorking: p.isWorking }, Math.random);
+  // The band's spinner is the say on whether the main turn runs; a tool call alone can set it.
+  if (!p.isWorking) st.turnBusy = false;
   heard(st, $);
   const scene = sceneOf(st.b);
+  lgT($, 'band.scene', { pose: st.b.lastPose, bubble: st.b.talk?.text.length ?? 0, cols: p.bodyColumns, working: p.isWorking });
   st.lastKey = JSON.stringify(scene);
   return scene;
 }
@@ -332,6 +450,7 @@ function drawBand(Box: Component, Text: Component, s: Scene) {
 function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCallResult): void {
   try {
     if (!st.b) return;
+    st.turnBusy = true;
     const call = e as unknown as { tool: string; command?: unknown; input?: unknown };
     const res = r as unknown as { deny?: unknown; isError?: unknown; text?: unknown; result?: unknown };
     react(st.b, { tool: call.tool, isError: res.isError === true, denied: typeof res.deny === 'string', output: toolOutput(res), command: call.tool === 'Bash' ? bashCommand(call) : '' }, Math.random);
@@ -347,19 +466,24 @@ async function quip(st: State, $: EngineInterface, t: TurnSummary): Promise<void
   const c = b.character;
   try {
     const memory = await recollect(st, $, c);
-    const r = await $.model.complete({ model: st.options.quipModel, system: oneLineSystem(c.persona), prompt: quipPrompt(t, memory), maxTokens: QUIP_MAX_TOKENS });
+    const prompt = quipPrompt(t, memory);
+    lg($, 'debug', 'quip.prompt', { length: prompt.length });
+    const r = await $.model.complete({ model: st.options.quipModel, system: oneLineSystem(c.persona), prompt, maxTokens: QUIP_MAX_TOKENS });
     const text = r.isAnswered ? oneLine(r.text) : '';
     if (text) {
-      answer(b, text, t.failures > 0 ? 'oops' : 'yay');
-      keep(st, $, c.id, { kind: 'quip', text });
+      // Hidden by /buddy off while the model wrote it: never shown, so never remembered.
+      const shown = !st.hidden && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id);
+      if (shown) keep(st, $, c.id, { kind: 'quip', text });
+      lg($, 'info', 'quip.outcome', { outcome: shown ? 'answered' : st.hidden ? 'hidden' : 'dropped' });
     } else {
       const reason = r.isAnswered ? 'empty reply' : r.reason;
       $.ui.log(`buddy: a quip got no answer: ${reason}`);
-      failAnswer(b, reason);
+      lg($, 'info', 'quip.outcome', { outcome: 'failed', reason });
+      failAnswer(b, reason, c.id);
     }
   } catch (error) {
     log($, 'a quip', error);
-    failAnswer(b, message(error));
+    failAnswer(b, message(error), c.id);
   }
   refresh(st, $);
 }
@@ -368,7 +492,9 @@ function onTurnComplete(st: State, $: EngineInterface): void {
   try {
     if (!st.b) return;
     wake(st.b, Math.random);
+    st.turnBusy = false;
     const due = endTurn(st.b, st.options.quips && !st.hidden, st.options.quipCooldownSec);
+    lg($, 'info', due ? 'quip.fired' : 'quip.skipped', due ? { tools: due.tools.length } : { why: !st.options.quips ? 'quips off' : st.hidden ? 'hidden' : 'no tool used, or cooldown' });
     if (due) quip(st, $, due).catch((error) => log($, 'a quip', error));
     refresh(st, $);
   } catch (error) {
@@ -395,13 +521,13 @@ async function readJson($: EngineInterface, path: string, shown: string): Promis
   }
 }
 
-async function homeOf($: EngineInterface): Promise<string | undefined> {
+/** Where Claude Code keeps its config: CLAUDE_CONFIG_DIR, else HOME. */
+async function sourcesOf($: EngineInterface): Promise<ConfigSources | { error: string }> {
   try {
-    const home = await $.env.get('HOME');
-    return home ? home.replace(/\/+$/, '') : undefined;
+    return configSources({ HOME: await $.env.get('HOME'), CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') });
   } catch (error) {
-    log($, 'reading HOME', error);
-    return undefined;
+    log($, 'reading CLAUDE_CONFIG_DIR and HOME', error);
+    return { error: `couldn't read CLAUDE_CONFIG_DIR or HOME: ${message(error)}` };
   }
 }
 
@@ -421,35 +547,36 @@ async function loadArt($: EngineInterface, r: Roll): Promise<{ template?: Specie
   return { template: v.template, hats: h.hats };
 }
 
-/** The newest backup of ~/.claude.json that parses and holds a companion; `notes` says what could not be looked at. */
-async function backupSoul($: EngineInterface, home: string, notes: string[]): Promise<{ soul: Soul; label: string } | null> {
-  const found: { path: string; label: string; name: string }[] = [];
-  try {
-    for (const f of await $.fs.list(home)) if (f.kind !== 'dir' && isBackupName(f.name)) found.push({ path: `${home}/${f.name}`, label: `~/${f.name}`, name: f.name });
-  } catch (error) {
-    log($, 'listing ~ for .claude.json backups', error);
-    notes.push(`Couldn't list ~ to look for .claude.json backups: ${message(error)}`);
+/** The newest backup of the config that parses and holds a companion; `notes` says what could not be looked at. */
+async function backupSoul($: EngineInterface, src: ConfigSources, notes: string[]): Promise<{ soul: Soul; label: string } | null> {
+  const listed: (Listed & { path: string; label: string })[] = [];
+  for (const d of src.backupDirs) {
+    try {
+      // No backups folder is no backups; a folder that cannot be listed is said.
+      if (d.where === 'folder' && !(await $.fs.exists(d.dir))) continue;
+      for (const f of await $.fs.list(d.dir)) listed.push({ name: f.name, where: d.where, kind: f.kind, size: f.size, path: `${d.dir}/${f.name}`, label: `${d.shown}/${f.name}` });
+    } catch (error) {
+      log($, `listing ${d.shown} for backups`, error);
+      notes.push(`Couldn't list ${d.shown} to look for backups: ${message(error)}`);
+    }
   }
-  const dir = `${home}/.claude/backups`;
-  try {
-    // No backups folder is no backups; a folder that cannot be listed is said.
-    if (await $.fs.exists(dir)) for (const f of await $.fs.list(dir)) if (f.kind !== 'dir') found.push({ path: `${dir}/${f.name}`, label: `~/.claude/backups/${f.name}`, name: f.name });
-  } catch (error) {
-    log($, 'listing ~/.claude/backups', error);
-    notes.push(`Couldn't list ~/.claude/backups: ${message(error)}`);
-  }
+  // Names and listed sizes first, so only real backups are dated; then the newest few by date.
+  const named = backupCandidates(listed, { ...BACKUP_LIMITS, maxCount: Number.POSITIVE_INFINITY });
   const dated = await Promise.all(
-    found.map(async (c) => {
+    named.keep.map(async (c) => {
       try {
-        return { ...c, mtimeMs: (await $.fs.stat(c.path)).mtimeMs };
+        const s = await $.fs.stat(c.path);
+        return { ...c, kind: s.kind, size: s.size, mtimeMs: s.mtimeMs };
       } catch (error) {
         log($, `reading the date of ${c.label}`, error);
-        return { ...c, mtimeMs: 0 };
+        return c;
       }
     }),
   );
+  const picked = backupCandidates(dated);
+  for (const d of [...named.dropped, ...picked.dropped]) lg($, 'debug', 'backup.dropped', { where: d.where, name: d.name, reason: d.reason });
   let skipped = 0;
-  for (const c of dated.sort(newestFirst)) {
+  for (const c of picked.keep) {
     const j = await readJson($, c.path, c.label);
     if (j.error) {
       skipped++;
@@ -463,16 +590,17 @@ async function backupSoul($: EngineInterface, home: string, notes: string[]): Pr
   return null;
 }
 
-/** ~/.claude.json, read and never written: the identity it rolls from, and its companion when it has one. */
-async function readConfig($: EngineInterface): Promise<{ identity: string; home: string; soul?: Soul } | { error: string }> {
-  const home = await homeOf($);
-  if (!home) return { error: `couldn't read ${SHOWN_CONFIG}: HOME is not set` };
-  const config = await readJson($, `${home}/${CONFIG_NAME}`, SHOWN_CONFIG);
+/** Claude Code's config, read and never written: the identity it rolls from, and its companion when it has one. */
+async function readConfig($: EngineInterface): Promise<{ identity: string; sources: ConfigSources; soul?: Soul } | { error: string }> {
+  const sources = await sourcesOf($);
+  if ('error' in sources) return { error: sources.error };
+  const shown = sources.shownConfig;
+  const config = await readJson($, sources.configFile, shown);
   if (config.error !== undefined) return { error: config.error };
   const companion = companionOf(config.value);
-  if (companion.error) return { error: `${SHOWN_CONFIG} has a companion, but ${companion.error}` };
+  if (companion.error) return { error: `${shown} has a companion, but ${companion.error}` };
   const identity = identityOf(config.value);
-  return companion.soul ? { identity, home, soul: companion.soul } : { identity, home };
+  return companion.soul ? { identity, sources, soul: companion.soul } : { identity, sources };
 }
 
 /** One roll of the original, drawn: the Character, or why its art will not draw. */
@@ -495,10 +623,10 @@ async function findOriginals($: EngineInterface): Promise<Originals> {
   let soul = config.soul;
   let from: string | undefined;
   if (!soul) {
-    const backup = await backupSoul($, config.home, notes);
+    const backup = await backupSoul($, config.sources, notes);
     if (backup) ({ soul, label: from } = backup);
   }
-  if (!soul) return { kind: 'none', notes };
+  if (!soul) return { kind: 'none', notes, shownConfig: config.sources.shownConfig };
   const rolls: { variant: Variant; character?: Character; error?: string }[] = [];
   for (const variant of VARIANTS) {
     const r = await rollOriginal($, config.identity, soul, variant);
@@ -534,6 +662,7 @@ async function restoreOriginal(st: State, $: EngineInterface): Promise<void> {
 // ---- /buddy-personality: the menu pane ------------------------------------
 
 function stopMenu(st: State): void {
+  if (st.menu) L.log('info', 'menu.close'); // written by the next record's flush
   st.menu?.timer?.cancel();
   st.menu = null;
 }
@@ -541,14 +670,22 @@ function stopMenu(st: State): void {
 async function openMenu(st: State, $: EngineInterface): Promise<{ text: string }> {
   const b = st.b;
   if (!b) return { text: 'buddy is still starting; try again in a moment' };
+  lg($, 'info', 'menu.open', { current: b.character.id });
   const originals = await findOriginals($);
   const model = buildMenu({ roster: st.roster, shippedError: st.shippedError, folder: { isSet: Boolean(st.options.characterDir), error: st.folderError }, originals });
   const current = currentKeyOf(b.character.id, st.saved?.variant);
   const start = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
   stopMenu(st);
-  const menu: MenuState = { model, current, start, focused: start, frame: 0, timer: null, soul: originals.kind === 'found' ? originals.soul : null };
+  const menu: MenuState = { model, current, start, focused: start, frame: 0, timer: null, soul: originals.kind === 'found' ? originals.soul : null, undrawn: 0 };
   st.menu = menu;
   menu.timer = $.clock.every(PREVIEW_MS, () => {
+    // A pane gone without ui.close is never drawn again: its preview clock stops with it.
+    if (++menu.undrawn > MENU_UNDRAWN_TICKS) {
+      lg($, 'info', 'menu.gone', { undrawnTicks: menu.undrawn });
+      if (st.menu === menu) stopMenu(st);
+      else menu.timer?.cancel();
+      return;
+    }
     menu.frame++;
     $.ui.invalidate('ui.render');
   });
@@ -591,6 +728,8 @@ async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void
     note += await save($, 'character', item.pick.id);
   }
   setCharacter(b, c, undefined, Math.random);
+  L.context.character = c.id;
+  lg($, 'info', 'menu.pick', { id: c.id, kind: item.pick.kind, saved: !note });
   if (note) speak(b, `${c.name} is here${note}`, 'oops', ERROR_MS);
   startClock(st, $);
   st.lastKey = '';
@@ -648,35 +787,93 @@ async function save($: EngineInterface, key: string, value: unknown): Promise<st
   }
 }
 
-/** `memory`: what the buddy remembered before this question, rendered; it goes before the question. */
+/** `p`, or 'timeout' once `ms` passed on the engine's clock first. */
+async function within<T>($: EngineInterface, p: Promise<T>, ms: number): Promise<T | 'timeout'> {
+  return Promise.race([p, $.clock.sleep(ms).then(() => 'timeout' as const)]);
+}
+
+/** A model result as log fields: never the whole text. */
+function shape(r: ModelForkResult | 'timeout'): LogFields {
+  if (r === 'timeout') return { timeout: true };
+  return r.isAnswered ? { isAnswered: true, length: r.text.length, head: r.text.slice(0, 80) } : { isAnswered: false, reason: r.reason };
+}
+
+/**
+ * One /buddy question to its outcome, always visible: an answer, or
+ * "{name} couldn't answer: {reason}" in the bubble. A fork replays the main
+ * thread's last request, so while the main turn runs it continues that turn
+ * and answers with the main chat's words: then, and whenever the fork gives
+ * no answer, the quip model answers from persona, memory and question.
+ * `memory`: what the buddy remembered before this question; it goes before the question.
+ */
 async function ask(st: State, $: EngineInterface, question: string, memory: string): Promise<void> {
   const b = st.b;
-  if (!b) return;
+  if (!b) {
+    st.asking = null;
+    return;
+  }
   const c = b.character;
+  const started = Date.now();
   let said = '';
+  let via = 'complete';
+  let fellBack = '';
+  let reason = '';
+  // The answer belongs to the one asked: a character switched in meanwhile never says it.
+  let shown = true;
   try {
-    const complete = () => $.model.complete({ model: st.options.quipModel, system: oneLineSystem(c.persona), prompt: questionPrompt(question, memory), maxTokens: QUESTION_MAX_TOKENS });
-    let r: ModelForkResult;
-    if (st.options.questionMode === 'fork') {
-      r = await $.model.fork({ prompt: forkPrompt(c.persona, question, memory) });
-      // A new session has no reply to fork from yet: ask the quip model alone.
-      if (!r.isAnswered && r.reason === 'nothing-to-fork') r = await complete();
-    } else r = await complete();
-    const text = r.isAnswered ? oneLine(r.text) : '';
-    if (text) {
-      answer(b, text);
-      said = text;
+    // One deadline for the whole question, from now: a fallback gets only what the fork left of it.
+    const askedAt = await $.clock.now();
+    const complete = async (): Promise<ModelForkResult | 'timeout'> => {
+      via = 'complete';
+      const left = askLeft(askedAt, await $.clock.now());
+      if (left === 0) return 'timeout';
+      const prompt = questionPrompt(question, memory);
+      lg($, 'debug', 'ask.prompt', { via, length: prompt.length, leftMs: left });
+      const r = await within($, $.model.complete({ model: st.options.quipModel, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: left }), left);
+      lg($, 'debug', 'ask.result', { via, ...shape(r) });
+      return r;
+    };
+    const busy = b.working || st.turnBusy;
+    let r: ModelForkResult | 'timeout';
+    if (st.options.questionMode === 'fork' && !busy) {
+      via = 'fork';
+      const prompt = forkPrompt(c.persona, question, memory);
+      lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
+      r = await within($, $.model.fork({ prompt }), askLeft(askedAt, await $.clock.now()));
+      lg($, 'debug', 'ask.result', { via, ...shape(r) });
+      // A fork with no answer (a new session has no reply to fork yet): the quip model answers.
+      if (r !== 'timeout' && !(r.isAnswered && oneLine(r.text))) {
+        fellBack = r.isAnswered ? 'empty reply' : r.reason;
+        r = await complete();
+      }
     } else {
-      const reason = r.isAnswered ? 'empty reply' : r.reason;
+      if (st.options.questionMode === 'fork') fellBack = 'the main turn is running';
+      r = await complete();
+    }
+    if (fellBack) lg($, 'info', 'ask.fallback', { from: 'fork', to: 'complete', why: fellBack });
+    const text = r !== 'timeout' && r.isAnswered ? oneLine(r.text) : '';
+    if (text) {
+      said = text;
+      // Hidden by /buddy off while it thought: the answer is never drawn, so never remembered as said.
+      shown = !st.hidden && answer(b, text, null, c.id);
+    } else {
+      reason = r === 'timeout' ? ASK_DEADLINE_REASON : r.isAnswered ? 'empty reply' : r.reason;
       $.ui.log(`buddy: a /buddy question got no answer: ${reason}`);
-      failAnswer(b, reason);
+      shown = failAnswer(b, reason, c.id);
     }
   } catch (error) {
-    log($, 'a /buddy question', error);
-    failAnswer(b, message(error));
+    reason = message(error);
+    log($, 'a /buddy question', error, { via });
+    shown = failAnswer(b, reason, c.id);
+  } finally {
+    st.asking = null;
+    endQuestion(b);
   }
-  // One exchange: the question with its answer, or the question alone when it got none.
-  keep(st, $, c.id, said ? { kind: 'question', question, answer: said } : { kind: 'question', question });
+  const hidden = !shown && st.hidden;
+  if (!shown && !hidden) warn($, 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
+  lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? (fellBack ? 'fallback' : 'answered') : 'failed', via, ...(reason ? { reason } : {}), ms: Date.now() - started });
+  // One exchange: the question with its answer as shown, or the question alone.
+  keep(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question });
   refresh(st, $);
 }
 
@@ -684,9 +881,19 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
   const b = st.b;
   if (!b) return { text: 'buddy is still starting; try again in a moment' };
   const action = parseCommand(args);
+  lg($, 'info', 'command', { name: COMMAND, kind: action.kind, argsLength: args.trim().length });
+  // This call took the one question slot: a failure before its ask ends frees it and ends the thinking line.
+  let began = false;
   try {
     switch (action.kind) {
       case 'pet': {
+        // Another session sharing the store may have petted it since: its count is the floor.
+        try {
+          const stored = await $.store.get('pets');
+          if (typeof stored === 'number' && Number.isFinite(stored) && stored > b.pets) b.pets = stored;
+        } catch (error) {
+          log($, 'reading the pet count back', error);
+        }
         pet(b, Math.random);
         st.pets = b.pets;
         const note = await save($, 'pets', b.pets);
@@ -697,6 +904,7 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         const line = farewell(b, Math.random);
         heard(st, $);
         st.hidden = true;
+        st.hiddenGen++;
         const note = await save($, 'hidden', true);
         stopClock(st);
         $.ui.invalidate('ui.render');
@@ -706,8 +914,10 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         // Lines said while hidden were never shown: dropped, not remembered.
         heard(st, $);
         st.hidden = false;
+        st.hiddenGen++;
         const note = await save($, 'hidden', false);
-        wake(b, Math.random);
+        // The greeting is the line shown: a wake line under it would be remembered unseen.
+        wake(b, Math.random, { silent: true });
         greet(b, Math.random);
         startClock(st, $);
         st.lastKey = '';
@@ -724,22 +934,55 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
       }
       case 'help':
         return { text: [USAGE, ...st.options.errors].join('\n') };
+      case 'moved':
+        return { text: `Switching characters moved to /${MENU_COMMAND}.` };
+      case 'log': {
+        if (!L.file) return { text: 'No log file: the option logFile is empty (failures still go to the debug log).' };
+        try {
+          const lines = await L.tail(logIO($));
+          return { text: [`Log: ${L.file}`, ...(lines.length > 0 ? lines : ['(empty)'])].join('\n') };
+        } catch (error) {
+          log($, 'reading the log', error, { file: L.file });
+          return { text: `Log: ${L.file}\n(couldn't read it: ${message(error)})` };
+        }
+      }
       case 'question': {
         if (st.options.questionMode === 'off') return { text: 'questions are off (questionMode)' };
         if (st.hidden) return { text: `${b.character.name} is hidden; /buddy on first` };
         const c = b.character;
+        // One question at a time, and a refused one says so: never silence.
+        if (st.asking) {
+          refuseQuestion(b);
+          refresh(st, $);
+          lg($, 'info', 'ask.outcome', { outcome: 'refused', reason: 'still thinking', ms: 0, pendingMs: Date.now() - st.asking.since });
+          return { text: stillThinking(c.name) };
+        }
+        st.asking = { since: Date.now() };
+        began = true;
+        lg($, 'info', 'ask.start', { mode: st.options.questionMode, busy: b.working || st.turnBusy, length: action.text.length });
+        lg($, 'debug', 'ask.question', { question: action.text });
         // What it remembers from before this question; the question joins it with its answer, in ask.
         const memory = await recollect(st, $, c);
         beginQuestion(b, Math.random);
         refresh(st, $);
-        ask(st, $, action.text, memory).catch((error) => log($, 'a /buddy question', error));
+        ask(st, $, action.text, memory).catch((error) => {
+          st.asking = null;
+          log($, 'a /buddy question', error);
+          endQuestion(b);
+          failAnswer(b, message(error), c.id);
+          refresh(st, $);
+        });
         const trouble = st.memoryError;
         st.memoryError = '';
         return { text: `Asked ${c.name}.${trouble ? ` (Its memory: ${trouble})` : ''}` };
       }
     }
   } catch (error) {
-    log($, `/buddy ${args.trim()}`, error);
+    if (began) {
+      st.asking = null;
+      endQuestion(b);
+    }
+    log($, `/buddy ${action.kind}`, error);
     return { text: `/buddy ${args.trim()} failed: ${message(error)}` };
   }
 }
@@ -766,6 +1009,13 @@ export const register: Register = (on: On, options: PluginOptions) => {
     memory: null,
     memoryChain: Promise.resolve(),
     memoryError: '',
+    asking: null,
+    turnBusy: false,
+    bandSeen: false,
+    ticks: 0,
+    sharedAt: 0,
+    hiddenGen: 0,
+    warned: false,
   };
 
   on('session.start', async ($, e, next) => {
@@ -780,6 +1030,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     try {
+      if (st.hidden && Date.now() - st.sharedAt >= SHARED_MS) syncHidden(st, $);
       const scene = bandScene(st, $, e.props);
       if (!scene) return next(e);
       const { Box, Text } = $.ui.resolve(e);
@@ -802,7 +1053,14 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return r;
   });
 
-  on('command.run', { command: COMMAND }, async ($, e) => runCommand(st, $, e.args));
+  on('command.run', { command: COMMAND }, async ($, e) => {
+    try {
+      return await runCommand(st, $, e.args);
+    } catch (error) {
+      log($, `/${COMMAND}`, error);
+      return { text: `/${COMMAND} failed: ${message(error)}` };
+    }
+  });
 
   on('command.run', { command: MENU_COMMAND }, async ($) => {
     try {
@@ -818,7 +1076,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     try {
       const { Box, Text, Button } = $.ui.resolve(e);
       // A pane kept open across a reload has no menu behind it: said, never blank.
-      if (!st.menu) return <Text>{`The menu closed with a reload; /${MENU_COMMAND} opens it again.`}</Text>;
+      if (!st.menu) return <Text>{`The menu closed; /${MENU_COMMAND} opens it again.`}</Text>;
+      st.menu.undrawn = 0;
       return drawMenu(Box, Text, Button, st.menu, (item) => {
         pickItem(st, $, item).catch((error) => log($, `picking ${item.label}`, error));
       });
@@ -831,6 +1090,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // The preview follows the focus: arrows, Tab or a click move the ring onto a row.
   on('ui.focus', { requestId: MENU_PANE }, async ($, e, next) => {
     try {
+      lg($, 'debug', 'menu.focus', { element: e.element ?? null, origin: (e as { origin?: { kind?: string } }).origin?.kind ?? null, menu: st.menu !== null });
       if (st.menu && e.element !== undefined && findItem(st.menu.model, e.element)) {
         st.menu.focused = e.element;
         st.menu.frame = 0;
@@ -844,7 +1104,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   // Esc (or the close mark) closes the menu and changes nothing.
   on('ui.close', async ($, e, next) => {
-    if (e.id === MENU_PANE) stopMenu(st);
+    try {
+      if (e.id === MENU_PANE) stopMenu(st);
+    } catch (error) {
+      log($, `closing /${MENU_COMMAND}`, error);
+    }
     return next(e);
   });
 };

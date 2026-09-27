@@ -2,7 +2,7 @@ import type { Character, LineEvent, Pose } from './character.ts';
 import { pickLine, poolFor } from './lines.ts';
 import { initialMotion, maxX, periodMs, tickMotion, type MotionState } from './motion.ts';
 import { CONFETTI_MS, CONFETTI_TICK_MS } from './particles.ts';
-import { lostThread, type TurnSummary } from './prompts.ts';
+import { lostThread, stillThinking, type TurnSummary } from './prompts.ts';
 import { REACTIONS, classifyToolCall, type Outcome, type ToolCall } from './reactions.ts';
 import { buildScene, type Scene } from './scene.ts';
 
@@ -13,12 +13,19 @@ import { buildScene, type Scene } from './scene.ts';
 export const BUBBLE_MS = 6000;
 export const ANSWER_MS = 15000;
 export const ERROR_MS = 10000;
-export const THINKING_MS = 60000;
+/** One deadline per /buddy question, from when it is asked: every model call it makes shares it. */
+export const ASK_DEADLINE_MS = 90_000;
+/** What the bubble says, after "{name} couldn't answer: ", once the deadline passed. */
+export const ASK_DEADLINE_REASON = `no answer in ${ASK_DEADLINE_MS / 1000} s`;
 export const SLEEP_IDLE_MS = 60000;
 export const REST_LINE_CHANCE = 0.25;
 export const WORKING_LINE_CHANCE = 0.25;
 
-export type Talk = { text: string; pose: Pose | null; until: number };
+/** `held`: an answer, a failure or a refusal; no canned line replaces it before `until`. */
+/** Lines nobody asked for: they never cover a held answer. */
+const AMBIENT: ReadonlySet<LineEvent> = new Set(['toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake']);
+
+export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean };
 
 export type Brain = {
   character: Character;
@@ -40,11 +47,17 @@ export type Brain = {
   lastQuipAt: number | null;
   /** The pose last drawn: a new pose starts at its first frame. */
   lastPose: Pose | null;
+  /** The latest line nobody asked for that came while an answer held the bubble: said once it ends. */
+  after: { event: LineEvent; pose: Pose | null; ms: number } | null;
   /** Canned lines said since the adapter last took them, with who said them: its memory records the shown ones. The thinking filler is never among them. */
   said: { id: string; text: string }[];
+  /** East Asian ambiguous-width characters take two columns (the ambiguousWidth option). */
+  ambiguousWide: boolean;
+  /** The /buddy question waiting for its answer: its thinking line, said again whenever the bubble frees up while its asker is drawn; null when none. */
+  pending: { askerId: string; talk: Talk } | null;
 };
 
-export function createBrain(character: Character, walkOption: boolean): Brain {
+export function createBrain(character: Character, walkOption: boolean, ambiguousWide = false): Brain {
   return {
     character,
     walkOption,
@@ -64,6 +77,9 @@ export function createBrain(character: Character, walkOption: boolean): Brain {
     lastQuipAt: null,
     lastPose: null,
     said: [],
+    ambiguousWide,
+    after: null,
+    pending: null,
   };
 }
 
@@ -81,10 +97,14 @@ export function speak(b: Brain, text: string, pose: Pose | null, ms: number): vo
 }
 
 export function sayLine(b: Brain, event: LineEvent, pose: Pose | null, ms: number, rand: () => number): void {
+  // An answer the user asked for stays up; lines nobody asked for wait their turn.
+  if (AMBIENT.has(event) && b.talk?.held && b.now < b.talk.until) {
+    b.after = { event, pose, ms };
+    return;
+  }
   const line = pickLine(poolFor(b.character, event), b.lastLines[event], rand);
   b.lastLines[event] = line;
-  // The thinking filler shown while a question waits is noise, never remembered.
-  if (event !== 'thinking') b.said.push({ id: b.character.id, text: line });
+  b.said.push({ id: b.character.id, text: line });
   speak(b, line, pose, ms);
 }
 
@@ -106,19 +126,28 @@ export function isSleepHour(hour: number): boolean {
   return hour >= 0 && hour < 6;
 }
 
-/** Any event: resets the idle time; a sleeping buddy wakes with a line. */
-export function wake(b: Brain, rand: () => number): boolean {
+/**
+ * Any event: resets the idle time; a sleeping buddy wakes with a line.
+ * `silent`: the caller speaks at once, so a wake line would be covered unseen and never said.
+ */
+export function wake(b: Brain, rand: () => number, opts: { silent?: boolean } = {}): boolean {
   b.lastActivity = b.now;
   if (!b.sleeping) return false;
   b.sleeping = false;
-  sayLine(b, 'wake', null, BUBBLE_MS, rand);
+  if (!opts.silent) sayLine(b, 'wake', null, BUBBLE_MS, rand);
   return true;
 }
 
 /** One clock tick at local `hour`. */
 export function tick(b: Brain, hour: number, rand: () => number): void {
   b.now += period(b);
-  if (b.talk && b.now >= b.talk.until) b.talk = null;
+  if (b.talk && b.now >= b.talk.until) {
+    // A pending question's thinking line comes back once whatever covered it ends, while its asker is drawn.
+    b.talk = b.pending && isAsker(b, b.pending.askerId) ? b.pending.talk : null;
+    const next = b.after;
+    b.after = null;
+    if (next) sayLine(b, next.event, next.pose, next.ms, rand);
+  }
   if (b.confetti && b.now - b.confetti.start >= CONFETTI_MS) b.confetti = null;
   if (b.working) b.lastActivity = b.now;
   if (!b.sleeping && !b.talk && !b.working && isSleepHour(hour) && b.now - b.lastActivity >= SLEEP_IDLE_MS) b.sleeping = true;
@@ -155,11 +184,11 @@ export function currentPose(b: Brain): Pose {
 
 /** A finished tool call: counted for the turn, and reacted to per REACTIONS. */
 export function react(b: Brain, call: ToolCall & { command: string }, rand: () => number): Outcome | null {
-  wake(b, rand);
+  const outcome = classifyToolCall(call);
+  wake(b, rand, { silent: outcome !== null });
   b.turn.tools.push(call.tool);
   if (call.isError || call.denied) b.turn.failures++;
   if (call.tool === 'Bash' && call.command) b.turn.lastBash = call.command.slice(0, 120);
-  const outcome = classifyToolCall(call);
   if (!outcome) return null;
   const r = REACTIONS[outcome];
   sayLine(b, r.line, r.pose, BUBBLE_MS, rand);
@@ -168,23 +197,57 @@ export function react(b: Brain, call: ToolCall & { command: string }, rand: () =
 }
 
 export function pet(b: Brain, rand: () => number): void {
-  wake(b, rand);
+  wake(b, rand, { silent: true });
   b.pets++;
   sayLine(b, 'petted', 'petted', BUBBLE_MS, rand);
 }
 
+/** The thinking line, held with no timer of its own: only endQuestion ends it (the answer, the failure or the deadline). */
 export function beginQuestion(b: Brain, rand: () => number): void {
-  wake(b, rand);
+  wake(b, rand, { silent: true });
   b.questions++;
-  sayLine(b, 'thinking', 'thinking', THINKING_MS, rand);
+  const line = pickLine(poolFor(b.character, 'thinking'), b.lastLines.thinking, rand);
+  b.lastLines.thinking = line;
+  // The thinking filler is noise, never remembered: it is not among `said`.
+  const talk: Talk = { text: line, pose: 'thinking', until: Number.POSITIVE_INFINITY, held: true };
+  b.pending = { askerId: b.character.id, talk };
+  b.talk = talk;
 }
 
-export function answer(b: Brain, text: string, pose: Pose | null = null): void {
-  speak(b, text, pose, ANSWER_MS);
+/** The pending question ended: its thinking line goes, at the next tick when nothing replaced it. */
+export function endQuestion(b: Brain): void {
+  if (b.pending && b.talk === b.pending.talk) b.talk = { ...b.talk, until: b.now };
+  b.pending = null;
 }
 
-export function failAnswer(b: Brain, reason: string): void {
-  speak(b, lostThread(b.character.name, reason), 'oops', ANSWER_MS);
+/** What is left of the one deadline of a question asked at `askedAt`, at `now`; 0 once it passed, never more than the whole. */
+export function askLeft(askedAt: number, now: number): number {
+  return Math.min(ASK_DEADLINE_MS, Math.max(0, Math.ceil(askedAt + ASK_DEADLINE_MS - now)));
+}
+
+/** Whether an answer of `askerId` may be said: always without one, else only while that character is drawn. */
+function isAsker(b: Brain, askerId: string | undefined): boolean {
+  return askerId === undefined || askerId === b.character.id;
+}
+
+/** The answer in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. */
+export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string): boolean {
+  if (!isAsker(b, askerId)) return false;
+  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true };
+  return true;
+}
+
+/** The failure in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. */
+export function failAnswer(b: Brain, reason: string, askerId?: string): boolean {
+  if (!isAsker(b, askerId)) return false;
+  b.talk = { text: lostThread(b.character.name, reason), pose: 'oops', until: b.now + ANSWER_MS, held: true };
+  return true;
+}
+
+/** A /buddy question refused because the last one is still waiting. */
+export function refuseQuestion(b: Brain): void {
+  wake(b, () => 0, { silent: true });
+  b.talk = { text: stillThinking(b.character.name), pose: 'thinking', until: b.now + BUBBLE_MS, held: true };
 }
 
 export function farewell(b: Brain, rand: () => number): string {
@@ -227,6 +290,7 @@ export function sceneOf(b: Brain): Scene | null {
     zTick: b.motion.stillFrame,
     stats: { pets: b.pets, questions: b.questions },
     now: b.now,
+    ambiguousWide: b.ambiguousWide,
   });
   if (scene && scene.x !== b.motion.x) b.motion = { ...b.motion, x: scene.x };
   return scene;

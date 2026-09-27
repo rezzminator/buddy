@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
-import { SALT, fnv1a32, hash32, identityKey, maskIdentity, mulberry32, roll, rollSeed, utf8, wyhash64, type Bones, type Variant } from '../plugins/buddy/src/hatch.ts';
+import { SALT, fnv1a32, hash32, mulberry32, roll, rollSeed, utf8, wyhash64, type Bones, type Variant } from '../plugins/buddy/src/hatch.ts';
 
 // Golden vectors from running Claude Code 2.1.96's own functions (native: Bun,
 // npm: Node), and Bun.hash itself over strings of every length branch.
@@ -90,13 +90,5 @@ describe('the pieces', () => {
   test('rollSeed is roll without the hash', () => {
     const r = roll('anon', 'native');
     expect(rollSeed(r.hash32)).toEqual({ bones: r.bones, inspirationSeed: r.inspirationSeed });
-  });
-
-  test('the identity is never in its key, and shown only by its last 4', () => {
-    const id = '7e57ab1e-0000-4c0d-9e11-5eedf00dcafe';
-    expect(identityKey(id)).toMatch(/^[0-9a-f]{16}$/);
-    expect(identityKey(id)).not.toContain('cafe');
-    expect(maskIdentity(id)).toBe('…cafe');
-    expect(maskIdentity('anon')).toBe('…');
   });
 });

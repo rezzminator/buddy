@@ -95,3 +95,24 @@ describe('the shipped characters', () => {
     expect(v.ok || v.error).toBe(true);
   });
 });
+
+describe('the shipped duck', () => {
+  test('has its own petted pose: same width as idle, ASCII, and a petted pool; it validates', async () => {
+    const { readFileSync } = await import('node:fs');
+    const raw = JSON.parse(readFileSync(new URL('../plugins/buddy/characters/duck.json', import.meta.url), 'utf8'));
+    const v = validateCharacter(raw);
+    expect(v.ok ? 'valid' : v.error).toBe('valid');
+    const frames: string[][] = raw.poses.petted;
+    expect(frames.length).toBeGreaterThanOrEqual(1);
+    expect(frames.length).toBeLessThanOrEqual(2);
+    const width = raw.poses.idle[0][0].length;
+    for (const f of frames) {
+      expect(f).toHaveLength(raw.poses.idle[0].length);
+      for (const row of f) {
+        expect(row).toHaveLength(width);
+        expect(row).toMatch(/^[\x20-\x7e]+$/);
+      }
+    }
+    expect(raw.lines.petted.length).toBeGreaterThan(0);
+  });
+});

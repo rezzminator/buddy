@@ -22,7 +22,7 @@ describe('prompts', () => {
     expect(oneLine('y'.repeat(300))).toHaveLength(240);
   });
   test('lostThread', () => {
-    expect(lostThread('Fixy', 'api-error')).toBe('(Fixy lost the thread: api-error)');
+    expect(lostThread('Fixy', 'api-error')).toBe("Fixy couldn't answer: api-error");
   });
 });
 

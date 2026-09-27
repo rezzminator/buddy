@@ -1,0 +1,147 @@
+// The plugin's own log: one JSON line per record, `{ts, level, event,
+// session?, character?, ...fields}`, added to a file capped at LOG_CAP bytes
+// with one rotation (`{file}.1`). No `$` here: the adapter hands in the file
+// I/O on each flush (a hook's `$` is never kept), so a test drives it from
+// memory. Writing never throws into a hook: a failed write goes to the fallback
+// (the adapter's `$.ui.log`).
+//
+// `$.fs` has no append, only a whole-file write, so a flush reads the file,
+// writes it back with the new lines, and reads it again: when another session
+// sharing the file wrote over them in between, it adds them again, up to
+// WRITE_ATTEMPTS times. A record is lost only when the other session's write
+// lands after that re-read, and then the fallback says so.
+
+export type LogLevel = 'error' | 'info' | 'debug';
+export const LOG_LEVELS: readonly LogLevel[] = ['error', 'info', 'debug'];
+export const LOG_CAP = 1_000_000;
+/** A throttled debug event is written at most once per this many milliseconds. */
+export const THROTTLE_MS = 1000;
+export const TAIL_LINES = 20;
+/** How many times a flush writes its lines before it reports them lost to another writer. */
+export const WRITE_ATTEMPTS = 3;
+
+const RANK: Record<LogLevel, number> = { error: 0, info: 1, debug: 2 };
+
+export type LogIO = {
+  /** The file's text; undefined when it does not exist. */
+  read: (path: string) => Promise<string | undefined>;
+  /** Replaces the file's text, creating it and its folders. */
+  write: (path: string, text: string) => Promise<void>;
+  /** Where a record goes when the file cannot take it, and why. */
+  fallback: (line: string) => void;
+};
+
+export type LogFields = Record<string, unknown>;
+
+/** An error as fields: its message and stack, never its object. */
+export function errorFields(error: unknown): { message: string; stack?: string } {
+  if (error instanceof Error) return error.stack ? { message: error.message, stack: error.stack } : { message: error.message };
+  return { message: String(error) };
+}
+
+export class Logger {
+  level: LogLevel;
+  /** The log file; '' writes no file (errors still reach the fallback). */
+  file: string;
+  context: { session?: string; character?: string } = {};
+  private readonly now: () => number;
+  private readonly cap: number;
+  private pending: string[] = [];
+  private chain: Promise<void> = Promise.resolve();
+  private lastAt = new Map<string, number>();
+
+  /** Records queued while the file is off, errors only, waiting for a fallback. */
+  private orphans: string[] = [];
+
+  constructor(level: LogLevel = 'info', file = '', cap = LOG_CAP, now: () => number = Date.now) {
+    this.now = now;
+    this.level = level;
+    this.file = file;
+    this.cap = cap;
+  }
+
+  enabled(level: LogLevel): boolean {
+    return RANK[level] <= RANK[this.level];
+  }
+
+  /** Queues one record when `level` is on; the next flush writes it after every one before it. */
+  log(level: LogLevel, event: string, fields: LogFields = {}): void {
+    if (!this.enabled(level)) return;
+    let line: string;
+    try {
+      line = JSON.stringify({ ts: new Date(this.now()).toISOString(), level, event, ...this.context, ...fields });
+    } catch (error) {
+      line = JSON.stringify({ ts: new Date(this.now()).toISOString(), level, event, ...this.context, unloggable: errorFields(error).message });
+    }
+    if (!this.file) {
+      if (level === 'error') this.orphans.push(line);
+      return;
+    }
+    this.pending.push(line);
+  }
+
+  error(event: string, error: unknown, fields: LogFields = {}): void {
+    this.log('error', event, { ...fields, error: errorFields(error) });
+  }
+
+  /** A debug record at most once per THROTTLE_MS for its event. */
+  throttled(event: string, fields: LogFields = {}): void {
+    if (!this.enabled('debug')) return;
+    const now = this.now();
+    const last = this.lastAt.get(event);
+    if (last !== undefined && now - last < THROTTLE_MS) return;
+    this.lastAt.set(event, now);
+    this.log('debug', event, fields);
+  }
+
+  /** Writes every queued record through `io`, after every flush before; never rejects. */
+  flush(io: LogIO): Promise<void> {
+    for (const l of this.orphans.splice(0)) io.fallback(`buddy: ${l}`);
+    if (this.pending.length === 0) return this.chain;
+    this.chain = this.chain.then(() => this.drain(io));
+    return this.chain;
+  }
+
+  /** The last `n` lines of the file, after every queued write; rejects when it cannot be read. */
+  async tail(io: LogIO, n = TAIL_LINES): Promise<string[]> {
+    await this.flush(io);
+    if (!this.file) return [];
+    const text = (await io.read(this.file)) ?? '';
+    return text.split('\n').filter((l) => l !== '').slice(-n);
+  }
+
+  private async drain(io: LogIO): Promise<void> {
+    const lines = this.pending.splice(0);
+    if (lines.length === 0) return;
+    const add = `${lines.join('\n')}\n`;
+    const file = this.file;
+    try {
+      for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
+        if (await this.landed(io, file, await this.put(io, file, add))) return;
+      }
+      io.fallback(`buddy: the log ${file} lost ${lines.length} records to another writer at the same time`);
+    } catch (error) {
+      io.fallback(`buddy: writing the log ${file} failed: ${errorFields(error).message}`);
+    }
+    for (const l of lines) if (l.includes('"level":"error"')) io.fallback(`buddy: ${l}`);
+  }
+
+  /** Adds `add` to the file, rotating it past the cap; resolves with the text that went in. */
+  private async put(io: LogIO, file: string, add: string): Promise<string> {
+    const current = (await io.read(file)) ?? '';
+    if (current.length + add.length <= this.cap) {
+      await io.write(file, current + add);
+      return add;
+    }
+    const kept = add.length > this.cap ? add.slice(add.length - this.cap) : add;
+    await io.write(`${file}.1`, current);
+    await io.write(file, kept);
+    return kept;
+  }
+
+  /** Whether `text` is in the file, or in `.1` when another writer rotated it since. */
+  private async landed(io: LogIO, file: string, text: string): Promise<boolean> {
+    if (((await io.read(file)) ?? '').includes(text)) return true;
+    return ((await io.read(`${file}.1`)) ?? '').includes(text);
+  }
+}
