@@ -92,6 +92,31 @@ describe('Logger', () => {
     expect(d.fallback).toHaveLength(2);
   });
 
+  test('a fallback that throws never kills the log: a later flush still writes, and flush never throws', async () => {
+    const d = disk();
+    let refuse = true;
+    const bad: LogIO = {
+      read: d.io.read,
+      write: async (p, t) => {
+        if (refuse) throw new Error(`EACCES: ${p}`);
+        await d.io.write(p, t);
+      },
+      fallback: () => {
+        throw new Error('no debug log either');
+      },
+    };
+    const L = new Logger('info', '/l/b.log');
+    L.error('first', new Error('lost'));
+    await expect(L.flush(bad)).resolves.toBeUndefined();
+    refuse = false;
+    L.log('info', 'second');
+    await expect(L.flush(d.io)).resolves.toBeUndefined();
+    expect(lines(d.files['/l/b.log']).map((x) => x.event)).toEqual(['second']);
+    const orphaned = new Logger('info', '');
+    orphaned.error('orphan', 'plain');
+    expect(() => orphaned.flush(bad)).not.toThrow();
+  });
+
   test('no file: errors still reach the fallback, nothing is written', async () => {
     const d = disk();
     const L = new Logger('info', '');

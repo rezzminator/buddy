@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   ANSWER_MS, ASK_DEADLINE_MS, ASK_DEADLINE_REASON, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, askLeft, beginQuestion, createBrain, currentPose, endQuestion, endTurn,
-  failAnswer, farewell, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
+  failAnswer, farewell, holdsAnswer, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { raw } from './fixtures.ts';
@@ -182,6 +182,27 @@ describe('a held answer', () => {
     expect(answer(b, 'its own answer', null, 'other')).toBe(true);
     expect(b.talk?.text).toBe('its own answer');
     expect(answer(b, 'unbound', null)).toBe(true);
+  });
+});
+
+describe('holdsAnswer', () => {
+  test('true while an answer, a failure or the thinking line holds the bubble; false once it ends or for a canned line', () => {
+    const b = createBrain(char(), false);
+    b.talk = null;
+    expect(holdsAnswer(b)).toBe(false);
+    answer(b, 'Held.');
+    expect(holdsAnswer(b)).toBe(true);
+    b.now += ANSWER_MS - 1;
+    expect(holdsAnswer(b)).toBe(true);
+    b.now += 1;
+    expect(holdsAnswer(b)).toBe(false);
+    failAnswer(b, 'timeout');
+    expect(holdsAnswer(b)).toBe(true);
+    beginQuestion(b, () => 0);
+    b.now += ASK_DEADLINE_MS * 10;
+    expect(holdsAnswer(b)).toBe(true);
+    b.talk = { text: 'a canned line', pose: null, until: b.now + BUBBLE_MS };
+    expect(holdsAnswer(b)).toBe(false);
   });
 });
 

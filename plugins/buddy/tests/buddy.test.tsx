@@ -66,8 +66,10 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
   const closes: string[] = [];
   const focuses: string[] = [];
   const gets: string[] = [];
-  /** A read of `hidden` answers what the store held when asked, this long later: a read in flight. */
-  const slow = { hiddenMs: 0 };
+  /** A read of `hidden` answers what the store held when asked, this long later: a read in flight; a write of it lands this long later. */
+  const slow = { hiddenMs: 0, setHiddenMs: 0 };
+  /** The texts that reached the prompt box's suggestion beneath the plugin. */
+  const suggested: string[] = [];
   on('ui.open', async (_$, e) => {
     opens.push(e);
     return { value: { isPlaced: true as const } };
@@ -84,6 +86,10 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
     return (call.key !== undefined ? { value: {} } : {}) as never;
   });
   on('turn.complete', async () => ({ text: '' }));
+  on('prompt.suggest', async (_$, e) => {
+    suggested.push(e.text);
+    return { isShown: true };
+  });
   on('env.get', async (_$, e) => ({ value: e.name === 'HOME' ? HOME : disk.env?.[e.name] }));
   on('fs.write', async (_$, e) => {
     writes.push(e.path);
@@ -102,6 +108,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
   });
   on('store.set', async (_$, e) => {
     if (disk.refuseStore && e.key.startsWith(disk.refuseStore)) throw new Error(`EACCES: not allowed to write ${e.key}`);
+    if (e.key === 'hidden' && slow.setHiddenMs > 0) await clock.sleep(slow.setHiddenMs);
     saved.set(e.key, e.value);
     return { value: undefined };
   });
@@ -151,7 +158,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { fork?: An
     if (answers.completeDelayMs) await clock.sleep(answers.completeDelayMs);
     return { value: { usage, ...(queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' }) } } as never;
   });
-  return { logs, forks, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow };
+  return { logs, forks, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested };
 }
 
 function run(args: string) {
@@ -955,6 +962,23 @@ describe('pre-release fixes', () => {
     await ui.unmount();
   });
 
+  test('a read of the shared `hidden` begun while /buddy off saves it never undoes the off', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    w.slow.setHiddenMs = 30_000;
+    const reads = () => w.gets.filter((k) => k === 'hidden').length;
+    const before = reads();
+    const off = $.command.run(run('off'));
+    for (let i = 0; i < 200 && reads() === before; i++) await w.clock.advance(100);
+    await w.clock.advance(30_000);
+    await off;
+    await w.clock.settle();
+    expect(w.saved.get('hidden')).toBe(true);
+    expect((await $.command.run(run('what now'))).text).toBe('Fixy is hidden; /buddy on first');
+    await ui.unmount();
+  });
+
   test('/buddy with arguments that are not text answers a failure line, never a thrown hook', async ($, on) => {
     world(on, { character: 'fixy' });
     await $.session.start(START);
@@ -965,5 +989,20 @@ describe('pre-release fixes', () => {
       out = { threw: String(error) };
     }
     expect(out).toMatchObject({ text: expect.stringMatching(/^\/buddy failed: /) });
+  });
+});
+
+describe('prompt suggestions', () => {
+  test('suggestions off (the default): the engine\'s own suggestion is shown as it came, and a turn makes no fork', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($);
+    expect(await $.prompt.suggest({ text: 'run the tests', origin: { kind: 'suggestion' } } as never)).toMatchObject({ isShown: true });
+    expect(w.suggested).toEqual(['run the tests']);
+    await $.turn.complete({ reason: 'answer', answer: 'T1' } as never);
+    await w.clock.settle();
+    expect(w.forks).toEqual([]);
+    expect(w.suggested).toEqual(['run the tests']);
+    await ui.unmount();
   });
 });

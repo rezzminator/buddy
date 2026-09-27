@@ -1,6 +1,6 @@
 import type { EngineInterface, ModelForkResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult } from 'claude-code';
 import {
-  ASK_DEADLINE_REASON, ERROR_MS, answer, askLeft, beginQuestion, createBrain, endQuestion, refuseQuestion, endTurn, failAnswer, farewell, greet, observeBand, period, pet,
+  ASK_DEADLINE_REASON, ERROR_MS, answer, askLeft, beginQuestion, createBrain, endQuestion, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, observeBand, period, pet,
   react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
@@ -13,7 +13,8 @@ import {
 import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, staleKeys, storeKey, type Book, type Exchange, type Stored } from '../src/memory.ts';
 import { Logger, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { expandHome, logPath, resolveOptions, type Options } from '../src/options.ts';
-import { QUESTION_MAX_TOKENS, QUIP_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, questionPrompt, quipPrompt, stillThinking, type TurnSummary } from '../src/prompts.ts';
+import { QUESTION_MAX_TOKENS, QUIP_MAX_TOKENS, forkPrompt, oneLine, oneLineSystem, questionPrompt, quipPrompt, stillThinking, suggestPrompt, suggestionText, type TurnSummary } from '../src/prompts.ts';
+import { SUGGEST_DEADLINE_MS, dropsHarnessSuggestion } from '../src/suggest.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
 import {
   ORIGINAL_ID, VARIANTS, companionOf, identityOf, originalCharacter, savedOriginalOf,
@@ -73,8 +74,12 @@ type State = {
   /** Clock ticks since the start, and when `hidden` was last read back from the store. */
   ticks: number;
   sharedAt: number;
-  /** Bumped by this session's /buddy off and on: a read of `hidden` begun before the latest is stale and dropped. */
+  /** Bumped by this session's /buddy off and on, before and after saving: a read of `hidden` begun before the latest is stale and dropped. */
   hiddenGen: number;
+  /** Saves of `hidden` in flight: a read of it landing meanwhile may hold the value before the save, and is dropped. */
+  hiddenSaves: number;
+  /** Bumped at each turn's prompt suggestion: a suggestion from an earlier turn is stale and never proposed. */
+  suggestGen: number;
   /** The options' warnings were said: once, in the first greeting's bubble. */
   warned: boolean;
 };
@@ -314,8 +319,8 @@ function syncHidden(st: State, $: EngineInterface): void {
     .get('hidden')
     .then((v) => {
       const hidden = v === true;
-      // Asked before this session's own /buddy off or on: what it read is older than that.
-      if (gen !== st.hiddenGen) return;
+      // Asked before this session's own /buddy off or on, or answered while it saves: what it read is older than that.
+      if (gen !== st.hiddenGen || st.hiddenSaves > 0) return;
       if (!st.b || hidden === st.hidden) return;
       st.hidden = hidden;
       lg($, 'info', 'hidden.shared', { hidden });
@@ -392,7 +397,7 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     log($, 'reading the session id for the log', error);
   }
-  lg($, 'info', 'session.start', { level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, memory: st.options.memory });
+  lg($, 'info', 'session.start', { level: L.level, questionMode: st.options.questionMode, quips: st.options.quips, suggestions: st.options.suggestions, memory: st.options.memory });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
@@ -472,18 +477,24 @@ async function quip(st: State, $: EngineInterface, t: TurnSummary): Promise<void
     const text = r.isAnswered ? oneLine(r.text) : '';
     if (text) {
       // Hidden by /buddy off while the model wrote it: never shown, so never remembered.
-      const shown = !st.hidden && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id);
+      // A held /buddy answer keeps the bubble until it ends: the quip is never said over it, nor remembered.
+      const held = !st.hidden && holdsAnswer(b);
+      const shown = !st.hidden && !held && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id);
       if (shown) keep(st, $, c.id, { kind: 'quip', text });
-      lg($, 'info', 'quip.outcome', { outcome: shown ? 'answered' : st.hidden ? 'hidden' : 'dropped' });
+      lg($, 'info', 'quip.outcome', { outcome: shown ? 'answered' : st.hidden ? 'hidden' : held ? 'held' : 'dropped' });
     } else {
       const reason = r.isAnswered ? 'empty reply' : r.reason;
       $.ui.log(`buddy: a quip got no answer: ${reason}`);
-      lg($, 'info', 'quip.outcome', { outcome: 'failed', reason });
-      failAnswer(b, reason, c.id);
+      if (holdsAnswer(b)) lg($, 'info', 'quip.outcome', { outcome: 'held', reason });
+      else {
+        lg($, 'info', 'quip.outcome', { outcome: 'failed', reason });
+        failAnswer(b, reason, c.id);
+      }
     }
   } catch (error) {
     log($, 'a quip', error);
-    failAnswer(b, message(error), c.id);
+    if (holdsAnswer(b)) lg($, 'info', 'quip.outcome', { outcome: 'held' });
+    else failAnswer(b, message(error), c.id);
   }
   refresh(st, $);
 }
@@ -496,9 +507,48 @@ function onTurnComplete(st: State, $: EngineInterface): void {
     const due = endTurn(st.b, st.options.quips && !st.hidden, st.options.quipCooldownSec);
     lg($, 'info', due ? 'quip.fired' : 'quip.skipped', due ? { tools: due.tools.length } : { why: !st.options.quips ? 'quips off' : st.hidden ? 'hidden' : 'no tool used, or cooldown' });
     if (due) quip(st, $, due).catch((error) => log($, 'a quip', error));
+    // Every completed turn, tools or none: the buddy proposes the next prompt.
+    if (st.options.suggestions && !st.hidden) {
+      const gen = ++st.suggestGen;
+      suggest(st, $, gen).catch((error) => log($, 'a prompt suggestion', error));
+    }
     refresh(st, $);
   } catch (error) {
     log($, 'the end of a turn', error);
+  }
+}
+
+/** One fork of the chat proposes the next prompt, in the user's words, as the prompt box's suggestion; never throws. */
+async function suggest(st: State, $: EngineInterface, gen: number): Promise<void> {
+  const c = st.b?.character;
+  if (!c) return;
+  try {
+    const prompt = suggestPrompt(c.persona);
+    lg($, 'debug', 'suggest.prompt', { length: prompt.length });
+    const r = await within($, $.model.fork({ prompt }), SUGGEST_DEADLINE_MS);
+    if (r === 'timeout') {
+      lg($, 'info', 'suggest.outcome', { outcome: 'timeout' });
+      return;
+    }
+    if (!r.isAnswered) {
+      lg($, 'info', 'suggest.outcome', { outcome: 'failed', reason: r.reason });
+      return;
+    }
+    const text = suggestionText(r.text);
+    if (text === null) {
+      lg($, 'info', 'suggest.outcome', { outcome: 'none', length: r.text.length });
+      return;
+    }
+    lg($, 'debug', 'suggest.text', { length: text.length });
+    // A later turn asked for its own, or /buddy off came meanwhile: this one is never proposed.
+    if (gen !== st.suggestGen || st.hidden) {
+      lg($, 'info', 'suggest.outcome', { outcome: 'stale' });
+      return;
+    }
+    const { isShown } = await $.prompt.suggest({ text });
+    lg($, 'info', 'suggest.outcome', { outcome: isShown ? 'shown' : 'not-shown' });
+  } catch (error) {
+    log($, 'a prompt suggestion', error);
   }
 }
 
@@ -787,6 +837,18 @@ async function save($: EngineInterface, key: string, value: unknown): Promise<st
   }
 }
 
+/** `hidden` saved: a read of it begun before or during the save holds an older value, and is dropped. */
+async function saveHidden(st: State, $: EngineInterface, hidden: boolean): Promise<string> {
+  st.hiddenGen++;
+  st.hiddenSaves++;
+  try {
+    return await save($, 'hidden', hidden);
+  } finally {
+    st.hiddenSaves--;
+    st.hiddenGen++;
+  }
+}
+
 /** `p`, or 'timeout' once `ms` passed on the engine's clock first. */
 async function within<T>($: EngineInterface, p: Promise<T>, ms: number): Promise<T | 'timeout'> {
   return Promise.race([p, $.clock.sleep(ms).then(() => 'timeout' as const)]);
@@ -904,9 +966,9 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         const line = farewell(b, Math.random);
         heard(st, $);
         st.hidden = true;
-        st.hiddenGen++;
-        const note = await save($, 'hidden', true);
+        // Stopped before the save: no clock tick reads the store back while it is written.
         stopClock(st);
+        const note = await saveHidden(st, $, true);
         $.ui.invalidate('ui.render');
         return { text: `${b.character.name}: "${line}" (hidden; /buddy on brings ${b.character.name} back)${note}` };
       }
@@ -914,8 +976,7 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         // Lines said while hidden were never shown: dropped, not remembered.
         heard(st, $);
         st.hidden = false;
-        st.hiddenGen++;
-        const note = await save($, 'hidden', false);
+        const note = await saveHidden(st, $, false);
         // The greeting is the line shown: a wake line under it would be remembered unseen.
         wake(b, Math.random, { silent: true });
         greet(b, Math.random);
@@ -1015,6 +1076,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     ticks: 0,
     sharedAt: 0,
     hiddenGen: 0,
+    hiddenSaves: 0,
+    suggestGen: 0,
     warned: false,
   };
 
@@ -1051,6 +1114,19 @@ export const register: Register = (on: On, options: PluginOptions) => {
     const r = await next(e);
     onTurnComplete(st, $);
     return r;
+  });
+
+  // With suggestions on, the engine's own guess is dropped: the buddy's fork proposes the next prompt instead.
+  on('prompt.suggest', async ($, e, next) => {
+    try {
+      if (dropsHarnessSuggestion(e.origin, st.options.suggestions, st.hidden || st.b === null)) {
+        lg($, 'debug', 'suggest.harness-dropped');
+        return { isShown: false };
+      }
+    } catch (error) {
+      log($, 'a prompt suggestion hook', error);
+    }
+    return next(e);
   });
 
   on('command.run', { command: COMMAND }, async ($, e) => {

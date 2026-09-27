@@ -18,6 +18,8 @@ export type Options = {
   quips: boolean;
   quipModel: string;
   quipCooldownSec: number;
+  /** After each turn a fork of the chat proposes the next prompt, and the harness's own suggestion is dropped. */
+  suggestions: boolean;
   /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
   memory: number;
   /** The plugin log's level: error, info or debug. */
@@ -37,6 +39,7 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   quips: false,
   quipModel: 'haiku',
   quipCooldownSec: 45,
+  suggestions: false,
   memory: MEMORY_DEFAULT,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
@@ -53,7 +56,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, characterDir, motion, questionMode, quips, quipModel, quipCooldownSec, memory, logLevel, logFile, ambiguousWidth } = raw;
+  const { character, characterDir, motion, questionMode, quips, quipModel, quipCooldownSec, suggestions, memory, logLevel, logFile, ambiguousWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -71,6 +74,11 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     const b = bool(quips);
     if (b === undefined) bad('quips', `${JSON.stringify(quips)} is not true or false`);
     else o.quips = b;
+  }
+  if (suggestions !== undefined) {
+    const b = bool(suggestions);
+    if (b === undefined) bad('suggestions', `${JSON.stringify(suggestions)} is not true or false`);
+    else o.suggestions = b;
   }
   if (questionMode !== undefined && questionMode !== '') {
     const m = typeof questionMode === 'string' ? questionMode.trim().toLowerCase() : '';

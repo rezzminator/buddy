@@ -4,7 +4,7 @@ import { DEFAULTS, expandHome, logPath, resolveOptions } from '../plugins/buddy/
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'fork', quips: false, quipModel: 'haiku', quipCooldownSec: 45, memory: 6, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', characterDir: '', motion: true, questionMode: 'fork', quips: false, quipModel: 'haiku', quipCooldownSec: 45, suggestions: false, memory: 6, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousWidth: 'narrow' });
   });
   test('good values', () => {
     const o = resolveOptions({ character: ' Cat ', characterDir: '~/chars', motion: false, questionMode: 'COMPLETE', quips: 'true', quipModel: 'sonnet', quipCooldownSec: '10' });
@@ -20,6 +20,15 @@ describe('resolveOptions', () => {
       'option questionMode ignored: "loud" is not fork, complete or off',
       'option quipCooldownSec ignored: -1 is not a number of seconds',
     ]);
+  });
+});
+
+describe('the suggestions option', () => {
+  test('off by default; true or false, as a boolean or its string; anything else is ignored by name', () => {
+    expect(resolveOptions({}).suggestions).toBe(false);
+    expect(resolveOptions({ suggestions: true })).toMatchObject({ suggestions: true, errors: [] });
+    expect(resolveOptions({ suggestions: 'false' })).toMatchObject({ suggestions: false, errors: [] });
+    expect(resolveOptions({ suggestions: 'yes' })).toMatchObject({ suggestions: false, errors: ['option suggestions ignored: "yes" is not true or false'] });
   });
 });
 

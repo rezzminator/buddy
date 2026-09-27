@@ -1,6 +1,6 @@
 # Voice
 
-buddy talks through a model in exactly two ways: it answers a question you ask with `/buddy`, and, when you turn quips on, it reacts to a finished turn.
+buddy talks through a model in exactly three ways: it answers a question you ask with `/buddy`; when you turn quips on, it reacts to a finished turn; and when you turn suggestions on, it proposes your next prompt after each turn.
 Everything else it says is a canned line ([Characters](./characters.md)), and every model reply is held to one bubble line and a few tokens.
 
 ## Questions
@@ -63,6 +63,19 @@ The turn just ended. Tools used: Read x3, Bash. Failures: 1. Last shell command:
 
 The tools are counted by name, the failures are the denied or failed calls, and the last Bash command is cut to 120 characters.
 The answer shows with `yay` when the turn had no failures, `oops` when it had some.
+A quip, or its failure, that arrives while a `/buddy` answer, a failure or the `thinking` line still holds the bubble (`holdsAnswer`) is not said and not remembered; the log records it as `held`.
+
+## Prompt suggestions
+
+Suggestions are off by default (`suggestions: false`), because they spend one fork on every completed turn.
+With them on, the end of each turn (`turn.complete`), whether it used a tool or not and with no cooldown, while the buddy is not hidden, sends one `$.model.fork` with `suggestPrompt`: the persona, then the ask for the prompt the user is most likely to send Claude next, in the user's own words as they would type it, at most 15 words, `NONE` when there is no clear next step, no tools.
+The persona decides what to nudge toward; the words are never in character.
+The reply becomes the prompt box's dim suggestion through `$.prompt.suggest`, after `suggestionText` takes its first non-empty line, strips wrapping quotes and collapses whitespace; `NONE`, an empty reply or a line past 160 characters (`SUGGESTION_MAX_CHARS`) proposes nothing.
+The fork gets 20 seconds (`SUGGEST_DEADLINE_MS`); past them the turn's suggestion is given up, though the fork runs to its end (no cancel) and may still bill.
+A suggestion overtaken by the next turn's, or by `/buddy off`, is stale and never proposed; Claude Code itself shows none while the box holds text or a turn runs.
+While suggestions are on and the buddy is shown, the `prompt.suggest` hook drops Claude Code's own guess (origin `suggestion`, `dropsHarnessSuggestion`), so it never covers the buddy's; a plugin's proposal, the buddy's or another's, always passes.
+Claude Code's own suggestions still cost their own call: turning them off saves paying for both.
+The log records each outcome at info (`suggest.outcome`: shown, not-shown, none, failed, timeout, stale), and at debug only the suggestion's length, never its text.
 
 ## One line, few tokens
 
@@ -94,6 +107,7 @@ Like every option, it is resolved once at load by `resolveOptions`: a value of t
 - **Reply at once, answer later.** Rejected: holding the command until the model answers. The prompt stays free, and the bubble shows the buddy thinking.
 - **Quips off by default, only after tool use, with a cooldown.** Rejected: a quip after every turn. It would spend tokens on every message and repeat itself.
 - **The quip sees a summary, not the turn.** Rejected: sending the turn's output. A tally and one command are enough to react to, and cost a few dozen tokens.
+- **Suggestions after every turn, in the user's words.** Rejected: the quips' gate (a tool used, a cooldown). The next prompt matters after a turn that only talked as much as after one that ran tools; and a suggestion in character would have to be rewritten before sending, which defeats Tab.
 - **A failure shows in the bubble.** Rejected: staying silent. An empty bubble would read as "it did not hear me".
 - **Command words only when alone.** Rejected: matching the first word. `/buddy reload the page` is a question.
 
@@ -101,16 +115,18 @@ Like every option, it is resolved once at load by `resolveOptions`: a value of t
 
 | File | Symbols |
 | --- | --- |
-| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `ONE_LINE_RULE`, `QUESTION_MAX_TOKENS`, `QUIP_MAX_TOKENS`, `forkPrompt`, `oneLineSystem`, `questionPrompt`, `quipPrompt`, `oneLine`, `lostThread`, `stillThinking`, `TurnSummary` |
-| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `beginQuestion`, `endQuestion`, `askLeft`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `react`, `ASK_DEADLINE_MS`, `ASK_DEADLINE_REASON` |
+| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `ONE_LINE_RULE`, `QUESTION_MAX_TOKENS`, `QUIP_MAX_TOKENS`, `forkPrompt`, `oneLineSystem`, `questionPrompt`, `quipPrompt`, `oneLine`, `lostThread`, `stillThinking`, `TurnSummary`, `suggestPrompt`, `suggestionText`, `SUGGESTION_MAX_CHARS` |
+| [`src/suggest.ts`](../../plugins/buddy/src/suggest.ts) | `dropsHarnessSuggestion`, `SUGGEST_DEADLINE_MS` |
+| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `beginQuestion`, `endQuestion`, `askLeft`, `answer`, `failAnswer`, `refuseQuestion`, `holdsAnswer`, `endTurn`, `react`, `ASK_DEADLINE_MS`, `ASK_DEADLINE_REASON` |
 | [`src/command.ts`](../../plugins/buddy/src/command.ts) | `parseCommand`, `USAGE` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS`, `QUESTION_MODES` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `quip`, `runCommand`, `onTurnComplete` |
-| [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `questionMode`, `quips`, `quipModel`, `quipCooldownSec` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `quip`, `suggest`, `runCommand`, `onTurnComplete`, the `prompt.suggest` hook |
+| [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `questionMode`, `quips`, `quipModel`, `quipCooldownSec`, `suggestions` |
 
 ## How it's tested
 
-- Unit: [`tests/prompts.test.ts`](../../tests/prompts.test.ts) (the fork prompt, the completion, the quip summary, the trim), [`tests/command.test.ts`](../../tests/command.test.ts), [`tests/options.test.ts`](../../tests/options.test.ts), and the quips case of [`tests/brain.test.ts`](../../tests/brain.test.ts) (only with the option, a tool used, and past the cooldown).
+- Unit: [`tests/prompts.test.ts`](../../tests/prompts.test.ts) (the fork prompt, the completion, the quip summary, the trim), [`tests/command.test.ts`](../../tests/command.test.ts), [`tests/options.test.ts`](../../tests/options.test.ts), and the quips case of [`tests/brain.test.ts`](../../tests/brain.test.ts) (only with the option, a tool used, and past the cooldown), [`tests/suggest.test.ts`](../../tests/suggest.test.ts) (which suggestion is dropped).
+- Hooks, suggestions: with the option off (the default; the testing kit cannot set options), Claude Code's own suggestion passes through and a turn makes no fork.
 - Hooks: a question forks the chat with the persona and the rule; `nothing-to-fork` falls back to the quip model; a failed answer says the thread was lost.
 - Live: row (d) asks before the first reply (the quip model answers); row (f) asks after one (a real fork of a Haiku chat).
 - Quips are not in the live proof, which runs with `quips: false`; the unit test is their only proof.

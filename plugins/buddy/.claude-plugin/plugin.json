@@ -53,6 +53,12 @@
       "description": "A quip waits at least this long after the previous one.",
       "default": 45
     },
+    "suggestions": {
+      "type": "boolean",
+      "title": "The buddy writes the prompt suggestion (spends tokens)",
+      "description": "After each turn, one fork of this chat, on its model and from its prompt cache, proposes your next prompt in your words, and Claude Code's own suggestion is hidden. To stop paying for both, turn off Claude Code's own prompt suggestions.",
+      "default": false
+    },
     "memory": {
       "type": "number",
       "title": "How many recent exchanges the buddy remembers (0 = off)",

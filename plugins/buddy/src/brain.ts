@@ -244,6 +244,11 @@ export function failAnswer(b: Brain, reason: string, askerId?: string): boolean 
   return true;
 }
 
+/** An answer, a failure or the thinking line holds the bubble: a line nobody asked for must not replace it yet. */
+export function holdsAnswer(b: Brain): boolean {
+  return b.talk?.held === true && b.now < b.talk.until;
+}
+
 /** A /buddy question refused because the last one is still waiting. */
 export function refuseQuestion(b: Brain): void {
   wake(b, () => 0, { silent: true });

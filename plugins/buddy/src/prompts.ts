@@ -45,6 +45,31 @@ export function oneLine(reply: string): string {
   return unquoted.length > REPLY_CAP ? `${unquoted.slice(0, REPLY_CAP - 3)}...` : unquoted;
 }
 
+/** The longest prompt suggestion kept: past it, the reply is not a prompt someone would type. */
+export const SUGGESTION_MAX_CHARS = 160;
+
+/**
+ * The fork's one user message for a prompt suggestion: the persona picks what
+ * to nudge toward; the words are the user's own, as they would type them.
+ */
+export function suggestPrompt(persona: string): string {
+  return (
+    `${persona}\n\n` +
+    'Looking at this conversation as that companion, write the prompt the user is most likely to send Claude next, ' +
+    "in the user's own words, as they would type it into the prompt box: not in character, no quotes, no preamble, at most 15 words. " +
+    'Almost every turn leaves a next step: a check, a fix, a follow-up, the next piece, a commit. ' +
+    'Reply exactly NONE only when the work is plainly finished and nothing follows. Do not use tools. Do not think out loud.'
+  );
+}
+
+/** A suggestion reply as the prompt it proposes: its first non-empty line, unquoted, one-spaced; null for none, NONE, or past the cap. */
+export function suggestionText(reply: string): string | null {
+  const line = reply.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
+  const text = line.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
+  if (text === '' || /^none[.!]*$/i.test(text) || text.length > SUGGESTION_MAX_CHARS) return null;
+  return text;
+}
+
 /** A failed model call, shown in the bubble. */
 export function lostThread(name: string, reason: string): string {
   return `${name} couldn't answer: ${reason}`;

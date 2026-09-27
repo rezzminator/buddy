@@ -52,7 +52,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - `$` is passed only to functions declared at the top level of the adapter and always spelled `$.noun.event(...)`, and `$.env` names are string literals: otherwise Claude Code loads the module with zero hooks, and `npm run validate:plugin` reports it.
 - Every hook catches, logs `buddy: {what} failed: {err}` with `$.ui.log`, and returns `next(e)` or the original result.
 - A failure shows on screen: a missing or invalid character draws the duck with a bubble naming the error and pointing at `/buddy-personality`, which lists it as `(invalid)`.
-- Only a `/buddy` question, or `quips` when on, calls a model; walking, reactions and every other command stay local.
+- Only a `/buddy` question, or `quips` or `suggestions` when on, calls a model; walking, reactions and every other command stay local.
 - Dev files live outside the plugin directory, which installs whole.
 
 ### Characters
