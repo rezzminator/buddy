@@ -908,6 +908,36 @@ describe('hook paths', () => {
     await ui.unmount();
   });
 
+  test('turn.step streams through untouched, main loop or subagent; a named effort still wins at the turn\'s end', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    const beneath: { effort?: unknown; agentId?: unknown }[] = [];
+    on('turn.step', async function* (_$, e) {
+      beneath.push({ effort: e.effort, agentId: e.agentId });
+      yield { kind: 'text', index: 0, text: 'streamed' } as never;
+      return { turnId: e.turnId, index: e.index, answer: 'streamed', toolUses: [], stopReason: 'end_turn', usage: null } as never;
+    });
+    await $.session.start(START);
+    const ui = await band($);
+    for (const input of [
+      { turnId: 't1', index: 0, model: 'opus', effort: 'medium', messageCount: 1 },
+      { turnId: 's1', index: 0, model: 'opus', effort: 'max', messageCount: 1, agentId: 'sub1' },
+    ]) {
+      const stream = $.turn.step(input as never);
+      const chunks: unknown[] = [];
+      let step = await stream.next();
+      for (; !step.done; step = await stream.next()) chunks.push(step.value);
+      expect(chunks).toMatchObject([{ kind: 'text', index: 0, text: 'streamed' }]);
+      expect(step.value).toMatchObject({ turnId: input.turnId, answer: 'streamed' });
+    }
+    expect(beneath).toEqual([{ effort: 'medium', agentId: undefined }, { effort: 'max', agentId: 'sub1' }]);
+    // effort inherit takes the main step's 'medium' (observeEffort, resolveEffort: the kit cannot set a plugin option); the default low is sent as set.
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes[0]).toMatchObject({ model: 'opus', effort: 'low' });
+    expect(w.logs.filter((l) => /failed:/.test(l))).toEqual([]);
+    await ui.unmount();
+  });
+
   test('the line\'s and the suggestion\'s outcomes carry ms, from the turn\'s end to the reply, as an ask\'s does', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'LINE: Fixy likes that.\nNEXT: run the tests' } });
     await $.session.start(START);

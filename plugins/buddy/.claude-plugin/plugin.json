@@ -44,7 +44,7 @@
     "effort": {
       "type": "string",
       "title": "How hard quipModel thinks: low, medium, high, xhigh, max or inherit",
-      "description": "The effort of every quipModel call the buddy makes (the end-of-turn line and suggestion, every /buddy question). Higher is slower. inherit uses the main chat's level, read at every call, when Claude Code exposes it (CLAUDE_EFFORT), and otherwise sends none, so the model's default applies.",
+      "description": "The effort of every quipModel call the buddy makes (the end-of-turn line and suggestion, every /buddy question). Higher is slower. inherit uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies.",
       "default": "low"
     },
     "quipCooldownSec": {

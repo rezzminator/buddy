@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { DEFAULTS, expandHome, logPath, resolveEffort, resolveModel, resolveOptions } from '../plugins/buddy/src/options.ts';
+import { DEFAULTS, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions } from '../plugins/buddy/src/options.ts';
 
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
@@ -65,14 +65,30 @@ describe('resolveEffort', () => {
     expect(resolveEffort('high', 'max')).toBe('high');
     expect(resolveEffort('low', undefined)).toBe('low');
   });
-  test("inherit is the main chat's level, when it is one of the five", () => {
-    for (const e of ['low', 'medium', 'high', 'xhigh', 'max']) expect(resolveEffort('inherit', e)).toBe(e);
-    expect(resolveEffort('inherit', ' High ')).toBe('high');
+  test("inherit is the level of the main chat's latest request", () => {
+    for (const e of ['low', 'medium', 'high', 'xhigh', 'max'] as const) expect(resolveEffort('inherit', e)).toBe(e);
   });
-  test("inherit without a known level sends none: the model's default applies", () => {
+  test("inherit with a numeric effort, none on the request, or no request yet sends none: the model's default applies", () => {
+    expect(resolveEffort('inherit', 32000)).toBeUndefined();
     expect(resolveEffort('inherit', undefined)).toBeUndefined();
-    expect(resolveEffort('inherit', '')).toBeUndefined();
-    expect(resolveEffort('inherit', 'turbo')).toBeUndefined();
+  });
+});
+
+describe('observeEffort', () => {
+  test("a main-loop request's effort replaces the recorded one, an absent one included", () => {
+    expect(observeEffort(undefined, { effort: 'medium' })).toBe('medium');
+    expect(observeEffort('medium', { effort: 'max' })).toBe('max');
+    expect(observeEffort('medium', { effort: 32000 })).toBe(32000);
+    expect(observeEffort('medium', {})).toBeUndefined();
+  });
+  test("a subagent's request leaves the main chat's recorded effort as it was", () => {
+    expect(observeEffort('medium', { agentId: 'sub1', effort: 'max' })).toBe('medium');
+    expect(observeEffort(undefined, { agentId: 'sub1', effort: 'low' })).toBeUndefined();
+  });
+  test('a main-loop medium then inherit resolves to medium; a later subagent step keeps it', () => {
+    let seen = observeEffort(undefined, { effort: 'medium' });
+    seen = observeEffort(seen, { agentId: 'sub1', effort: 'high' });
+    expect(resolveEffort('inherit', seen)).toBe('medium');
   });
 });
 

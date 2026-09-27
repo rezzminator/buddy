@@ -1,4 +1,4 @@
-import type { EngineInterface, ModelCompleteResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput } from 'claude-code';
+import type { EngineInterface, ModelCompleteResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStepInput } from 'claude-code';
 import {
   COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, isMainLoop, observeBand, period, pet,
   react, sceneOf, setCharacter, speak, tick, wake,
@@ -12,7 +12,7 @@ import {
 } from '../src/menu.ts';
 import { MEMORY_KEY_PREFIX, MEMORY_SESSIONS, bookOf, recall, record, render, staleKeys, storeKey, type Book, type Exchange, type Stored } from '../src/memory.ts';
 import { Logger, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
-import { INHERIT, expandHome, logPath, resolveEffort, resolveModel, resolveOptions, type Effort, type Options } from '../src/options.ts';
+import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
   NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, recentTurns, requestTimeoutMs,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants,
@@ -87,8 +87,10 @@ type State = {
   harnessSuggestion: string | null;
   /** The buddy gave up on this turn's suggestion: the engine's own passes. */
   suggestGaveUp: boolean;
-  /** The inherit reads (the main chat's model, its effort) that failed once and were logged; a later failure falls back in silence. */
-  inheritFailed: Set<'model' | 'effort'>;
+  /** The inherit read of the main chat's model failed once and was logged; a later failure falls back to opus in silence. */
+  inheritFailed: Set<'model'>;
+  /** The effort of the main chat's latest model request (turn.step), which effort inherit sends; undefined before its first. */
+  mainEffort: ObservedEffort;
   /** The prompts given to the main chat, by the turn each starts (prompt.submit): an answered turn files its own into `turns`. */
   prompts: PromptLedger;
   /** The main chat's last contextTurns answered turns, oldest first, read by the end-of-turn call and a question's completion. */
@@ -467,7 +469,7 @@ function drawBand(Box: Component, Text: Component, s: Scene) {
   );
 }
 
-// ---- tool.call and turn.complete ----------------------------------------
+// ---- tool.call, turn.step and turn.complete ----------------------------
 
 function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCallResult): void {
   try {
@@ -479,6 +481,15 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
     refresh(st, $);
   } catch (error) {
     log($, 'reacting to a tool call', error);
+  }
+}
+
+/** Records the effort of a main-loop model request, which effort inherit sends; a subagent's leaves it. */
+function onTurnStep(st: State, $: EngineInterface, e: TurnStepInput): void {
+  try {
+    st.mainEffort = observeEffort(st.mainEffort, e);
+  } catch (error) {
+    log($, "recording the main chat's effort", error);
   }
 }
 
@@ -527,8 +538,9 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
 
 /**
  * The model and effort of one `$.model.complete`, resolved now: an 'inherit'
- * option reads the main chat's (its model, the CLAUDE_EFFORT level); a failed
- * read is logged once and falls back (opus; no effort). Logged at debug as `event`.
+ * option takes the main chat's: its model, read now (a failed read is logged
+ * once and falls back to opus), and the effort of its latest request, recorded
+ * by turn.step (none before its first). Logged at debug as `event`.
  * Never throws.
  */
 async function callSettings(st: State, $: EngineInterface, event: string): Promise<{ model: string; effort?: Effort }> {
@@ -541,17 +553,8 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
       st.inheritFailed.add('model');
     }
   }
-  let envEffort: string | undefined;
-  if (st.options.effort === INHERIT) {
-    try {
-      envEffort = await $.env.get('CLAUDE_EFFORT');
-    } catch (error) {
-      if (!st.inheritFailed.has('effort')) log($, "reading the main chat's effort (CLAUDE_EFFORT) for effort inherit", error);
-      st.inheritFailed.add('effort');
-    }
-  }
   const model = resolveModel(st.options.quipModel, sessionModel);
-  const effort = resolveEffort(st.options.effort, envEffort);
+  const effort = resolveEffort(st.options.effort, st.mainEffort);
   lg($, 'debug', event, { model, effort: effort ?? 'none' });
   return effort ? { model, effort } : { model };
 }
@@ -1204,6 +1207,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     harnessSuggestion: null,
     suggestGaveUp: false,
     inheritFailed: new Set(),
+    mainEffort: undefined,
     prompts: NO_PROMPTS,
     turns: [],
     warned: false,
@@ -1263,6 +1267,12 @@ export const register: Register = (on: On, options: PluginOptions) => {
     const r = await next(e);
     onTurnComplete(st, $, e);
     return r;
+  });
+
+  // The main chat's effort reaches the plugin only on its requests: recorded, then the stream passes through untouched.
+  on('turn.step', async function* ($, e, next) {
+    onTurnStep(st, $, e);
+    return yield* next(e);
   });
 
   // With suggestions on, the engine's own guess is held back: the buddy's end-of-turn call proposes the next prompt instead.

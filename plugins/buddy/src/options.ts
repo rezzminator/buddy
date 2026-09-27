@@ -1,6 +1,7 @@
 // The plugin's userConfig, resolved to typed values with the manifest's
 // defaults; a bad value is ignored by name and listed, never silently.
 
+import { isMainLoop } from './brain.ts';
 import { configDir, type ConfigEnv } from './config-source.ts';
 import { LOG_LEVELS, type LogLevel } from './log.ts';
 import { MEMORY_DEFAULT, MEMORY_MAX } from './memory.ts';
@@ -146,11 +147,18 @@ export function resolveModel(option: string, sessionModel: string | undefined): 
   return model || INHERIT_FALLBACK_MODEL;
 }
 
-/** The effort a call sends: the option, or for 'inherit' the main chat's level when it is one of EFFORTS; undefined sends none, so the model's default applies. */
-export function resolveEffort(option: Effort | typeof INHERIT, envEffort: string | undefined): Effort | undefined {
+/** The main chat's effort as its latest request (turn.step) carried it: a level, a number, or undefined (no request yet, or a model without effort). */
+export type ObservedEffort = Effort | number | undefined;
+
+/** The effort recorded after a model request: a main-loop request's (no agentId) replaces it, even when absent; a subagent's leaves it. */
+export function observeEffort(recorded: ObservedEffort, step: { agentId?: string; effort?: Effort | number }): ObservedEffort {
+  return isMainLoop(step.agentId) ? step.effort : recorded;
+}
+
+/** The effort a call sends: the option, or for 'inherit' the level of the main chat's latest request; a number, none, or no request yet sends none, so the model's default applies. */
+export function resolveEffort(option: Effort | typeof INHERIT, observed: ObservedEffort): Effort | undefined {
   if (option !== INHERIT) return option;
-  const e = envEffort?.trim().toLowerCase() ?? '';
-  return (EFFORTS as readonly string[]).includes(e) ? (e as Effort) : undefined;
+  return typeof observed === 'string' && (EFFORTS as readonly string[]).includes(observed) ? observed : undefined;
 }
 
 /** Stands for Claude Code's config folder at the start of logFile: CLAUDE_CONFIG_DIR, or ~/.claude when it is unset. */
