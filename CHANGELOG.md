@@ -12,6 +12,7 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 - A `/buddy` question answered by `quipModel` (in `complete` mode, while Claude works, or when the fork gives no answer) now sees the ends of your last prompt and Claude's last answer, so it no longer answers as if there were no chat.
 
 ### Fixed
+- A `/buddy` question no longer sits "still thinking" for a minute in a long chat: the fork gets 15 seconds, then `quipModel` answers from your last prompt and Claude's last answer in the time left.
 - A `/buddy` question asked while Claude is idle forks the chat again, instead of always falling back to `quipModel`: whether the main turn runs is decided once, when the question is asked, before the band draws the question's own command as work.
 - A log fallback that threw (the debug log refusing a record) left the log's write chain rejected, and every later record was silently never written. A throwing fallback is now swallowed, the chain never stays rejected, and a flush never throws into a hook.
 - A quip, or a quip's failure, replaced a `/buddy` answer still holding the bubble, cutting its 15 seconds short. A quip arriving while an answer, a failure or the `thinking` line holds the bubble is now not said, nor remembered, and the log records it as `held`.

@@ -461,7 +461,7 @@ describe('/buddy', () => {
   });
 
   test('a second ask while one is pending is refused out loud; the first still ends visibly', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { forkDelayMs: 10 * 60 * 1000 });
+    const w = world(on, { character: 'fixy' }, { forkDelayMs: 10 * 60 * 1000, completeDelayMs: 10 * 60 * 1000 });
     await $.session.start(START);
     const ui = await band($);
     expect((await $.command.run(run('say hi'))).text).toBe('Asked Fixy.');
@@ -478,15 +478,15 @@ describe('/buddy', () => {
     await ui.unmount();
   });
 
-  test('one 90 s deadline per question: a fork that took 60 s leaves its fallback 30 s, then the bubble says so and the ask ends', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'empty-reply' }, forkDelayMs: 60_000, complete: { isAnswered: true, text: 'Too late.' }, completeDelayMs: 60_000 });
+  test('one 90 s deadline per question: a fork given up at 15 s leaves its fallback 75 s, then the bubble says so and the ask ends', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: false, reason: 'empty-reply' }, forkDelayMs: 60_000, complete: { isAnswered: true, text: 'Too late.' }, completeDelayMs: 80_000 });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('slow one?'));
     await w.clock.settle();
-    await w.clock.advance(60_000);
-    expect(w.completes.map((c) => c.timeoutMs)).toEqual([30_000]);
-    await w.clock.advance(30_000);
+    await w.clock.advance(15_000);
+    expect(w.completes.map((c) => c.timeoutMs)).toEqual([75_000]);
+    await w.clock.advance(75_000);
     expect(await shows(ui, /^Fixy couldn't answer: no answer in 90 s$/)).toBe(true);
     expect(w.logs).toContain('buddy: a /buddy question got no answer: no answer in 90 s');
     await w.clock.settle();
@@ -497,8 +497,27 @@ describe('/buddy', () => {
     await ui.unmount();
   });
 
+  test('a fork slower than 15 s hands the question to the quip model, which answers with the time left', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Forked, too late.' }, forkDelayMs: 60_000, complete: { isAnswered: true, text: 'Quick answer.' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('you there?'));
+    await w.clock.settle();
+    expect(w.forks).toHaveLength(1);
+    expect(w.completes).toHaveLength(0);
+    await w.clock.advance(15_000);
+    await w.clock.settle();
+    expect(w.completes.map((c) => c.timeoutMs)).toEqual([75_000]);
+    expect(await shows(ui, /^Quick answer\.$/)).toBe(true);
+    await w.clock.advance(60_000);
+    expect(await shows(ui, /Forked, too late/)).toBe(false);
+    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    expect(records.find((r) => r.event === 'ask.fallback')).toMatchObject({ why: 'the fork took over 15 s' });
+    await ui.unmount();
+  });
+
   test('the thinking line stays up while the question is pending, past 60 s, and ends when the answer arrives', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { fork: { isAnswered: true, text: 'Late but here.' }, forkDelayMs: 80_000 });
+    const w = world(on, { character: 'fixy' }, { forkDelayMs: 10 * 60 * 1000, complete: { isAnswered: true, text: 'Late but here.' }, completeDelayMs: 66_000 });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('take your time'));

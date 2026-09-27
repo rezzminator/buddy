@@ -220,6 +220,18 @@ export function endQuestion(b: Brain): void {
   b.pending = null;
 }
 
+/**
+ * How much of a question's deadline a fork may take. A fork carries the whole
+ * chat on its model and effort: in a long session it runs past a minute, so past
+ * this the quip model answers from the last exchange in the time left.
+ */
+export const FORK_BUDGET_MS = 15_000;
+
+/** What a fork may still take of a question asked at `askedAt`, at `now`: its budget, never past the deadline. */
+export function forkLeft(askedAt: number, now: number): number {
+  return Math.min(FORK_BUDGET_MS, askLeft(askedAt, now));
+}
+
 /** What is left of the one deadline of a question asked at `askedAt`, at `now`; 0 once it passed, never more than the whole. */
 export function askLeft(askedAt: number, now: number): number {
   return Math.min(ASK_DEADLINE_MS, Math.max(0, Math.ceil(askedAt + ASK_DEADLINE_MS - now)));

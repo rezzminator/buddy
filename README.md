@@ -221,7 +221,9 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   prompt cache instead of writing it again. Before the chat's first reply
   there is nothing to fork, and the question goes to `quipModel` alone; so
   does a question asked while Claude is busy mid-turn, when a fork would
-  only continue that turn, and one whose fork gives no answer. In
+  only continue that turn, and one whose fork gives no answer or takes
+  longer than 15 seconds (a long chat forks slowly on its own model): then
+  `quipModel` answers from your last prompt and Claude's last answer. In
   `complete` mode every question goes to `quipModel` alone, without the
   conversation; `off` turns questions off. Every question ends in the
   bubble: its answer, or `{name} couldn't answer: {reason}`, such as

@@ -1,6 +1,6 @@
 import type { EngineInterface, ModelForkResult, On, PluginOptions, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput } from 'claude-code';
 import {
-  ASK_DEADLINE_REASON, ERROR_MS, answer, askLeft, beginQuestion, createBrain, endQuestion, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, observeBand, period, pet,
+  ASK_DEADLINE_REASON, ERROR_MS, FORK_BUDGET_MS, forkLeft, answer, askLeft, beginQuestion, createBrain, endQuestion, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, observeBand, period, pet,
   react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
@@ -947,10 +947,13 @@ async function ask(st: State, $: EngineInterface, question: string, memory: stri
       via = 'fork';
       const prompt = forkPrompt(c.persona, question, memory);
       lg($, 'debug', 'ask.prompt', { via, length: prompt.length });
-      r = await within($, $.model.fork({ prompt }), askLeft(askedAt, await $.clock.now()));
+      r = await within($, $.model.fork({ prompt }), forkLeft(askedAt, await $.clock.now()));
       lg($, 'debug', 'ask.result', { via, ...shape(r) });
-      // A fork with no answer (a new session has no reply to fork yet): the quip model answers.
-      if (r !== 'timeout' && !(r.isAnswered && oneLine(r.text))) {
+      // A fork past its budget (a long chat), or with no answer (a new session has no reply to fork yet): the quip model answers.
+      if (r === 'timeout') {
+        fellBack = `the fork took over ${FORK_BUDGET_MS / 1000} s`;
+        r = await complete();
+      } else if (!(r.isAnswered && oneLine(r.text))) {
         fellBack = r.isAnswered ? 'empty reply' : r.reason;
         r = await complete();
       }

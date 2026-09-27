@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ANSWER_MS, ASK_DEADLINE_MS, ASK_DEADLINE_REASON, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, askLeft, beginQuestion, createBrain, currentPose, endQuestion, endTurn,
+  ANSWER_MS, ASK_DEADLINE_MS, ASK_DEADLINE_REASON, FORK_BUDGET_MS, forkLeft, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, askLeft, beginQuestion, createBrain, currentPose, endQuestion, endTurn,
   failAnswer, farewell, holdsAnswer, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
@@ -220,6 +220,12 @@ describe('one deadline per question', () => {
     expect(askLeft(1000, 500_000)).toBe(0);
     // A clock stepped back never grants more than the whole deadline.
     expect(askLeft(1000, 0)).toBe(90_000);
+  });
+  test('a fork gets at most 15 s of that deadline; the fallback gets the rest', () => {
+    expect(FORK_BUDGET_MS).toBe(15_000);
+    expect(forkLeft(1000, 1000)).toBe(15_000);
+    expect(forkLeft(1000, 81_000)).toBe(10_000);
+    expect(forkLeft(1000, 91_000)).toBe(0);
     expect(ASK_DEADLINE_REASON).toBe('no answer in 90 s');
   });
 });
