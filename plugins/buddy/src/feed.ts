@@ -1,15 +1,17 @@
 // The feed: what passed between you and the buddy in this session, in order,
 // for the drawer /buddy opens: your prompts to Claude (the context each buddy
 // line answers), the main chat's compactions, your questions and its answers,
-// its comment after each turn, each next prompt it suggested and whether you
-// sent it, the canned lines it said on its own, and every failure, said as
+// its comment after each turn, its second brain's verdict on Claude's last
+// move with what you most deeply want, each next prompt it suggested and
+// whether you sent it, the canned lines it said on its own, and every failure, said as
 // one. Texts are kept whole. It spans exactly what the buddy remembers
 // (src/chatTurnsToRead.ts): the same last turns, nothing before a /clear. No
 // I/O: the adapter keeps the feed in $.state and draws it.
 
 import { COMPACTION, type Block } from './chatTurnsToRead.ts';
+import type { Verdict } from './prompts.ts';
 
-export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'suggest' | 'line' | 'failed' | 'clear';
+export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'line' | 'failed' | 'clear';
 
 /**
  * One entry. `who` and `color`: the character that said it (its name and
@@ -19,6 +21,8 @@ export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'sugge
  * `turnId`: the main turn a `you` entry started, or a `compact` entry's id.
  * `read`: whether the buddy filed that turn into its memory (true), or it
  * ended unanswered and the buddy never read it (false); absent while it runs.
+ * `verdict` and `desire`: a `verdict` entry's judgement (its text the why)
+ * and the deepest desire it judged against, when named.
  */
 export type FeedEntry = {
   id: number;
@@ -32,6 +36,8 @@ export type FeedEntry = {
   taken?: boolean;
   turnId?: string;
   read?: boolean;
+  verdict?: Verdict;
+  desire?: string;
 };
 
 export type NewEntry = Omit<FeedEntry, 'id'>;

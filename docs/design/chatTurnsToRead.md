@@ -2,7 +2,7 @@
 
 `chatTurnsToRead` is the buddy's short-term memory: the main chat's last N answered turns, a compaction counting as one, and under each what the buddy and you said after it.
 Ask it to remember a word, and the next question gets the word back; ask about a turn older than its memory, and it says it doesn't remember that far back.
-It is one timeline per session, and every question and end-of-turn call reads it, at no extra model call.
+It is one timeline per session, and every question and both end-of-turn calls read it, at no extra model call.
 
 ## What it remembers
 
@@ -13,10 +13,10 @@ Only the first block may have no turn: what was said before the first turn remem
 | --- | --- |
 | `question` | a `/buddy` question with its answer, or the question alone if it got none: its call failed, or another character was drawn by the time the answer came, so it was dropped |
 | `line` | a canned line the bubble showed on its own |
-| `endOfTurn` | what one end-of-turn call showed: its `commentAfterEachTurn`, if the bubble showed it, and its `suggestNextPrompt`, if the prompt box showed it; at least one, kept together |
+| `endOfTurn` | what a turn's end showed: its `commentAfterEachTurn` (said, or outranked by a warning), the second brain's warning or scream the bubble said (`warned`), and its `suggestNextPrompt`, if the prompt box showed it; at least one, kept together: the comment call and the watch call each file their part, merged into one exchange in whichever order they land |
 
 - **As far back of itself as of the chat.** When a turn ends past the option's count, the oldest block goes, and every exchange filed under it goes with it (`addTurn`). The buddy never holds a comment about a turn it can no longer see.
-- **Filed where it happened.** An exchange is filed under the turn that was the newest when it began (`addExchange`, `lastTurnId`): a question asked while a turn runs is filed under the turn before it, however late its answer lands; an end-of-turn call's exchange under its own turn. One whose turn is no longer remembered is dropped.
+- **Filed where it happened.** An exchange is filed under the turn that was the newest when it began (`addExchange`, `lastTurnId`): a question asked while a turn runs is filed under the turn before it, however late its answer lands; an end-of-turn exchange under its own turn. One whose turn is no longer remembered is dropped.
 - **Only what was shown.** The `thinking` filler is not an exchange; a line said while the buddy is hidden was never shown, so it is dropped; a comment held back behind a `/buddy` answer is not filed. A line joins only once the band has drawn in the session: a headless `claude -p` or SDK session never draws it; before the first draw only the newest line is held, for when the band first shows it (`heard`).
 - **A compaction is a turn.** When the main chat compacts (`session.compact`, the main loop's, never a `precompute`), the summary Claude now holds is filed as a block of its own (`addCompaction`, `from: compaction`), its summary the answer, cut like an answer, and counts toward N. The model reads `Turn k. The main chat was compacted: Claude now holds only this summary of everything before it:`, so the buddy knows what the chat still holds of what it no longer remembers.
 - **Only answered turns.** An aborted turn, or a subagent's, is not filed. A headless session files no turn at all, so it never pushes an interactive session's memory out of the store.
@@ -34,7 +34,7 @@ A turn is kept as what carries meaning, never what only fills (`cappedTurn`):
 Each step is at most 80 characters (`DID_TEXT_CAP`), a verb names at most 6 files and counts the rest (`DID_FILES_MAX`). Filtering is idempotent: a stored turn read back is filtered again and stays as it was.
 A text cut keeps its head and tail around ` … ` (`ends`).
 
-What the buddy and you say to each other is never cut: a question, an answer, a `commentAfterEachTurn` and a `suggestNextPrompt` are kept whole, blank space around them aside (`keepText`), line breaks and all, and no count drops them. Only canned lines are bounded: one character keeps at most 3 under one turn, the oldest going first (`LINES_PER_TURN_MAX`).
+What the buddy and you say to each other is never cut: a question, an answer, a `commentAfterEachTurn`, a warning and a `suggestNextPrompt` are kept whole, blank space around them aside (`keepText`), line breaks and all, and no count drops them. Only canned lines are bounded: one character keeps at most 3 under one turn, the oldest going first (`LINES_PER_TURN_MAX`).
 
 ## How much of a turn is kept
 
@@ -62,7 +62,7 @@ Each chat has one file in its own folder, beside its transcript: `{config}/proje
 - **In the chat's folder.** It survives `/reload`, restarts and a reopened chat: the session start loads it (`loadMemory`, for a hidden buddy too), and opening the drawer loads it, so the talk tab shows it at once. It lasts as long as the chat, and deleting the chat's folder deletes it.
 - **Moved from the store.** Before 1.0.0 it was kept in `$.store` under `chatTurnsToRead:{session id}` (`storeKey`), 20 sessions at most. A chat's first read with no `memory.json` reads that key, writes the file, and deletes the key (`chatTurnsToRead.moved`); other chats' keys wait until those chats are opened.
 
-Every read and write goes through one chain, in the order made, so a turn is filed before its end-of-turn call reads the memory, and an answer is saved before the next question reads it (`chainChatTurnsToRead`, on `chained`).
+Every read and write goes through one chain, in the order made, so a turn is filed before its end-of-turn calls read the memory, and an answer is saved before the next question reads it (`chainChatTurnsToRead`, on `chained`).
 A link's deadline counts only its own run: a write gets 60 seconds (`CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS`), a read what is left of its caller's deadline. A link still running at its deadline is abandoned, said once, and the chain goes on; a read whose caller gives up while it still waits is dropped unrun (`chatTurnsToRead.dropped`), never said failed.
 A write that failed or was abandoned is made again 5 seconds later (`CHAT_TURNS_TO_READ_RETRY_MS`), so the reads queued meanwhile go first, 3 tries in all (`CHAT_TURNS_TO_READ_WRITE_TRIES`), and only while the next main turn has not started and the conversation is the same (`changeChatTurnsToRead`); the change is applied to the timeline once, never twice. `chatTurnsToRead.retry` logs each try as `trying`, `landed` or `skipped`, and a retry that lands clears the failure the next reply would have said.
 An abandoned link writes nothing once it lands: a late store read never replaces the timeline a later link loaded, and at most one store write per session is in flight (`latestWrites`), so a late write never lands over a newer one.
@@ -98,7 +98,7 @@ A question that got no answer reads `You gave no answer.` under it; a turn whose
 | Call | What it gets |
 | --- | --- |
 | a question | the block, then the question (`questionPrompt`); its system prompt carries the memory rule (`oneLineSystem`, `memoryRule`) |
-| the end-of-turn call | the block, the turn just ended its last, then that turn's tally (`turnPrompt`) |
+| each end-of-turn call | the block, the turn just ended its last, then that turn's tally (`turnPrompt`) |
 
 The memory rule tells the character how far its memory reaches, in turns, and to say in character that its short-term memory doesn't reach that far when asked about anything older, never guessing or making it up.
 The block is read once, when the question is asked, so it holds what came before the question; the question joins the timeline with its answer.
@@ -132,7 +132,7 @@ A stored record that is malformed keeps what still reads and says how many entri
 - **It knows its reach.** Rejected: a memory the model is not told the size of. Asked about an older turn, it guessed; told its reach, it says it doesn't remember.
 - **Recent turns in the prompt.** Rejected: a model-written summary of the conversation. A summary costs one more call per turn; the timeline costs nothing to keep and a few thousand tokens at most to send.
 - **Every call carries it.** Rejected: relying on the chat's own record. A `/buddy` answer is drawn only in the bubble and never lands in the main transcript, where the chat holds only the command and its `Asked {name}.` reply; so without the timeline no call could see what the buddy said.
-- **A turn's `commentAfterEachTurn` and `suggestNextPrompt` in one exchange.** Rejected: one exchange each, or the suggestion kept as a line. A `suggestNextPrompt` was put in the prompt box, never said in the bubble, and in the user's words, not the character's; apart, the model had to guess which suggestion came with which comment.
+- **A turn's `commentAfterEachTurn`, warning and `suggestNextPrompt` in one exchange.** Rejected: one exchange each, or the suggestion kept as a line. A `suggestNextPrompt` was put in the prompt box, never said in the bubble, and in the user's words, not the character's; apart, the model had to guess which suggestion came with which comment.
 - **The character is "you", the user is "the user".** Rejected: `You:` for the user and the character's name for its lines. The prompt calls the character "you" everywhere else, so `You:` for the user's lines invited the model to take them as its own.
 - **Kept in the chat's own folder.** Rejected: plugin memory only, since a `/reload` would forget the thread mid-conversation and a resume could not bring its chat back; and `$.store`, which 0.3 used, since one store shared by every chat had to be capped at 20 chats, so a reopened older chat had lost its memory, and a chat's memory outlived the chat. The chat's folder already holds the transcript the memory is read from.
 - **Per session and per character.** Rejected: one global timeline. A new session's buddy would recall another chat, and a switched character would quote another's words as its own.

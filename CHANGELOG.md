@@ -4,6 +4,12 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
+### Added
+- The buddy's second brain: `suggestNextPrompt` now comes from a call of its own, beside the comment's, with its own prompt. It names what you most deeply want from the chat (carried to the next turn's call, forgotten at `/clear`), judges Claude's last move against it (`RIGHT`, `SHORTCUT` or `WRONG`) and writes your next prompt to match: after `RIGHT` a go-ahead, after `SHORTCUT` a request for the proper way, after `WRONG` a stop naming what to do instead. A `SHORTCUT` is warned of in yellow in the bubble and a `WRONG` screamed in red, both outranking that turn's comment; the drawer shows each verdict with what it judged against (`wants: …`), and the buddy remembers its warning with the turn. Each verdict logs `verdict.outcome` with the call's usage; round files name it the second-brain call.
+
+### Changed
+- An answered turn now makes two short `model` calls when both options are on, run side by side: one for `commentAfterEachTurn`, one for `suggestNextPrompt`. `suggestNextPrompt`'s usage moves to `verdict.outcome`, and a suggestion may run to 200 characters (was 160).
+
 ## [1.0.0] — 2026-09-28
 
 ### Added

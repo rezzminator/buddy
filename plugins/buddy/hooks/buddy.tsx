@@ -5,7 +5,7 @@ import {
   currentPose, react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
-import { frameAt, type Character } from '../src/character.ts';
+import { frameAt, type Character, type Pose } from '../src/character.ts';
 import { DRAWER_KEYS, USAGE, parseCommand, type Action } from '../src/command.ts';
 import { allItems, buildMenu, currentKeyOf, findItem, type Item, type Originals } from '../src/menu.ts';
 import {
@@ -23,7 +23,7 @@ import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
   ASKED_PROMPT_MAX_CHARS, NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
-  skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants,
+  parseWatchReply, skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, watchSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants, type Verdict,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
@@ -37,7 +37,7 @@ import {
   choose, isCharacterFile, loadEntries, mergeRoster, startWarning, withEntry,
   type Entry, type LoadedFile, type Roster, type Source,
 } from '../src/roster.ts';
-import { spriteColor, type Scene } from '../src/scene.ts';
+import { TONE_COLOR, spriteColor, type Scene, type Tone } from '../src/scene.ts';
 import { validateHats, validateSpecies, type HatArt, type SpeciesTemplate } from '../src/species.ts';
 
 // The adapter: the only file touching `$`. Every decision lives in ../src/;
@@ -105,12 +105,16 @@ type State = {
   hiddenGen: number;
   /** Saves of `hidden` in flight: a read of it landing meanwhile may hold the value before the save, and is dropped. */
   hiddenSaves: number;
-  /** Bumped at every main-loop turn's end, however it ended, and at /clear: a commentAfterEachTurn or suggestNextPrompt from an earlier turn's call is stale, never shown. */
+  /** Bumped at every main-loop turn's end, however it ended, and at /clear: a commentAfterEachTurn, verdict or suggestNextPrompt from an earlier turn's call is stale, never shown. */
   turnGen: number;
   /** The engine's own suggestion for this turn, held back while the buddy's end-of-turn call runs: shown if the buddy gives up. */
   harnessSuggestion: string | null;
   /** The buddy gave up on this turn's suggestNextPrompt: the engine's own suggestion passes. */
   suggestNextPromptGaveUp: boolean;
+  /** What the user most deeply wants, as the last watch call named it: carried to the next one, forgotten at /clear. */
+  desire: string | null;
+  /** The turn (turnGen) whose verdict the bubble warned or screamed: its comment never covers it. */
+  loudGen: number;
   /** The inherit read of the main chat's model failed once and was logged; a later failure falls back to opus in silence. */
   inheritFailed: Set<'model'>;
   /** The effort of the main chat's latest model request (turn.step), which effort inherit sends; undefined before its first. */
@@ -705,8 +709,8 @@ type Component = any;
 
 function drawBand(Box: Component, Text: Component, s: Scene) {
   const bubble = s.bubble ? (
-    <Box borderStyle="round" paddingX={1} width={s.bubble.width} alignSelf="flex-start">
-      <Text italic wrap="wrap">{s.bubble.text}</Text>
+    <Box borderStyle="round" borderColor={s.bubble.tone ? TONE_COLOR[s.bubble.tone] : undefined} paddingX={1} width={s.bubble.width} alignSelf="flex-start">
+      <Text italic={s.bubble.tone !== 'alarm'} bold={s.bubble.tone === 'alarm'} color={s.bubble.tone ? TONE_COLOR[s.bubble.tone] : undefined} wrap="wrap">{s.bubble.text}</Text>
     </Box>
   ) : null;
   const card = s.card ? (
@@ -842,13 +846,22 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     if (!wants.suggestNextPrompt) giveUpSuggestNextPrompt(st, $, gen, 0).catch((error) => log($, "showing the engine's own suggestion", error));
     if (wants.commentAfterEachTurn || wants.suggestNextPrompt) {
       lg($, 'info', 'turn.call', { commentAfterEachTurn: wants.commentAfterEachTurn, suggestNextPrompt: wants.suggestNextPrompt, tools: turn.tools.length });
-      // The character drawn as the turn ended: a commentAfterEachTurn arriving after a switch is never said by another.
-      st.calls++;
-      turnCall(st, $, st.b.character, turn, e.turnId, gen, wants, Date.now())
-        .catch((error) => log($, 'the end-of-turn call', error))
-        .finally(() => {
-          st.calls--;
-        });
+      // The character drawn as the turn ended: what arrives after a switch is never said by another. The two calls run side by side.
+      const c = st.b.character;
+      const started = Date.now();
+      const calls: [boolean, () => Promise<void>, string][] = [
+        [wants.commentAfterEachTurn, () => commentCall(st, $, c, turn, e.turnId, gen, started), 'the end-of-turn call'],
+        [wants.suggestNextPrompt, () => watchCall(st, $, c, turn, e.turnId, gen, started), 'the second-brain call'],
+      ];
+      for (const [wanted, run, what] of calls) {
+        if (!wanted) continue;
+        st.calls++;
+        run()
+          .catch((error) => log($, what, error))
+          .finally(() => {
+            st.calls--;
+          });
+      }
     } else {
       lg($, 'info', 'turn.skipped', { why: skipReason(gate) });
     }
@@ -872,6 +885,7 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
   if (st.harnessSuggestion !== null) lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-stale' });
   st.harnessSuggestion = null;
   st.suggestNextPromptGaveUp = true;
+  st.desire = null;
   if (st.b) endTurn(st.b, false, 0);
   feedAdd(st, $, { at: Date.now(), kind: 'clear', text: reason });
   lg($, 'info', 'session.forget', { reason });
@@ -1004,20 +1018,17 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
   return effort ? { model, effort } : { model };
 }
 
+/** What one end-of-turn call came back with: its reply, or why there is none (`reason`), its usage, and whether a later turn ended or /clear came meanwhile (`stale`). */
+type EndOfTurnReply = { text: string | null; reason: string; usage: Record<string, number>; ms: number; stale: boolean };
+
 /**
- * One call at a turn's end writes the buddy's commentAfterEachTurn and
- * suggestNextPrompt, those wanted: a model completion on the main chat's last
- * chatTurnsToRead turns, in the voice of `c`, the character drawn as the turn ended.
- * One deadline covers the chatTurnsToRead read, the settings and the completion.
- * A timeout, a refusal, an empty reply or a throw fails commentAfterEachTurn as
- * it fails and gives suggestNextPrompt up; a reply after a later turn ended (or
- * /clear) is stale by `gen`, its commentAfterEachTurn and suggestNextPrompt dropped.
- * Every outcome logs `ms`, from `started` (the turn's end) to the reply; the
- * call's usage goes on commentAfterEachTurn's outcome, else on suggestNextPrompt's.
- * Never throws.
+ * One end-of-turn completion, `kind` naming it in the round: `system` over the
+ * main chat's last chatTurnsToRead turns and what turn `t` did. One deadline
+ * covers the chatTurnsToRead read, the settings and the completion. `ms`: from
+ * `started` (the turn's end) to the reply. Never throws.
  */
-async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSummary, turnId: string, gen: number, wants: TurnWants, started: number): Promise<void> {
-  let reply: { commentAfterEachTurn: string | null; suggestNextPrompt: string | null } | null = null;
+async function endOfTurnCompletion(st: State, $: EngineInterface, c: Character, t: TurnSummary, gen: number, kind: 'endOfTurn' | 'watch', system: string, started: number): Promise<EndOfTurnReply> {
+  let text: string | null = null;
   let reason = '';
   let usage: Record<string, number> = {};
   let late = false;
@@ -1031,10 +1042,10 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
         // Past the deadline already: no completion is sent that nobody waits for.
         if (late) return 'timeout' as const;
         const prompt = turnPrompt(t, remembered.text);
-        lg($, 'debug', 'turn.prompt', { length: prompt.length });
+        lg($, 'debug', 'turn.prompt', { kind, length: prompt.length });
         // Abandoned the margin past the deadline, however late it is sent.
         const timeoutMs = requestTimeoutMs(TURN_DEADLINE_MS, (await $.clock.now()) - t0);
-        return completeRecorded(st, $, 'endOfTurn', { ...settings, system: turnSystem(c.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs }, remembered.memory);
+        return completeRecorded(st, $, kind, { ...settings, system, prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs }, remembered.memory);
       })(),
       TURN_DEADLINE_MS,
     );
@@ -1044,49 +1055,123 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
     if (r === 'timeout') reason = 'timeout';
     else if (!r.isAnswered) reason = r.reason;
     else {
-      reply = parseTurnReply(r.text);
-      lg($, 'debug', 'turn.reply', { length: r.text.length, commentAfterEachTurn: reply.commentAfterEachTurn?.length ?? 0, suggestNextPrompt: reply.suggestNextPrompt?.length ?? 0 });
+      text = r.text;
+      lg($, 'debug', 'turn.reply', { kind, length: r.text.length });
     }
   } catch (error) {
-    log($, 'the end-of-turn call', error);
+    log($, kind === 'watch' ? 'the second-brain call' : 'the end-of-turn call', error);
     reason = message(error);
   }
-  const ms = Date.now() - started;
-  const commentAfterEachTurnFields = { ms, ...usage };
-  const suggestNextPromptFields = wants.commentAfterEachTurn ? { ms } : { ms, ...usage };
-  if (gen !== st.turnGen) {
-    if (wants.commentAfterEachTurn) lg($, 'info', 'commentAfterEachTurn.outcome', { outcome: 'stale', ...commentAfterEachTurnFields });
-    if (wants.suggestNextPrompt) lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'stale', ...suggestNextPromptFields });
+  return { text, reason, usage, ms: Date.now() - started, stale: gen !== st.turnGen };
+}
+
+/**
+ * The comment call at a turn's end: the buddy's commentAfterEachTurn, in the
+ * voice of `c`, the character drawn as the turn ended. A timeout, a refusal,
+ * an empty reply or a throw fails it as it fails; a reply after a later turn
+ * ended (or /clear) is stale by `gen`, dropped. Never throws.
+ */
+async function commentCall(st: State, $: EngineInterface, c: Character, t: TurnSummary, turnId: string, gen: number, started: number): Promise<void> {
+  const r = await endOfTurnCompletion(st, $, c, t, gen, 'endOfTurn', turnSystem(c.persona), started);
+  const fields = { ms: r.ms, ...r.usage };
+  if (r.stale) {
+    lg($, 'info', 'commentAfterEachTurn.outcome', { outcome: 'stale', ...fields });
     return;
   }
-  const commentAfterEachTurn = wants.commentAfterEachTurn ? sayCommentAfterEachTurn(st, $, c, t, reply?.commentAfterEachTurn ?? null, reason || 'no commentAfterEachTurn in the reply', commentAfterEachTurnFields) : null;
+  const text = r.text === null ? null : parseTurnReply(r.text);
+  const comment = sayCommentAfterEachTurn(st, $, c, t, gen, text, r.reason || 'no commentAfterEachTurn in the reply', fields);
+  // The drawer: what the bubble showed, or why the comment never came.
+  const tokens = tokensOf(r.usage);
+  if (comment !== null) {
+    feedAdd(st, $, { at: Date.now(), kind: 'comment', text: comment, ...voice(c), ms: r.ms, ...(tokens ? { tokens } : {}) });
+    rememberExchange(st, $, c.id, { kind: 'endOfTurn', commentAfterEachTurn: comment }, turnId);
+  } else if (r.reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: r.reason, ...voice(c), ms: r.ms });
+}
+
+/**
+ * The watch call at a turn's end, the buddy's second brain: it names what the
+ * user most deeply wants (carried to the next turn's call), judges Claude's
+ * last move against it, and writes the suggestNextPrompt that follows. A
+ * SHORTCUT is warned of in the bubble, a WRONG screamed, both outranking the
+ * turn's comment; a RIGHT leaves the bubble to the comment, its suggestion the
+ * go-ahead. A failed call, or one with no suggestion, gives this turn's
+ * suggestNextPrompt up; a stale one is dropped whole. Never throws.
+ */
+async function watchCall(st: State, $: EngineInterface, c: Character, t: TurnSummary, turnId: string, gen: number, started: number): Promise<void> {
+  const r = await endOfTurnCompletion(st, $, c, t, gen, 'watch', watchSystem(c.persona, st.desire), started);
+  const fields = { ms: r.ms, ...r.usage };
+  if (r.stale) {
+    lg($, 'info', 'verdict.outcome', { outcome: 'stale', ...fields });
+    lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'stale', ms: r.ms });
+    return;
+  }
+  const w = r.text === null ? null : parseWatchReply(r.text);
+  if (w?.desire) st.desire = w.desire;
+  const verdict = w?.verdict && w.why ? { verdict: w.verdict, why: w.why } : null;
+  const said = sayVerdict(st, $, c, gen, verdict, r.reason, fields);
+  const tokens = tokensOf(r.usage);
+  if (verdict) feedAdd(st, $, { at: Date.now(), kind: 'verdict', text: verdict.why, verdict: verdict.verdict, ...(st.desire ? { desire: st.desire } : {}), ...voice(c), ms: r.ms, ...(tokens ? { tokens } : {}) });
   let suggestNextPrompt: string | null = null;
-  if (wants.suggestNextPrompt) {
-    try {
-      suggestNextPrompt = await showSuggestNextPrompt(st, $, gen, reply?.suggestNextPrompt ?? null, reason, suggestNextPromptFields);
-    } catch (error) {
-      log($, 'a suggestNextPrompt', error);
-      await giveUpSuggestNextPrompt(st, $, gen, ms).catch((e) => log($, 'showing the engine\'s own suggestion', e));
+  try {
+    suggestNextPrompt = await showSuggestNextPrompt(st, $, gen, w?.suggestNextPrompt ?? null, r.reason, { ms: r.ms });
+  } catch (error) {
+    log($, 'a suggestNextPrompt', error);
+    await giveUpSuggestNextPrompt(st, $, gen, r.ms).catch((e) => log($, "showing the engine's own suggestion", e));
+  }
+  if (suggestNextPrompt !== null) feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: suggestNextPrompt, ...voice(c) });
+  // Remembered with the turn's comment, as one exchange: what the buddy warned of, and what it suggested.
+  if (said !== null || suggestNextPrompt !== null) {
+    rememberExchange(st, $, c.id, { kind: 'endOfTurn', ...(said !== null ? { warned: said } : {}), ...(suggestNextPrompt !== null ? { suggestNextPrompt } : {}) }, turnId);
+  }
+}
+
+/** How the bubble says a verdict: a shortcut warned of, a wrong move screamed; a right one says nothing over the comment. */
+const VERDICT_BUBBLE: Record<Verdict, { tone: Tone; pose: Pose | null } | null> = { RIGHT: null, SHORTCUT: { tone: 'warn', pose: null }, WRONG: { tone: 'alarm', pose: 'oops' } };
+
+/**
+ * A SHORTCUT or WRONG verdict of `c` in the bubble, its tone's ink, marking
+ * turn `gen` loud so its comment never covers it; a held /buddy answer keeps
+ * the bubble. `reason`: why the call gave none. Returns the words when the
+ * bubble said them, else null.
+ */
+function sayVerdict(st: State, $: EngineInterface, c: Character, gen: number, v: { verdict: Verdict; why: string } | null, reason: string, fields: Record<string, number>): string | null {
+  const b = st.b;
+  if (!b) return null;
+  let said: string | null = null;
+  try {
+    if (!v) {
+      lg($, 'info', 'verdict.outcome', reason ? { outcome: 'failed', reason, ...fields } : { outcome: 'none', ...fields });
+      return null;
     }
+    const loud = VERDICT_BUBBLE[v.verdict];
+    if (!loud) {
+      lg($, 'info', 'verdict.outcome', { outcome: 'quiet', verdict: v.verdict, ...fields });
+      return null;
+    }
+    const held = !st.hidden && holdsAnswer(b);
+    const shown = !st.hidden && !held && answer(b, v.why, loud.pose, c.id, true, loud.tone);
+    if (shown) {
+      said = v.why;
+      st.loudGen = gen;
+    }
+    const outcome = shown ? 'said' : st.hidden ? 'hidden' : held ? 'held' : 'dropped';
+    lg($, 'info', 'verdict.outcome', { outcome, verdict: v.verdict, ...fields });
+  } catch (error) {
+    log($, 'a verdict', error);
   }
-  // The drawer: what the bubble and the prompt box showed, or why the comment never came.
-  const tokens = tokensOf(usage);
-  if (commentAfterEachTurn !== null) feedAdd(st, $, { at: Date.now(), kind: 'comment', text: commentAfterEachTurn, ...voice(c), ms, ...(tokens ? { tokens } : {}) });
-  else if (wants.commentAfterEachTurn && reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: reason, ...voice(c), ms });
-  if (suggestNextPrompt !== null) feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: suggestNextPrompt, ...voice(c), ...(commentAfterEachTurn === null && tokens ? { ms, tokens } : {}) });
-  // What this turn showed, as one exchange: a suggestNextPrompt is remembered with the commentAfterEachTurn it came with.
-  if (commentAfterEachTurn !== null || suggestNextPrompt !== null) {
-    rememberExchange(st, $, c.id, { kind: 'endOfTurn', ...(commentAfterEachTurn !== null ? { commentAfterEachTurn } : {}), ...(suggestNextPrompt !== null ? { suggestNextPrompt } : {}) }, turnId);
-  }
+  refresh(st, $);
+  return said;
 }
 
 /**
  * The commentAfterEachTurn of `c` in the bubble, or the failure why there is none;
  * a held /buddy answer keeps the bubble, a previous turn's commentAfterEachTurn does not.
- * Never said by another character drawn meanwhile. `fields`: ms and usage, logged on the outcome.
- * Returns the text when the bubble showed it, else null.
+ * Never said by another character drawn meanwhile, nor over this turn's
+ * verdict (`outranked`: the drawer and the memory still keep it). `fields`: ms
+ * and usage, logged on the outcome. Returns the text when the bubble showed
+ * it or a verdict outranked it, else null.
  */
-function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t: TurnSummary, text: string | null, reason: string, fields: Record<string, number>): string | null {
+function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t: TurnSummary, gen: number, text: string | null, reason: string, fields: Record<string, number>): string | null {
   const b = st.b;
   if (!b) return null;
   let said: string | null = null;
@@ -1095,9 +1180,11 @@ function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t:
       // Hidden by /buddy off while the model wrote it: never shown, so never remembered.
       // A held /buddy answer keeps the bubble until it ends: the commentAfterEachTurn is never said over it, nor remembered.
       const held = !st.hidden && holdsAnswer(b);
-      const shown = !st.hidden && !held && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id, true);
-      if (shown) said = text;
-      const outcome = shown ? 'answered' : st.hidden ? 'hidden' : held ? 'held' : 'dropped';
+      // This turn's verdict, a warning or a scream, keeps the bubble: the comment goes to the drawer and the memory only.
+      const outranked = !st.hidden && !held && st.loudGen === gen;
+      const shown = !st.hidden && !held && !outranked && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id, true);
+      if (shown || outranked) said = text;
+      const outcome = shown ? 'answered' : outranked ? 'outranked' : st.hidden ? 'hidden' : held ? 'held' : 'dropped';
       lg($, 'info', 'commentAfterEachTurn.outcome', { outcome, ...(outcome === 'dropped' ? { asker: c.id, drawn: b.character.id } : {}), ...fields });
     } else {
       say($, `a commentAfterEachTurn got no answer: ${reason}`);
@@ -1114,7 +1201,7 @@ function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t:
   return said;
 }
 
-/** The suggestNextPrompt into the prompt box; none, or a failed call, gives this turn's up. `fields`: the turn's end to the reply (`ms`), and the usage when no commentAfterEachTurn was wanted, logged on the outcome. Returns the text when the box showed it, else null. */
+/** The suggestNextPrompt into the prompt box; none, or a failed call, gives this turn's up. `fields`: the turn's end to the reply (`ms`), logged on the outcome. Returns the text when the box showed it, else null. */
 async function showSuggestNextPrompt(st: State, $: EngineInterface, gen: number, text: string | null, reason: string, fields: Record<string, number>): Promise<string | null> {
   if (text === null) {
     lg($, 'info', 'suggestNextPrompt.outcome', reason ? { outcome: 'failed', reason, ...fields } : { outcome: 'none', ...fields });
@@ -1826,6 +1913,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     turnGen: 0,
     harnessSuggestion: null,
     suggestNextPromptGaveUp: false,
+    desire: null,
+    loudGen: -1,
     inheritFailed: new Set(),
     mainEffort: undefined,
     prompts: NO_PROMPTS,

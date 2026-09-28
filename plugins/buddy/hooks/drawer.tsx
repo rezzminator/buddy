@@ -105,6 +105,10 @@ function speaker(e: FeedEntry, v: DrawerView): { glyph: string; label: string; c
       return { glyph: '↳', label: `${name} answered`, color: ink, text: '', bold: true };
     case 'comment':
       return { glyph: '◆', label: `${name} commented`, color: ink, text: '', bold: false };
+    case 'verdict':
+      if (e.verdict === 'WRONG') return { glyph: '✗', label: `${name}: WRONG`, color: 'red', text: 'red', bold: true };
+      if (e.verdict === 'SHORTCUT') return { glyph: '!', label: `${name}: shortcut`, color: 'yellow', text: 'yellow', bold: false };
+      return { glyph: '✓', label: `${name}: right call`, color: 'green', text: 'green', bold: false };
     case 'suggest':
       return { glyph: '✦', label: `${name} suggested`, color: 'magenta', text: 'magenta', bold: false };
     case 'failed':
@@ -162,7 +166,9 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
     if (e.kind === 'you') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, e.read === false ? `  · interrupted, ${v.name} never read it` : '') };
     const who = speaker(e, v);
     const lines = wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);
-    const tall = Math.max(1, lines.length);
+    // A verdict says, under its why, what it judged against.
+    const wants = e.kind === 'verdict' && e.desire ? wrapText(`wants: ${e.desire}`, textW) : [];
+    const tall = Math.max(1, lines.length + wants.length);
     const end = e.kind !== 'suggest'
       ? null
       : e.taken === true
@@ -181,7 +187,8 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
           </Text>
         </Box>
         <Box flexDirection="column" flexGrow={1}>
-          {lines.map((l) => (who.text ? <Text color={who.text} italic={e.kind === 'suggest'}>{l}</Text> : <Text bold={who.bold}>{l}</Text>))}
+          {lines.map((l) => (who.text ? <Text color={who.text} italic={e.kind === 'suggest'} bold={e.kind === 'verdict' && who.bold}>{l}</Text> : <Text bold={who.bold}>{l}</Text>))}
+          {wants.map((l) => <Text dimColor>{l}</Text>)}
         </Box>
         <Box width={DRAWER_MARK} flexShrink={0} justifyContent="flex-end">{end}</Box>
       </Box>

@@ -17,7 +17,8 @@
 #      the duck is drawn with a bubble naming the error
 # Per turn, from the plugin log and the transcript: the turn's end to
 # commentAfterEachTurn in the log (commentAfterEachTurn.outcome ts minus the transcript's reply), the plugin's own
-# ms on commentAfterEachTurn.outcome and suggestNextPrompt.outcome, tokens, both outcomes, and every
+# ms on commentAfterEachTurn.outcome and suggestNextPrompt.outcome, tokens (verdict.outcome's when
+# commentAfterEachTurn is off), both outcomes, and every
 # error record; the pane is sampled once after commentAfterEachTurn to match the bubble.
 # Up to three sessions run at once, each on its own tmux socket and folder.
 # Writes /tmp/buddy/configs-{timestamp}/report.md and report.json; exits 1
@@ -70,10 +71,9 @@ const lastWithUsage = (e) => recs.filter((r) => r.event === e && typeof r.inTok 
 // A refused ask made no call and carries no usage: the ask is the last one that did.
 const lastAsked = () => recs.filter((r) => r.event === 'ask.outcome' && r.outcome !== 'refused').at(-1) ?? null;
 const q = last('commentAfterEachTurn.outcome'), s = last('suggestNextPrompt.outcome'), a = lastAsked(), p = last('turn.prompt') ?? last('ask.prompt');
-// A call that writes no commentAfterEachTurn (off) logs its usage on suggestNextPrompt.outcome: on such a
-// turn a later harness-shown/harness-not-shown record can follow it with no usage, so this
-// takes the latest suggestNextPrompt.outcome record that actually carries it, not just the last one.
-const call = q ?? a ?? lastWithUsage('suggestNextPrompt.outcome');
+// With commentAfterEachTurn off, the turn's only call is the watch call, which logs its usage on
+// verdict.outcome; the latest one that carries usage (a stale one may carry none).
+const call = q ?? a ?? lastWithUsage('verdict.outcome');
 const end = endTs ? Date.parse(endTs) : NaN;
 const n = (v) => (typeof v === 'number' ? v : null);
 console.log(JSON.stringify({

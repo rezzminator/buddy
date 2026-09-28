@@ -6,7 +6,7 @@ import { type AmbiguousCharacterWidth } from './width.ts';
 import { lostThread, stillThinking, type TurnSummary } from './prompts.ts';
 import type { Action } from './did.ts';
 import { REACTIONS, classifyToolCall, type Outcome, type ToolCall } from './reactions.ts';
-import { buildScene, type Scene } from './scene.ts';
+import { buildScene, type Scene, type Tone } from './scene.ts';
 
 // The buddy's state and every transition, with no I/O: the adapter feeds it
 // events and the clock, and draws what `sceneOf` returns. Time is the clock's,
@@ -26,7 +26,7 @@ export const WORKING_LINE_CHANCE = 0.25;
 const AMBIENT: ReadonlySet<LineEvent> = new Set(['toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake']);
 
 /** `turn`: the commentAfterEachTurn (or why there is none), held against lines nobody asked for, never against the next turn's commentAfterEachTurn. */
-export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean; turn?: boolean };
+export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean; turn?: boolean; tone?: Tone };
 
 export type Brain = {
   character: Character;
@@ -243,11 +243,11 @@ function isAsker(b: Brain, askerId: string | undefined): boolean {
 
 /**
  * The answer in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now.
- * `turn`: the commentAfterEachTurn, which the next turn's commentAfterEachTurn may replace (holdsAnswer ignores it).
+ * `turn`: said at a turn's end, which the next turn's may replace (holdsAnswer ignores it). `tone`: how loud, absent for a plain bubble.
  */
-export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string, turn = false): boolean {
+export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string, turn = false, tone?: Tone): boolean {
   if (!isAsker(b, askerId)) return false;
-  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}) };
+  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}), ...(tone ? { tone } : {}) };
   return true;
 }
 
@@ -318,6 +318,7 @@ export function sceneOf(b: Brain): Scene | null {
     cols: b.cols,
     maxRows: b.maxRows,
     bubble: b.talk?.text ?? null,
+    ...(b.talk?.tone ? { bubbleTone: b.talk.tone } : {}),
     confetti: b.confetti ? { seed: b.confetti.seed, tick: Math.floor((b.now - b.confetti.start) / CONFETTI_TICK_MS) } : null,
     sleeping: b.sleeping,
     zTick: b.motion.stillFrame,

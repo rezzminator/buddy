@@ -6,6 +6,10 @@ import { cellWidth, padEndCells, wrapCells, type AmbiguousCharacterWidth, type W
 // Box/Text one to one, and its JSON is the key that decides a redraw.
 
 export type Seg = { pad: number; text: string; color: string };
+/** How loud the bubble is: the second brain's warning over a shortcut (`warn`), or its scream over a wrong move (`alarm`). */
+export type Tone = 'warn' | 'alarm';
+/** A tone's ink, for the bubble's frame and words. */
+export const TONE_COLOR: Record<Tone, string> = { warn: 'yellow', alarm: 'red' };
 export type Scene = {
   color: string;
   /** The sprite's rows, all `spriteWidth` cells wide; none when the band is too narrow or too short for him but a bubble must show. */
@@ -17,9 +21,9 @@ export type Scene = {
   /**
    * The bubble beside him: `text` wrapped to its inner width (`width` less
    * BUBBLE_FRAME_COLS), a `\n` between lines, cut with `…` to the rows
-   * `maxRows` leaves.
+   * `maxRows` leaves. `tone`: how loud it is, absent for a plain bubble.
    */
-  bubble: { text: string; width: number; side: 'left' | 'right' } | null;
+  bubble: { text: string; width: number; side: 'left' | 'right'; tone?: Tone } | null;
   /** Rows drawn above the sprite: a bubble with no room beside him (its words, full width), then confetti or the sleep drift. */
   effects: Seg[][];
   /** The hover card, placed against the sprite's Box. */
@@ -34,6 +38,8 @@ export type SceneInput = {
   cols: number;
   maxRows: number;
   bubble: string | null;
+  /** The bubble's tone, absent for a plain one. */
+  bubbleTone?: Tone;
   confetti: { seed: number; tick: number } | null;
   sleeping: boolean;
   zTick: number;
@@ -113,6 +119,9 @@ export function buildScene(i: SceneInput): Scene | null {
   const o: WidthOptions = { ambiguousCharacterWidth: i.ambiguousCharacterWidth ?? 'narrow' };
   const sw = spriteWidth(c, o);
   const color = spriteColor(c, i.now ?? 0);
+  // A loud bubble drawn above him, with no room beside him, takes its tone's ink.
+  const words = i.bubbleTone ? TONE_COLOR[i.bubbleTone] : c.color;
+  const tone = i.bubbleTone ? { tone: i.bubbleTone } : {};
   if (i.maxRows < 1) return null;
   const bw = bubbleWidth(i.cols, sw);
   const beside = !!i.bubble && i.cols >= MIN_BUBBLE_COLS && bw >= 10 && i.maxRows > BUBBLE_FRAME_ROWS;
@@ -120,7 +129,7 @@ export function buildScene(i: SceneInput): Scene | null {
   if (!fits) {
     if (!i.bubble) return null;
     const lines = wrapCells(i.bubble, i.cols - 1, { ...o, maxLines: i.maxRows });
-    return { color, rows: [], x: Math.max(0, i.x), rowX: 0, bubble: null, effects: textRows(lines, c.color), card: null };
+    return { color, rows: [], x: Math.max(0, i.x), rowX: 0, bubble: null, effects: textRows(lines, words), card: null };
   }
   const max = Math.max(0, i.cols - sw - 1);
   let x = Math.min(Math.max(0, i.x), max);
@@ -138,14 +147,14 @@ export function buildScene(i: SceneInput): Scene | null {
       rowX = x - bw - 1;
     }
     const lines = wrapCells(i.bubble, bw - BUBBLE_FRAME_COLS, { ...o, maxLines: i.maxRows - BUBBLE_FRAME_ROWS });
-    bubble = { text: lines.join('\n'), width: bw, side };
+    bubble = { text: lines.join('\n'), width: bw, side, ...tone };
     bubbleRows = lines.length + BUBBLE_FRAME_ROWS;
   } else if (i.bubble) {
     above = wrapCells(i.bubble, i.cols - 1, { ...o, maxLines: i.maxRows - c.height });
   }
   const free = i.maxRows - Math.max(c.height, bubbleRows) - above.length;
 
-  const effects: Seg[][] = textRows(above, c.color);
+  const effects: Seg[][] = textRows(above, words);
   if (i.confetti && i.cols >= MIN_EFFECT_COLS && free >= CONFETTI_ROWS) {
     const start = Math.max(0, x - 3);
     const span = Math.min(sw + 6, i.cols - 1 - start);

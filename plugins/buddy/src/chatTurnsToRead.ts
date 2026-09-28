@@ -4,8 +4,9 @@
 // timeline per session. The buddy remembers of itself exactly as far back as
 // it remembers of the chat, so it never holds words about a turn it can no
 // longer see. An exchange is one /buddy question with its answer, one canned
-// line the bubble showed on its own, or one end-of-turn call's shown output:
-// its commentAfterEachTurn, its suggestNextPrompt, or both, kept together.
+// line the bubble showed on its own, or what a turn's end showed: its
+// commentAfterEachTurn, the second brain's warning, its suggestNextPrompt, any
+// of them, kept together.
 // What you and the buddy said to each other is kept whole, never cut. A
 // compaction of the main chat is remembered as a turn of its own: its summary
 // is what Claude holds of everything before it.
@@ -45,11 +46,11 @@ export const CHAT_TURNS_TO_READ_WRITE_TRIES = 3;
 /** How long after a failed or abandoned write the next try waits: the reads queued meanwhile go first. */
 export const CHAT_TURNS_TO_READ_RETRY_MS = 5_000;
 
-/** One exchange: a question and its answer (none when it got none), a canned line said on its own, or an end-of-turn call's shown commentAfterEachTurn and suggestNextPrompt, at least one. */
+/** One exchange: a question and its answer (none when it got none), a canned line said on its own, or what a turn's end showed: its commentAfterEachTurn, the warning its verdict said (`warned`) and its suggestNextPrompt, at least one. */
 export type Exchange =
   | { kind: 'question'; question: string; answer?: string }
   | { kind: 'line'; text: string }
-  | { kind: 'endOfTurn'; commentAfterEachTurn?: string; suggestNextPrompt?: string };
+  | { kind: 'endOfTurn'; commentAfterEachTurn?: string; warned?: string; suggestNextPrompt?: string };
 /**
  * One main-chat turn, by its turnId, and each character's exchanges after it
  * ended, before the next one did. Only the first block may have no turn: what
@@ -105,9 +106,10 @@ function capped(x: Exchange): Exchange | null {
   }
   if (x.kind === 'endOfTurn') {
     const commentAfterEachTurn = keepText(x.commentAfterEachTurn ?? '');
+    const warned = keepText(x.warned ?? '');
     const suggestNextPrompt = keepText(x.suggestNextPrompt ?? '');
-    if (!commentAfterEachTurn && !suggestNextPrompt) return null;
-    return { kind: 'endOfTurn', ...(commentAfterEachTurn ? { commentAfterEachTurn } : {}), ...(suggestNextPrompt ? { suggestNextPrompt } : {}) };
+    if (!commentAfterEachTurn && !warned && !suggestNextPrompt) return null;
+    return { kind: 'endOfTurn', ...(commentAfterEachTurn ? { commentAfterEachTurn } : {}), ...(warned ? { warned } : {}), ...(suggestNextPrompt ? { suggestNextPrompt } : {}) };
   }
   const question = keepText(x.question);
   if (!question) return null;
@@ -145,6 +147,8 @@ export function memoryStats(blocks: readonly Block[], n: number): { turns: numbe
  * newest remembered when the exchange began), or under the newest block when
  * `after` is undefined; with no block yet, under a first, turnless one. An
  * exchange whose turn is no longer remembered is older than the memory: dropped.
+ * An end of turn right after another of the same character's is merged into
+ * it: the comment call and the watch call file one exchange between them.
  */
 export function addExchange(blocks: readonly Block[], characterId: string, x: Exchange, after?: string): Block[] {
   const c = capped(x);
@@ -153,7 +157,11 @@ export function addExchange(blocks: readonly Block[], characterId: string, x: Ex
   const i = after === undefined ? blocks.length - 1 : blocks.findIndex((b) => b.turnId === after);
   if (i < 0) return [...blocks];
   const b = blocks[i]!;
-  const exchanges = dropOldLines([...(b.characters[characterId] ?? []), c]);
+  const had = b.characters[characterId] ?? [];
+  // A turn's end is one exchange: the comment call and the watch call each land their part of it, in whichever order they answer.
+  const last = had.at(-1);
+  const merged = c.kind === 'endOfTurn' && last?.kind === 'endOfTurn' ? [...had.slice(0, -1), { ...c, ...last }] : null;
+  const exchanges = merged ?? dropOldLines([...had, c]);
   return blocks.map((y, k) => (k === i ? { ...b, characters: { ...b.characters, [characterId]: exchanges } } : y));
 }
 
@@ -181,10 +189,12 @@ function exchangeLines(x: Exchange): string[] {
     case 'line':
       return [`You said: ${x.text}`];
     case 'endOfTurn': {
-      const suggestion = (lead: string) => `${lead} the user's next prompt: ${x.suggestNextPrompt}`;
-      if (!x.commentAfterEachTurn) return [suggestion('After this turn, you suggested')];
-      const comment = `After this turn, you commented: ${x.commentAfterEachTurn}`;
-      return x.suggestNextPrompt ? [comment, suggestion('With it, you suggested')] : [comment];
+      const said: [string, string | undefined][] = [
+        ['commented', x.commentAfterEachTurn],
+        ['warned the user', x.warned],
+        ["suggested the user's next prompt", x.suggestNextPrompt],
+      ];
+      return said.filter(([, text]) => text).map(([what, text], i) => `${i === 0 ? 'After this turn, you' : 'With it, you'} ${what}: ${text}`);
     }
   }
 }
@@ -217,9 +227,9 @@ function exchangeOf(v: unknown): Exchange | null {
   }
   if (x.kind === 'line' && typeof x.text === 'string') return capped({ kind: 'line', text: x.text });
   if (x.kind === 'endOfTurn') {
-    const { commentAfterEachTurn: c, suggestNextPrompt: s } = x;
-    if ((c !== undefined && typeof c !== 'string') || (s !== undefined && typeof s !== 'string')) return null;
-    return capped({ kind: 'endOfTurn', ...(typeof c === 'string' ? { commentAfterEachTurn: c } : {}), ...(typeof s === 'string' ? { suggestNextPrompt: s } : {}) });
+    const { commentAfterEachTurn: c, warned: v, suggestNextPrompt: s } = x;
+    if ([c, v, s].some((f) => f !== undefined && typeof f !== 'string')) return null;
+    return capped({ kind: 'endOfTurn', ...(typeof c === 'string' ? { commentAfterEachTurn: c } : {}), ...(typeof v === 'string' ? { warned: v } : {}), ...(typeof s === 'string' ? { suggestNextPrompt: s } : {}) });
   }
   return null;
 }

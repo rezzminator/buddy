@@ -1,6 +1,9 @@
 // The words sent to a model: a completion on model, for /buddy questions
-// and for the end-of-turn call, which writes the buddy's `commentAfterEachTurn` and
-// `suggestNextPrompt` together. Each demands short lines.
+// and for the two end-of-turn calls: the comment call, which writes the
+// buddy's `commentAfterEachTurn` in character, and the watch call, the
+// buddy's second brain, which names what the user most deeply wants, judges
+// Claude's last move against it and writes the `suggestNextPrompt`. Each
+// demands short lines.
 
 import type { Action } from './did.ts';
 
@@ -11,9 +14,9 @@ export const ASKED_PROMPT_RULE =
   'SUGGEST_NEXT_PROMPT: that prompt, in the user\'s own words as they would type it to the assistant. Never write that line otherwise.';
 /** A question's output cap. The model's thinking counts against it, so it is far above the one line the rules ask for: a cap that cut the thinking would cut the answer, or leave none. */
 export const QUESTION_MAX_TOKENS = 2048;
-/** The end-of-turn call's output cap, a COMMENT_AFTER_EACH_TURN and a SUGGEST_NEXT_PROMPT, as high as a question's for the same reason. */
+/** Each end-of-turn call's output cap, a COMMENT_AFTER_EACH_TURN or the watch call's four lines, as high as a question's for the same reason. */
 export const TURN_MAX_TOKENS = 2048;
-/** How long the end-of-turn call, its chatTurnsToRead and settings reads included, may take before its commentAfterEachTurn and suggestNextPrompt are given up. */
+/** How long each end-of-turn call, its chatTurnsToRead and settings reads included, may take before what it writes is given up. */
 export const TURN_DEADLINE_MS = 30_000;
 /** How long past the buddy's own deadline a completion runs before the engine abandons it (`timeoutMs`): the deadline always ends it first, with one reason. */
 export const REQUEST_MARGIN_MS = 5_000;
@@ -85,7 +88,7 @@ function turnFacts(t: TurnSummary): string {
   return `Tools used: ${tools}. Failures: ${t.failures}. Last shell command: ${bash}.`;
 }
 
-/** What the end-of-turn call writes: commentAfterEachTurn, suggestNextPrompt, or both. */
+/** What a turn's end asks for: the comment call (commentAfterEachTurn), the watch call (suggestNextPrompt), or both. */
 export type TurnWants = { commentAfterEachTurn: boolean; suggestNextPrompt: boolean };
 
 /** What an ended main-loop turn and the session look like to the end-of-turn call. */
@@ -113,22 +116,51 @@ export function skipReason(g: TurnGate): string {
 }
 
 /**
- * The end-of-turn call's system prompt: the persona, the character rule when
- * commentAfterEachTurn is wanted, then the tagged lines to reply with, only those wanted. The persona voices
- * commentAfterEachTurn and picks what suggestNextPrompt nudges toward; suggestNextPrompt's words are the user's own.
+ * The comment call's system prompt: the persona, the character rule, then the
+ * one tagged line to reply with, the buddy's own reaction in character.
  */
-export function turnSystem(persona: string, wants: TurnWants): string {
-  const lines: string[] = [];
-  if (wants.commentAfterEachTurn) lines.push('COMMENT_AFTER_EACH_TURN: your own reaction to the turn, in character, one line, at most 20 words.');
-  if (wants.suggestNextPrompt) {
-    lines.push(
-      "SUGGEST_NEXT_PROMPT: the prompt the user is most likely to send Claude next, in the user's own words as they would type it into the prompt box: " +
-        'not in character, no quotes, at most 15 words. Almost every turn leaves a next step: a check, a fix, a follow-up, the next piece, a commit. ' +
-        'Write SUGGEST_NEXT_PROMPT: NONE only when the work is plainly finished and nothing follows.',
-    );
-  }
-  const rule = wants.commentAfterEachTurn ? `${CHARACTER_RULE}\n\n` : '';
-  return `${persona}\n\n${rule}A turn of the user's work with Claude just ended. Reply with exactly these lines and nothing else:\n${lines.join('\n')}\nDo not use tools. Do not think out loud.`;
+export function turnSystem(persona: string): string {
+  return (
+    `${persona}\n\n${CHARACTER_RULE}\n\nA turn of the user's work with Claude just ended. Reply with exactly this line and nothing else:\n` +
+    'COMMENT_AFTER_EACH_TURN: your own reaction to the turn, in character, one line, at most 20 words.\nDo not use tools. Do not think out loud.'
+  );
+}
+
+/** The watch call's judgement of Claude's last move: the proper way, the fast or easy way that costs later, or against what the user wants. */
+export const VERDICTS = ['RIGHT', 'SHORTCUT', 'WRONG'] as const;
+export type Verdict = (typeof VERDICTS)[number];
+
+/** The longest DESIRE kept and carried to the next turn's watch call: past it, it is not one plain aim. */
+export const DESIRE_MAX_CHARS = 160;
+
+/**
+ * The watch call's system prompt, the buddy's second brain: the persona and
+ * the character rule, then the four tagged lines. DESIRE is what the user
+ * most deeply wants; `desire`, the one named at the last turn's end, is kept
+ * unless the chat shows it changed, so it holds from turn to turn. VERDICT
+ * judges Claude's last move against it; WHY says why in character, screamed
+ * for WRONG; SUGGEST_NEXT_PROMPT follows from the verdict, in the user's own
+ * words.
+ */
+export function watchSystem(persona: string, desire: string | null = null): string {
+  const kept = desire ? `At the last turn's end you named the user's deepest desire: ${desire}\nKeep it unless this chat shows it changed.\n` : '';
+  return (
+    `${persona}\n\n${CHARACTER_RULE}\n\n` +
+    "You are also the user's second brain: you watch the work with Claude and judge it, a second pair of eyes on every decision. " +
+    "A turn of the user's work with Claude just ended.\n" +
+    kept +
+    'Reply with exactly these four lines and nothing else:\n' +
+    'DESIRE: what the user most deeply wants from this chat, beneath the words of this turn: the outcome they are really after, in plain words, at most 15 words.\n' +
+    "VERDICT: RIGHT, SHORTCUT or WRONG, judging Claude's last move (what it did, what it claimed, what it proposes next) against DESIRE. " +
+    'RIGHT: it serves the desire, the proper way. ' +
+    'SHORTCUT: the fast or easy way that costs later: a skipped check, a symptom patched instead of its cause, a guess where reading was possible, "done" claimed without evidence. ' +
+    'WRONG: it works against the desire: the wrong problem, a destructive or irreversible step, a false claim, a drift away from what was asked.\n' +
+    'WHY: the concrete reason, naming the thing (a file, a claim, a step), in character, at most 20 words. For WRONG, scream it, as loud as your character gets.\n' +
+    "SUGGEST_NEXT_PROMPT: the prompt the user should send Claude next, in the user's own words as they would type it into the prompt box: not in character, no quotes, at most 20 words. " +
+    'After RIGHT, say yes and move to the next step; after SHORTCUT, ask for the proper way; after WRONG, stop Claude and name what to do instead. ' +
+    'Write SUGGEST_NEXT_PROMPT: NONE only when the work is plainly finished and nothing follows.\n' +
+    'Do not use tools. Do not think out loud.'
+  );
 }
 
 /**
@@ -218,22 +250,38 @@ export function turnPrompt(t: TurnSummary, chatTurnsToRead = ''): string {
   return `${chatTurnsToReadBlock(chatTurnsToRead)}In the turn that just ended: ${turnFacts(t)}`;
 }
 
-const TAGGED = /^[\s\-*]*(comment_after_each_turn|suggest_next_prompt)\s*:\s*(.*)$/i;
+const TAGGED = /^[\s\-*]*(comment_after_each_turn|suggest_next_prompt|desire|verdict|why)\s*:\s*(.*)$/i;
 
-/** The end-of-turn reply as its commentAfterEachTurn and suggestNextPrompt; an untagged reply is the commentAfterEachTurn alone. */
-export function parseTurnReply(reply: string): { commentAfterEachTurn: string | null; suggestNextPrompt: string | null } {
-  let commentAfterEachTurn: string | undefined;
-  let suggestNextPrompt: string | undefined;
+/** A reply's tagged lines, by lowercased tag, the first of each; untagged lines are left out. */
+function taggedLines(reply: string): Map<string, string> {
+  const tags = new Map<string, string>();
   for (const raw of reply.split('\n')) {
     const m = TAGGED.exec(raw);
-    if (!m) continue;
-    if (m[1]!.toLowerCase() === 'comment_after_each_turn') commentAfterEachTurn ??= m[2]!;
-    else suggestNextPrompt ??= m[2]!;
+    if (m && !tags.has(m[1]!.toLowerCase())) tags.set(m[1]!.toLowerCase(), m[2]!);
   }
-  if (commentAfterEachTurn === undefined && suggestNextPrompt === undefined) return { commentAfterEachTurn: oneLine(reply) || null, suggestNextPrompt: null };
+  return tags;
+}
+
+/** The comment call's reply as its commentAfterEachTurn: the COMMENT_AFTER_EACH_TURN line, else the reply's first line; null when empty. */
+export function parseTurnReply(reply: string): string | null {
+  const tagged = taggedLines(reply).get('comment_after_each_turn');
+  return oneLine(tagged ?? reply) || null;
+}
+
+/** The watch call's reply, each line or null: a VERDICT not one of VERDICTS, a DESIRE past DESIRE_MAX_CHARS, or an empty line is none; SUGGEST_NEXT_PROMPT as suggestNextPromptText reads it. */
+export type WatchReply = { desire: string | null; verdict: Verdict | null; why: string | null; suggestNextPrompt: string | null };
+export function parseWatchReply(reply: string): WatchReply {
+  const tags = taggedLines(reply);
+  const line = (tag: string) => oneLine(tags.get(tag) ?? '') || null;
+  const desire = line('desire');
+  const word = /^[A-Za-z]+/.exec(line('verdict') ?? '')?.[0]?.toUpperCase();
+  const verdict = VERDICTS.find((v) => v === word) ?? null;
+  const next = tags.get('suggest_next_prompt');
   return {
-    commentAfterEachTurn: commentAfterEachTurn === undefined ? null : oneLine(commentAfterEachTurn) || null,
-    suggestNextPrompt: suggestNextPrompt === undefined ? null : suggestNextPromptText(suggestNextPrompt),
+    desire: desire !== null && desire.length <= DESIRE_MAX_CHARS ? desire : null,
+    verdict,
+    why: line('why'),
+    suggestNextPrompt: next === undefined ? null : suggestNextPromptText(next),
   };
 }
 
@@ -260,7 +308,7 @@ export function oneLine(reply: string): string {
 }
 
 /** The longest suggestNextPrompt kept: past it, the reply is not a prompt someone would type. */
-export const SUGGEST_NEXT_PROMPT_MAX_CHARS = 160;
+export const SUGGEST_NEXT_PROMPT_MAX_CHARS = 200;
 
 /** A suggestNextPrompt reply as the prompt it proposes: its first non-empty line, unquoted, one-spaced; null for none, NONE, or past `max`. */
 export function suggestNextPromptText(reply: string, max = SUGGEST_NEXT_PROMPT_MAX_CHARS): string | null {

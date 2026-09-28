@@ -125,6 +125,22 @@ describe('render', () => {
     b = addExchange(addTurn([], 't1', turn('go'), 4), 'cat', endOfTurn('Tests pass.'), 't1');
     expect(render(b, 'cat', 4).endsWith('- After this turn, you commented: Tests pass.')).toBe(true);
   });
+  test('the comment call and the watch call file one exchange between them, in either order: the comment, the warning, the suggestion', () => {
+    const warnedTurn = (first: Exchange, second: Exchange) => addExchange(addExchange(addTurn([], 't1', turn('go'), 4), 'cat', first, 't1'), 'cat', second, 't1');
+    const watch: Exchange = { kind: 'endOfTurn', warned: 'no test ran', suggestNextPrompt: 'run the tests first' };
+    const both: Exchange = { kind: 'endOfTurn', commentAfterEachTurn: 'Shipped?', warned: 'no test ran', suggestNextPrompt: 'run the tests first' };
+    expect(warnedTurn(endOfTurn('Shipped?'), watch)[0]!.characters.cat).toEqual([both]);
+    expect(warnedTurn(watch, endOfTurn('Shipped?'))[0]!.characters.cat).toEqual([both]);
+    expect(render(warnedTurn(endOfTurn('Shipped?'), watch), 'cat', 4)).toContain(
+      "- After this turn, you commented: Shipped?\n  With it, you warned the user: no test ran\n  With it, you suggested the user's next prompt: run the tests first",
+    );
+  });
+  test('a warning survives the store round trip; a malformed one drops the exchange', () => {
+    const b = addExchange(addTurn([], 't1', turn('go'), 4), 'cat', { kind: 'endOfTurn', warned: 'no test ran' }, 't1');
+    expect(chatTurnsToReadOf(JSON.parse(JSON.stringify({ blocks: b }))).blocks[0]!.characters.cat).toEqual([{ kind: 'endOfTurn', warned: 'no test ran' }]);
+    const bad = [{ turnId: 't1', turn: { prompt: 'go', answer: 'Done.' }, characters: { cat: [{ kind: 'endOfTurn', warned: 7 }] } }];
+    expect(chatTurnsToReadOf({ blocks: bad }).blocks[0]!.characters.cat).toEqual([]);
+  });
   test('a prompt not the user\'s is never shown as the user\'s; an unknown one never said not to be; empty text marked', () => {
     let b = addTurn([], 't1', { prompt: 'ping', answer: '', from: 'peer' }, 4);
     b = addTurn(b, 't2', { prompt: '', answer: 'ok', from: 'unknown' }, 4);
