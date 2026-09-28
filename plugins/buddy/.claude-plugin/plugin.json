@@ -78,11 +78,11 @@
       "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record, capped at 1 MB with one older copy (.1); /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to Claude Code's debug log.",
       "default": "$CLAUDE_CONFIG_DIR/buddy/buddy.log"
     },
-    "roundsDir": {
-      "type": "string",
-      "title": "Where each round's file goes (empty = none)",
-      "description": "A folder for debugging what the buddy sees and says: one text file per main-chat turn, at most 150 (round-001.txt to round-150.txt, the least recently written overwritten once all are used; ls -t lists them newest first), holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim. ~ is your home folder and a leading $CLAUDE_CONFIG_DIR the config folder, e.g. ~/.claude/buddy/rounds. Empty: no files. The files hold your prompts, Claude's answers and tool output.",
-      "default": ""
+    "saveRounds": {
+      "type": "boolean",
+      "title": "Keep a file per turn of what went into buddy and came out",
+      "description": "For seeing what the buddy sees and says: one text file per main-chat turn, in the chat's own folder beside its transcript ({config}/projects/{project}/{session id}/buddy/, next to memory.json, the buddy's memory of that chat). At most 150 per chat (round-001.txt to round-150.txt, the least recently written overwritten once all are used; ls -t lists them newest first), each holding, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim. They hold what the transcript beside them holds: your prompts, Claude's answers and tool output. Off: no round files.",
+      "default": true
     },
     "ambiguousCharacterWidth": {
       "type": "string",

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
   cleanAnswer, cleanPrompt,
-  addCompaction, addExchange, addTurn, chatTurnsToReadOf, memoryStats, render, staleKeys, storeKey, type Block, type Exchange,
+  addCompaction, addExchange, addTurn, chatTurnsToReadOf, memoryStats, render, storeKey, type Block, type Exchange,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
 
 const qa = (question: string, answer?: string): Exchange => (answer === undefined ? { kind: 'question', question } : { kind: 'question', question, answer });
@@ -186,8 +186,5 @@ describe('the store', () => {
     expect(memoryStats(b, 4)).toEqual({ turns: 2, kept: 3 + 5 + TURN_PROMPT_HEAD + TURN_PROMPT_TAIL + 3 + 2, full: 3 + 5 + big.length + 2 });
     expect(memoryStats(b, 1).turns).toBe(1);
     expect(memoryStats([], 4)).toEqual({ turns: 0, kept: 0, full: 0 });
-  });
-  test('old sessions: all but the newest kept', () => {
-    expect(staleKeys([{ key: 'chatTurnsToRead:a', at: 1 }, { key: 'chatTurnsToRead:b', at: 3 }, { key: 'chatTurnsToRead:c', at: 2 }], 2)).toEqual(['chatTurnsToRead:a']);
   });
 });

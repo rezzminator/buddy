@@ -58,7 +58,7 @@ Every switch goes through the drawer's personality tab (`menu_pick`): `/buddy`, 
 | (i) picking the default returns | the tab, the focus on the duck, Enter | the duck's rows are back |
 | (j) `/buddy remember the word pineapple` | that question | the reply says `Asked`, and the bubble holds an answer |
 | (j) the next answer remembers `pineapple` | `/buddy what word did I ask you to remember?` | the answer holds `pineapple` |
-| (j) the store holds this session's chatTurnsToRead | nothing; the plugin's store file is read | its `chatTurnsToRead:{session}` record holds both questions among its blocks' `characters.duck` exchanges, no `thinking` filler |
+| (j) the chat's memory.json holds this session's chatTurnsToRead | nothing; `projects/*/{session}/buddy/memory.json` in the run's config dir is read | it holds both questions among its blocks' `characters.duck` exchanges, no `thinking` filler |
 | (k) a question during a busy main turn | a prompt that runs `sleep 8` via Bash, then replies `K1`; `/buddy do you like yourself?` during it | the reply says `Asked`; the answer arrives before the main turn's `K1` reply, and the last outcome in the log is `answered` |
 | (k) a second immediate ask | `/buddy say ack` right after | its reply refuses out loud (`still thinking about your last question`) or says `Asked` |
 | (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start` and an `ask.outcome` answered |
@@ -81,7 +81,7 @@ Each session sends two prompts (one running `ls` via Bash, one plain reply), wai
 | --- | --- | --- |
 | S1 | the defaults | after each turn `commentAfterEachTurn` shows in the bubble (`commentAfterEachTurn.outcome` answered, its stored text in the pane) and `suggestNextPrompt` in the prompt box (`suggestNextPrompt.outcome` shown, its stored text in the pane); `/buddy remember the word tangerine` is answered, and `/buddy what word did I ask you to remember?` answers `tangerine` from `chatTurnsToRead` |
 | S2 | `commentAfterEachTurn: false` | no `commentAfterEachTurn.outcome` after a turn; a `suggestNextPrompt` is shown |
-| S3 | `suggestNextPrompt: false`, `chatTurnsToRead: 1` | `commentAfterEachTurn` shows after each turn; no `suggestNextPrompt.outcome`; `chatTurnsToRead:{session}` holds only the second turn; `/buddy what Bash command did Claude run in the turn before my last one?` is answered as out of memory (it names its memory, and not `ls`) |
+| S3 | `suggestNextPrompt: false`, `chatTurnsToRead: 1` | `commentAfterEachTurn` shows after each turn; no `suggestNextPrompt.outcome`; the chat's `memory.json` holds only the second turn; its buddy folder, pre-filled with 150 round files, still holds 150, the oldest two overwritten by this session's rounds; `/buddy what Bash command did Claude run in the turn before my last one?` is answered as out of memory (it names its memory, and not `ls`) |
 | S4 | the defaults, headless | `claude -p`, then `claude -p --resume`: two `turn.skipped` with `why: headless`, and no `turn.call`, `turn.settings`, `turn.prompt`, `ask.settings` or `ask.start` |
 | S5 | `customCharactersDir` holding one invalid `broken.json`, `character: broken` | the duck is drawn with a bubble naming the error (`Couldn't load broken: …; the personality tab in /buddy picks another`); the error holds the bubble 10 s from the session's start, part of it behind the trust dialog, so when it is gone by the prompt `/buddy reload` says it again, and the row names which |
 

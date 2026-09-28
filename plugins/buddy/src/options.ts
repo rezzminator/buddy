@@ -35,8 +35,8 @@ export type Options = {
   logLevel: LogLevel;
   /** The plugin log's file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = no log file (errors still go to the debug log). */
   logFile: string;
-  /** Where each round (one main-chat turn, and every model call the buddy made after it, verbatim) is written as its own file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = none. */
-  roundsDir: string;
+  /** Each round (one main-chat turn, and every model call the buddy made after it, verbatim) is written as its own file into the chat's own folder, beside its transcript (src/chatFolder.ts). */
+  saveRounds: boolean;
   /** How many columns an East Asian ambiguous-width character takes: narrow 1, wide 2. */
   ambiguousCharacterWidth: AmbiguousCharacterWidth;
   errors: string[];
@@ -54,7 +54,7 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   chatTurnsToRead: CHAT_TURNS_TO_READ_DEFAULT,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
-  roundsDir: '',
+  saveRounds: true,
   ambiguousCharacterWidth: 'narrow',
 };
 
@@ -68,7 +68,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, chatTurnsToRead, logLevel, logFile, roundsDir, ambiguousCharacterWidth } = raw;
+  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, chatTurnsToRead, logLevel, logFile, saveRounds, ambiguousCharacterWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -91,6 +91,11 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     const b = bool(suggestNextPrompt);
     if (b === undefined) bad('suggestNextPrompt', `${JSON.stringify(suggestNextPrompt)} is not true or false`);
     else o.suggestNextPrompt = b;
+  }
+  if (saveRounds !== undefined) {
+    const b = bool(saveRounds);
+    if (b === undefined) bad('saveRounds', `${JSON.stringify(saveRounds)} is not true or false`);
+    else o.saveRounds = b;
   }
   if (model !== undefined && model !== '') {
     if (typeof model === 'string') o.model = model.trim().toLowerCase() === INHERIT ? INHERIT : model.trim();
@@ -126,10 +131,6 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
   if (logFile !== undefined) {
     if (typeof logFile === 'string') o.logFile = logFile.trim();
     else bad('logFile', 'not a string');
-  }
-  if (roundsDir !== undefined) {
-    if (typeof roundsDir === 'string') o.roundsDir = roundsDir.trim();
-    else bad('roundsDir', 'not a string');
   }
   return o;
 }

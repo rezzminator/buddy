@@ -32,14 +32,13 @@ live_require() {
 # It signs in with a long-lived token from `claude setup-token`, read from
 # $BUDDY_LIVE_TOKEN_FILE (default ~/.config/buddy/live-token) at launch, never
 # written into the run folder or a command line.
-# Sets LIVE_CONFIG, PROJECTS, STORE_DIR and LIVE_CLAUDE, the launcher to run in
+# Sets LIVE_CONFIG, PROJECTS and LIVE_CLAUDE, the launcher to run in
 # place of claude; exits 2 without a token.
 live_isolate() {
   local token=${BUDDY_LIVE_TOKEN_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/buddy/live-token}
   [ -s "$token" ] || { printf '%s\n' "ERROR no sign-in token at $token: run \`claude setup-token\`, then save the token it prints there (chmod 600), or point BUDDY_LIVE_TOKEN_FILE at it" >&2; exit 2; }
   LIVE_CONFIG=$RUN/config
   PROJECTS=$LIVE_CONFIG/projects
-  STORE_DIR=$LIVE_CONFIG/plugins/store
   mkdir -p "$LIVE_CONFIG"
   # A fresh config dir would open on the first-run screens.
   printf '%s\n' '{ "hasCompletedOnboarding": true, "theme": "dark" }' > "$LIVE_CONFIG/.claude.json"
@@ -52,8 +51,10 @@ exec env -i HOME="\$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" TERM="\${TERM:-xt
 LAUNCH
   chmod 700 "$LIVE_CLAUDE"
 }
-# This plugin's store file in the run's config dir, or nothing.
-store_file() { ls "$STORE_DIR"/buddy_inline-*.json 2>/dev/null | head -1; }
+# The buddy's folder in session $ID's own chat folder, beside its transcript, as the plugin names it from the working directory $WORK.
+buddy_dir() { echo "$PROJECTS/$(cd "$WORK" && pwd -P | sed 's/[^a-zA-Z0-9]/-/g')/$ID/buddy"; }
+# Session $ID's memory file in whichever project folder holds its transcript, or nothing.
+memory_file() { ls "$PROJECTS"/*/"$ID"/buddy/memory.json 2>/dev/null | head -1; }
 
 log() { echo "$(date +%T) $*" >> "$LOG"; }
 

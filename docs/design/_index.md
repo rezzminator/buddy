@@ -53,7 +53,7 @@ flowchart LR
 
 ## What persists
 
-`$.store` survives `/reload` and restarts; the only other file written is the plugin log (`logFile`, [Verification](./verification.md#logging)).
+`$.store` survives `/reload` and restarts. The buddy's memory of each chat (`memory.json`) and its round files (`saveRounds`) are kept in the chat's own folder beside its transcript ([chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept)); the only other file written is the plugin log (`logFile`, [Verification](./verification.md#logging)).
 
 | Key | Holds | Written by |
 | --- | --- | --- |
@@ -61,6 +61,6 @@ flowchart LR
 | `hidden` | `true` while hidden | `/buddy off`, `/buddy on` |
 | `pets` | the pet count | the drawer's `♥ pet` |
 | `original` | the picked original's roll (`native` or `npm`) and its soul | Enter on a "Yours" entry in the personality tab |
-| the `chatTurnsToRead` keys | the last turns and what was said after each, per session | see [chatTurnsToRead](./chatTurnsToRead.md) |
+| `chatTurnsToRead:{session}` | before 0.4.0 only: a chat's memory, moved into its folder's `memory.json` when the chat is next opened | see [chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept) |
 
 Every session shares one store, and Claude Code raises no event when it changes, so a session reads back what another may have written: a pet counts on from the stored `pets`, and `hidden` is read back while the band draws ([Engine](./engine.md#the-tick)).

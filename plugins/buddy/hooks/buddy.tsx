@@ -9,9 +9,10 @@ import { frameAt, type Character } from '../src/character.ts';
 import { USAGE, parseCommand, type Action } from '../src/command.ts';
 import { allItems, buildMenu, currentKeyOf, findItem, type Item, type Originals } from '../src/menu.ts';
 import {
-  CHAT_TURNS_TO_READ_KEY_PREFIX, CHAT_TURNS_TO_READ_SESSIONS, CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, staleKeys, storeKey,
+  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, storeKey,
   type Block, type Exchange, type Stored,
 } from '../src/chatTurnsToRead.ts';
+import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, didOf } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
 import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
@@ -79,11 +80,13 @@ type State = {
   clockPeriod: number;
   lastKey: string;
   lastTickError: string;
-  /** This session's chatTurnsToRead timeline as last loaded or written; loaded again when the session id changes (a start, a /clear, a resume, a reload). */
-  chatTurnsToRead: { sessionId: string; blocks: Block[] } | null;
+  /** This session's chatTurnsToRead timeline as last loaded or written, and its file; loaded again when the session id changes (a start, a /clear, a resume, a reload). */
+  chatTurnsToRead: { sessionId: string; path: string; blocks: Block[] } | null;
+  /** The buddy's folder in this session's chat folder, once its transcript was found there (chatFolderFor). */
+  chatFolder: { sessionId: string; dir: string } | null;
   /** Every chatTurnsToRead read and write, one after another, in the order made. */
   chatTurnsToReadChain: Chain;
-  /** The store writes of the chatTurnsToRead: one in flight per session, so a late one never lands over a newer one. */
+  /** The file writes of the chatTurnsToRead: one in flight per file, so a late one never lands over a newer one. */
   chatTurnsToReadWrites: LatestWrites<Stored>;
   /** The last chatTurnsToRead failure, said in the next /buddy question's reply; '' when none since. */
   chatTurnsToReadError: string;
@@ -124,8 +127,6 @@ type State = {
   lastTurnId: string | undefined;
   /** The options' warnings were said: once, in the first greeting's bubble. */
   warned: boolean;
-  /** The roundsDir, expanded (logPath); '' = no round files. */
-  roundsDir: string;
   /** The round being written, from its turn's start to the next turn's start (Round); null before the first event, or after /clear or a resume. */
   round: Round | null;
   /** The bubble's text as the round timeline last said it: a new one is said once. */
@@ -271,34 +272,71 @@ function chatTurnsToReadFailed(st: State, $: EngineInterface, what: string, erro
   st.chatTurnsToReadError = `${what} failed: ${message(error)}`;
 }
 
-/** The newest CHAT_TURNS_TO_READ_SESSIONS sessions' chatTurnsToRead stay in the store, `current` among them; the rest is deleted. */
-async function pruneChatTurnsToRead($: EngineInterface, current: string): Promise<void> {
-  const sessions: { key: string; at: number }[] = [];
-  for (const key of await $.store.keys()) {
-    if (!key.startsWith(CHAT_TURNS_TO_READ_KEY_PREFIX) || key === storeKey(current)) continue;
-    const v = await $.store.get(key);
-    sessions.push({ key, at: typeof v === 'object' && v !== null && typeof (v as Stored).at === 'number' ? (v as Stored).at : 0 });
+/**
+ * The buddy's folder in session `sessionId`'s own chat folder, beside its
+ * transcript (src/chatFolder.ts): the project folder named from the session's
+ * root, then its working directory, then any holding the transcript. Before
+ * the transcript is written (a new chat's start) it is the root's, and is
+ * looked for again next time.
+ */
+async function chatFolderFor(st: State, $: EngineInterface, sessionId: string): Promise<string> {
+  if (st.chatFolder?.sessionId === sessionId) return st.chatFolder.dir;
+  if (!isSessionId(sessionId)) throw new Error(`the session id ${JSON.stringify(sessionId)} cannot name a folder`);
+  const projects = projectsDir({ HOME: await $.env.get('HOME'), CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') });
+  if (projects === null) throw new Error('no chat folder: neither CLAUDE_CONFIG_DIR nor HOME is set');
+  const named = [...new Set([projectSlug(await $.session.root()), projectSlug(await $.session.cwd())])];
+  let slug: string | null = null;
+  for (const n of named) if (slug === null && (await $.fs.exists(transcriptPath(projects, n, sessionId)))) slug = n;
+  if (slug === null && (await $.fs.exists(projects))) {
+    for (const e of await $.fs.list(projects)) {
+      if (e.kind === 'file' || named.includes(e.name)) continue;
+      if (await $.fs.exists(transcriptPath(projects, e.name, sessionId))) {
+        slug = e.name;
+        break;
+      }
+    }
   }
-  for (const key of staleKeys(sessions, CHAT_TURNS_TO_READ_SESSIONS - 1)) await $.store.delete(key);
+  const dir = buddyFolder(projects, slug ?? named[0]!, sessionId);
+  if (slug !== null) st.chatFolder = { sessionId, dir };
+  return dir;
 }
 
 /**
  * The session's chatTurnsToRead, by `$.session.id()` (the transcript's
- * name): a new id loads its own from the store. null when the link asking,
- * `live` false, was abandoned while the store answered: a later link may have
+ * name): a new id loads its own from memory.json in its chat folder; one
+ * kept in the store before 0.4.0 is moved there. null when the link asking,
+ * `live` false, was abandoned while the file answered: a later link may have
  * loaded and written since, and this stale read never replaces that.
  */
-async function chatTurnsToReadFor(st: State, $: EngineInterface, live: () => boolean): Promise<{ sessionId: string; blocks: Block[] } | null> {
+async function chatTurnsToReadFor(st: State, $: EngineInterface, live: () => boolean): Promise<{ sessionId: string; path: string; blocks: Block[] } | null> {
   const sessionId = await $.session.id();
   if (st.chatTurnsToRead?.sessionId === sessionId) return st.chatTurnsToRead;
-  const value = await $.store.get(storeKey(sessionId));
+  const path = `${await chatFolderFor(st, $, sessionId)}/${MEMORY_FILE}`;
+  let value: unknown;
+  let legacy = false;
+  let unreadable = '';
+  if (await $.fs.exists(path)) {
+    const text = (await $.fs.read(path)) as string;
+    try {
+      value = JSON.parse(text);
+    } catch (error) {
+      unreadable = `${path} is not JSON (${message(error)}); starting over`;
+    }
+  } else {
+    value = await $.store.get(storeKey(sessionId));
+    legacy = value !== undefined;
+  }
   if (!live()) return null;
   const loaded = chatTurnsToReadOf(value);
-  if (loaded.error) chatTurnsToReadFailed(st, $, 'reading the chatTurnsToRead', new Error(loaded.error));
-  st.chatTurnsToRead = { sessionId, blocks: loaded.blocks };
+  if (unreadable || loaded.error) chatTurnsToReadFailed(st, $, 'reading the chatTurnsToRead', new Error(unreadable || loaded.error));
+  st.chatTurnsToRead = { sessionId, path, blocks: loaded.blocks };
   seedFeed(st, $, loaded.blocks);
-  // Old sessions' chatTurnsToRead are pruned beside this read, never on its path: it touches only other sessions' keys.
-  pruneChatTurnsToRead($, sessionId).catch((error) => chatTurnsToReadFailed(st, $, "deleting old sessions' chatTurnsToRead", error));
+  if (legacy) {
+    // Moved into the chat's folder, then out of the store; a failed write leaves the store's copy for the next start.
+    await st.chatTurnsToReadWrites(path, { at: Date.now(), blocks: loaded.blocks }, (p, v) => $.fs.write(p, JSON.stringify(v)));
+    await $.store.delete(storeKey(sessionId));
+    lg($, 'info', 'chatTurnsToRead.moved', { blocks: loaded.blocks.length });
+  }
   return st.chatTurnsToRead;
 }
 
@@ -364,7 +402,7 @@ function changeChatTurnsToRead(st: State, $: EngineInterface, what: string, chan
         applied = m.sessionId;
       }
       const stored: Stored = { at: Date.now(), blocks: m.blocks };
-      await st.chatTurnsToReadWrites(storeKey(m.sessionId), stored, (key, value) => $.store.set(key, value));
+      await st.chatTurnsToReadWrites(m.path, stored, (p, v) => $.fs.write(p, JSON.stringify(v)));
     })
       .then((landed) => {
         if (landed) {
@@ -476,6 +514,17 @@ async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, 
     ms,
   );
   return landed ? { text, memory } : { text: '', memory: { turns: 0, kept: 0, full: 0 } };
+}
+
+/**
+ * The session's memory loaded now, and the drawer drawn back from it: at a
+ * session's start and when the drawer opens, so a reopened chat shows what the
+ * buddy remembers before any turn, question or greeting touches it.
+ */
+function loadMemory(st: State, $: EngineInterface): void {
+  chainChatTurnsToRead(st, $, 'loading the chatTurnsToRead', CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, async (live) => {
+    await chatTurnsToReadFor(st, $, live);
+  }).catch((error: unknown) => log($, 'loading the chatTurnsToRead', error));
 }
 
 /** What a call's memory handed the model of the main chat's turns (memoryStats), for the audit. */
@@ -609,6 +658,7 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
   startClock(st, $);
   st.lastKey = '';
   $.ui.invalidate('ui.render');
+  if (st.interactive) loadMemory(st, $);
 }
 
 /** The log's level, file (logPath: the config folder's by default) and session; a failure here leaves file logging off, said. */
@@ -635,17 +685,7 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     lg($, 'debug', 'session.build-unread', { error: message(error) });
   }
-  st.roundsDir = '';
-  if (st.options.roundsDir) {
-    try {
-      const where = logPath(st.options.roundsDir, { HOME: await $.env.get('HOME'), CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') });
-      if ('error' in where) throw new Error(where.error);
-      st.roundsDir = where.path.replace(/\/+$/, '');
-    } catch (error) {
-      log($, 'opening the roundsDir', error, { roundsDir: st.options.roundsDir });
-    }
-  }
-  lg($, 'info', 'session.start', { build, rounds: st.roundsDir !== '', model: st.options.model, effort: st.options.effort, level: L.level, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt, chatTurnsToRead: st.options.chatTurnsToRead });
+  lg($, 'info', 'session.start', { build, rounds: st.options.saveRounds, model: st.options.model, effort: st.options.effort, level: L.level, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt, chatTurnsToRead: st.options.chatTurnsToRead });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
@@ -839,7 +879,7 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
 
 /** One change to the round files, after every change made before; a failure is said once, then logged. Never throws. */
 function changeRounds(st: State, $: EngineInterface, what: string, change: () => Promise<void>): void {
-  if (!st.roundsDir) return;
+  if (!st.options.saveRounds) return;
   st.roundsChain = st.roundsChain.then(change).catch((error) => {
     if (st.roundsFailed) L.error(what, error);
     else log($, what, error);
@@ -852,9 +892,9 @@ function newRound(start: Round['start']): Round {
   return { at: Date.now(), start, body: '', calls: 0, path: '', session: '', dirty: true, queued: false };
 }
 
-/** `text` added to the round being written (one opened, before any turn, when none is); null with no roundsDir. Writes nothing: writeRound does. */
+/** `text` added to the round being written (one opened, before any turn, when none is); null with saveRounds off. Writes nothing: writeRound does. */
 function roundAppend(st: State, text: string): Round | null {
-  if (!st.roundsDir) return null;
+  if (!st.options.saveRounds) return null;
   st.round ??= newRound(null);
   st.round.body += text;
   st.round.dirty = true;
@@ -863,13 +903,14 @@ function roundAppend(st: State, text: string): Round | null {
 
 /** `round` on disk, whole, after every write before; its slot and session taken at its first write. At most one write waits per round: it writes the text as it stands when it runs. */
 function writeRound(st: State, $: EngineInterface, round: Round | null): void {
-  if (!round || !st.roundsDir || round.queued || !round.dirty) return;
+  if (!round || !st.options.saveRounds || round.queued || !round.dirty) return;
   round.queued = true;
   changeRounds(st, $, 'writing a round file', async () => {
     round.queued = false;
     if (!round.path) {
       round.session = await $.session.id();
-      round.path = `${st.roundsDir}/${await nextRoundSlot(st, $)}`;
+      const dir = await chatFolderFor(st, $, round.session);
+      round.path = `${dir}/${await nextRoundSlot($, dir)}`;
     }
     round.dirty = false;
     await $.fs.write(round.path, roundHead(round.at, round.session, round.start) + round.body);
@@ -881,14 +922,14 @@ function flushRound($: EngineInterface): void {
   if (tapped) writeRound(tapped, $, tapped.round);
 }
 
-/** The slot a new round takes: a free one, else the one written least recently, so the folder never holds more than ROUNDS_MAX. */
-async function nextRoundSlot(st: State, $: EngineInterface): Promise<string> {
-  const names = (await $.fs.exists(st.roundsDir)) ? (await $.fs.list(st.roundsDir)).filter((f) => f.kind === 'file').map((f) => f.name) : [];
+/** The slot a new round takes in the chat's folder `dir`: a free one, else the one written least recently, so the folder never holds more than ROUNDS_MAX. */
+async function nextRoundSlot($: EngineInterface, dir: string): Promise<string> {
+  const names = (await $.fs.exists(dir)) ? (await $.fs.list(dir)).filter((f) => f.kind === 'file').map((f) => f.name) : [];
   const free = freeRoundSlot(names);
   if (free) return free;
   const slots = await Promise.all(names.filter((n) => /^round-\d{3}\.txt$/.test(n)).map(async (name) => {
     try {
-      return { name, mtimeMs: (await $.fs.stat(`${st.roundsDir}/${name}`)).mtimeMs };
+      return { name, mtimeMs: (await $.fs.stat(`${dir}/${name}`)).mtimeMs };
     } catch (error) {
       L.error('reading a round slot\'s time', error, { name });
       return { name, mtimeMs: Number.NaN };
@@ -899,7 +940,7 @@ async function nextRoundSlot(st: State, $: EngineInterface): Promise<string> {
 
 /** A main turn began: the round before it is written as it stands, and this turn's opens with the prompt it began with. */
 function openRound(st: State, $: EngineInterface, turnId: string, prompt: string): void {
-  if (!st.roundsDir) return;
+  if (!st.options.saveRounds) return;
   writeRound(st, $, st.round);
   st.round = newRound({ turnId, prompt });
   st.roundBubble = null;
@@ -915,7 +956,7 @@ function roundEvent(st: State, $: EngineInterface, text: string): void {
 async function completeRecorded(st: State, $: EngineInterface, kind: RoundCall['kind'], request: { model: string; effort?: Effort; system: string; prompt: string; maxTokens: number; timeoutMs: number }, memory: MemoryStats): Promise<ModelCompleteResult> {
   const at = Date.now();
   // The round it was sent in: a reply landing after the next turn began still goes with its request.
-  const round = st.roundsDir ? (st.round ??= newRound(null)) : null;
+  const round = st.options.saveRounds ? (st.round ??= newRound(null)) : null;
   const { system, prompt, ...settings } = request;
   const record = (call: Omit<RoundCall, 'kind' | 'at' | 'settings' | 'system' | 'prompt'>) => {
     if (!round) return;
@@ -1409,6 +1450,7 @@ function toggleDrawer(st: State, $: EngineInterface): { text: string } {
   const d = st.drawer;
   d.open = !d.open;
   if (d.open) {
+    loadMemory(st, $);
     d.timer ??= $.clock.every(DRAWER_MS, () => {
       d.frame++;
       $.ui.invalidate('ui.render');
@@ -1721,6 +1763,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     lastKey: '',
     lastTickError: '',
     chatTurnsToRead: null,
+    chatFolder: null,
     chatTurnsToReadChain: newChain(),
     chatTurnsToReadWrites: latestWrites<Stored>(),
     chatTurnsToReadError: '',
@@ -1743,7 +1786,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
     turnStarts: 0,
     lastTurnId: undefined,
     warned: false,
-    roundsDir: '',
     round: null,
     roundBubble: null,
     roundsChain: Promise.resolve(),

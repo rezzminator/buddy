@@ -4,7 +4,7 @@ import { DEFAULTS, expandHome, logPath, observeEffort, resolveEffort, resolveMod
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, chatTurnsToRead: 4, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', roundsDir: '', ambiguousCharacterWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, chatTurnsToRead: 4, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', saveRounds: true, ambiguousCharacterWidth: 'narrow' });
   });
   test('good values', () => {
     const o = resolveOptions({ character: ' Cat ', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: 'false', model: 'sonnet', effort: ' HIGH ', secondsBetweenComments: '10' });
@@ -165,10 +165,11 @@ describe('expandHome', () => {
     expect(o.errors).toEqual(['option logLevel ignored: "loud" is not error, info or debug']);
   });
 
-  test('roundsDir: off by default; a path, trimmed; a non-string is ignored by name', () => {
-    expect(resolveOptions({}).roundsDir).toBe('');
-    expect(resolveOptions({ roundsDir: ' $CLAUDE_CONFIG_DIR/buddy/rounds ' }).roundsDir).toBe('$CLAUDE_CONFIG_DIR/buddy/rounds');
-    expect(resolveOptions({ roundsDir: 3 }).errors).toEqual(['option roundsDir ignored: not a string']);
+  test('saveRounds: on by default; true or false, as text too; anything else is ignored by name', () => {
+    expect(resolveOptions({}).saveRounds).toBe(true);
+    expect(resolveOptions({ saveRounds: false }).saveRounds).toBe(false);
+    expect(resolveOptions({ saveRounds: 'false' }).saveRounds).toBe(false);
+    expect(resolveOptions({ saveRounds: '~/rounds' }).errors).toEqual(['option saveRounds ignored: "~/rounds" is not true or false']);
   });
 
   test('logFile: a path, trimmed; empty turns the file off; a non-string is ignored by name', () => {

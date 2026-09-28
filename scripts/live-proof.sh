@@ -235,13 +235,13 @@ out=$(command_out "/buddy what word did I ask you to remember?") || exit 2
 got=$(answered); v=$?
 echo "$got" > "$RUN/j-second.txt"
 if [ $v -eq 0 ] && grep -q -i 'pineapple' <<<"$got"; then add "(j) the next answer remembers pineapple" PASS "$got"; else add "(j) the next answer remembers pineapple" FAIL "$out / $got"; fi
-# This plugin's store in the run's config dir: only the key of this session is read.
-STORE=$(store_file)
-mem=$([ -n "$STORE" ] && jq -r --arg k "chatTurnsToRead:$ID" --arg d "$DEFAULT" '.[$k].blocks[]?.characters[$d][]? | if .kind == "question" then "question: \(.question) -> \(.answer // "(no answer)")" elif .kind == "endOfTurn" then "endOfTurn: \(.commentAfterEachTurn // "-") | \(.suggestNextPrompt // "-")" else "\(.kind): \(.text)" end' "$STORE" 2>&1)
+# This chat's memory.json, in its own folder beside its transcript.
+MEM=$(memory_file)
+mem=$([ -n "$MEM" ] && jq -r --arg d "$DEFAULT" '.blocks[]?.characters[$d][]? | if .kind == "question" then "question: \(.question) -> \(.answer // "(no answer)")" elif .kind == "endOfTurn" then "endOfTurn: \(.commentAfterEachTurn // "-") | \(.suggestNextPrompt // "-")" else "\(.kind): \(.text)" end' "$MEM" 2>&1)
 echo "$mem" > "$RUN/j-chatTurnsToRead.txt"
 if grep -q -F 'question: remember the word pineapple -> ' <<<"$mem" && grep -q -F 'question: what word did I ask you to remember? -> ' <<<"$mem" && ! grep -q -F -f "$RUN/thinking.pool" <<<"$mem"; then
-  add "(j) the store holds this session's chatTurnsToRead" PASS "$(grep -c . <<<"$mem") exchanges under chatTurnsToRead:$ID, no thinking filler"
-else add "(j) the store holds this session's chatTurnsToRead" FAIL "${STORE:-no buddy_inline store file}: $(head -c 80 <<<"$mem")"; fi
+  add "(j) the chat's memory.json holds this session's chatTurnsToRead" PASS "$(grep -c . <<<"$mem") exchanges in $MEM, no thinking filler"
+else add "(j) the chat's memory.json holds this session's chatTurnsToRead" FAIL "${MEM:-no memory.json under projects/*/$ID/buddy}: $(head -c 80 <<<"$mem")"; fi
 
 # (k) Ask while a main turn runs: `model` answers at once, the turn still running.
 send "Run this Bash command: sleep 15. Then reply with exactly: K1"
@@ -254,7 +254,7 @@ for _ in $(seq 1 20); do sleep 1; [ "$(stdout_rows | wc -l)" -ge "$((before + 2)
 out=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 1p); out2=$(stdout_rows | tail -n +"$((before + 1))" | sed -n 2p)
 got=$(answered); v=$?
 sleep 3
-mem=$([ -n "$STORE" ] && jq -r --arg k "chatTurnsToRead:$ID" --arg d "$DEFAULT" '.[$k].blocks[]?.characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$STORE" 2>&1)
+mem=$([ -n "$MEM" ] && jq -r --arg d "$DEFAULT" '.blocks[]?.characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$MEM" 2>&1)
 a1=$(grep -F 'do you like yourself? -> ' <<<"$mem" | tail -1 | sed 's/.* -> //')
 route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "\($o.outcome // "none") in \($o.ms // "-") ms"' "$RUN/buddy.log" 2>&1)
 # The answer came before the main turn ended: by the log, its answered outcome

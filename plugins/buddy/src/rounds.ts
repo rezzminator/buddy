@@ -1,13 +1,13 @@
-// The rounds: one text file per main-chat turn, when the roundsDir option is
-// set, holding in the order it happened everything that went into the buddy
+// The rounds: one text file per main-chat turn, unless the saveRounds option
+// is off, in the chat's own folder beside its transcript (src/chatFolder.ts),
+// holding in the order it happened everything that went into the buddy
 // and everything that came out of it, from the turn's start to the next
 // turn's start: the prompt the turn began with; each tool call the buddy
 // heard, with its arguments and output; every log record, at any level; each
 // line the bubble drew; the turn's end as the buddy filed it; and every model
-// call, its system prompt, prompt and reply verbatim. The folder holds at most
-// ROUNDS_MAX files, round-001.txt to round-150.txt, shared by every session
-// and account writing there: a new round takes a free slot, else overwrites
-// the one written least recently (Claude Code's $.fs can write but never
+// call, its system prompt, prompt and reply verbatim. Each chat's folder holds
+// at most ROUNDS_MAX files, round-001.txt to round-150.txt: a new round takes
+// a free slot, else overwrites the one written least recently (Claude Code's $.fs can write but never
 // delete). No I/O: the adapter lists and stats the folder and writes the text.
 
 /** The most round files the folder holds: past it the least recently written is overwritten. */

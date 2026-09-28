@@ -9,9 +9,11 @@
 // What you and the buddy said to each other is kept whole, never cut. A
 // compaction of the main chat is remembered as a turn of its own: its summary
 // is what Claude holds of everything before it.
-// No I/O: the adapter keeps a session's timeline in $.store under
-// storeKey(sessionId), each character's exchanges under its id, so a switched
-// character never claims another's words.
+// No I/O: the adapter keeps a session's timeline in memory.json in the chat's
+// own folder, beside its transcript (src/chatFolder.ts), each character's
+// exchanges under its id, so a switched character never claims another's
+// words. Before 0.4.0 it was kept in $.store under storeKey(sessionId): the
+// adapter moves it into the file the first time the chat is opened again.
 
 import { DID_MAX, DID_TEXT_CAP } from './did.ts';
 import type { Turn } from './prompts.ts';
@@ -34,8 +36,7 @@ export const TURN_ANSWER_TAIL = 3200;
 export const LINES_PER_TURN_MAX = 3;
 /** The `from` of a remembered compaction: its turn's answer is the summary. */
 export const COMPACTION = 'compaction';
-/** How many sessions' chatTurnsToRead the store keeps; older ones are deleted. */
-export const CHAT_TURNS_TO_READ_SESSIONS = 20;
+/** The store key prefix a session's chatTurnsToRead was kept under before 0.4.0. */
 export const CHAT_TURNS_TO_READ_KEY_PREFIX = 'chatTurnsToRead:';
 /** How long one chatTurnsToRead write may take before it is abandoned and later reads and writes go ahead; a read is bounded by its caller's deadline. */
 export const CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS = 60_000;
@@ -57,7 +58,7 @@ export type Exchange =
  * their start and end, for the audit of what is lost.
  */
 export type Block = { turnId?: string; turn?: Turn; at?: number; full?: number; characters: Record<string, Exchange[]> };
-/** What the store holds under storeKey(sessionId): when it was last written, and the timeline. */
+/** What memory.json holds (and the store held under storeKey(sessionId) before 0.4.0): when it was last written, and the timeline. */
 export type Stored = { at: number; blocks: Block[] };
 
 export function storeKey(sessionId: string): string {
@@ -264,9 +265,4 @@ export function chatTurnsToReadOf(value: unknown): { blocks: Block[]; error?: st
     blocks.push(turn ? { turnId: b.turnId as string, turn, ...at, ...full, characters: kept } : { characters: kept });
   }
   return dropped > 0 ? { blocks, error: `the stored chatTurnsToRead had ${dropped} malformed entr${dropped === 1 ? 'y' : 'ies'}, dropped` } : { blocks };
-}
-
-/** The keys to delete: all but the `keep` most recently written sessions. */
-export function staleKeys(sessions: readonly { key: string; at: number }[], keep: number): string[] {
-  return [...sessions].sort((a, b) => b.at - a.at).slice(keep).map((s) => s.key);
 }

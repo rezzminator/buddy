@@ -14,7 +14,7 @@
         "chatTurnsToRead": 4,
         "logLevel": "info",
         "logFile": "$CLAUDE_CONFIG_DIR/buddy/buddy.log",
-        "roundsDir": "",
+        "saveRounds": true,
         "ambiguousCharacterWidth": "narrow"
       }
     }

@@ -7,10 +7,10 @@
 #      shows in the bubble and suggestNextPrompt in the prompt box; a /buddy question is
 #      answered, and a second one referring to it is answered from chatTurnsToRead
 #   S2 commentAfterEachTurn false: no commentAfterEachTurn after a turn, suggestNextPrompt still shown
-#   S3 suggestNextPrompt false, chatTurnsToRead 1, roundsDir: commentAfterEachTurn shows; no suggestNextPrompt; the store
-#      holds only the last turn, and a question about the turn before it is answered as out of memory;
-#      roundsDir pre-filled with 150 files: each round overwrites the least recently written, the folder
-#      stays at 150, each turn's whole timeline in its round and each call verbatim
+#   S3 suggestNextPrompt false, chatTurnsToRead 1: commentAfterEachTurn shows; no suggestNextPrompt; the chat's
+#      memory.json holds only the last turn, and a question about the turn before it is answered as out of memory;
+#      the chat's buddy folder pre-filled with 150 round files: each round overwrites the least recently written,
+#      the folder stays at 150, each turn's whole timeline in its round and each call verbatim
 #   S4 headless `claude -p`, then `-p --resume`: turn.skipped why headless and
 #      no model call from the plugin
 #   S5 customCharactersDir with one invalid character, the character option naming it:
@@ -42,7 +42,7 @@ options_of() {
   case $1 in
     S1|S4) echo '{}' ;;
     S2) echo '{ "commentAfterEachTurn": false }' ;;
-    S3) jq -n --arg d "$RUN/rounds" '{ suggestNextPrompt: false, chatTurnsToRead: 1, roundsDir: $d }' ;;
+    S3) echo '{ "suggestNextPrompt": false, "chatTurnsToRead": 1 }' ;;
     S5) jq -n --arg d "$RUN/chars" '{ customCharactersDir: $d, character: "broken" }' ;;
   esac
 }
@@ -50,8 +50,8 @@ lines() { [ -f "$RUN/buddy.log" ] && wc -l < "$RUN/buddy.log" | tr -d ' ' || ech
 # How many records of event $1 the log holds from line $2 on.
 count() { tail -n +"$(($2 + 1))" "$RUN/buddy.log" 2>/dev/null | jq -c --arg e "$1" 'select(.event == $e)' 2>/dev/null | grep -c .; }
 check() { printf '%s\t%s\t%s\n' "$1" "$2" "${3//$'\t'/ }" >> "$RUN/checks.tsv"; [ "$1" = PASS ] || log "FAIL $2: $3"; }
-# The newest `question` exchange of this session's chatTurnsToRead in the store, or the newest endOfTurn exchange's `commentAfterEachTurn` or `suggestNextPrompt`; nothing when none.
-stored() { local s; s=$(store_file); [ -n "$s" ] && jq -r --arg k "chatTurnsToRead:$ID" --arg f "$1" '[.[$k].blocks[]?.characters[]?[]? | if $f == "question" then select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")" else select(.kind == "endOfTurn") | .[$f] // empty end] | last // empty' "$s" 2>/dev/null; }
+# The newest `question` exchange of this session's chatTurnsToRead in its memory.json, or the newest endOfTurn exchange's `commentAfterEachTurn` or `suggestNextPrompt`; nothing when none.
+stored() { local s; s=$(memory_file); [ -n "$s" ] && jq -r --arg f "$1" '[.blocks[]?.characters[]?[]? | if $f == "question" then select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")" else select(.kind == "endOfTurn") | .[$f] // empty end] | last // empty' "$s" 2>/dev/null; }
 # The transcript's reply holding $1: its timestamp, or nothing.
 reply_ts() { local f; f=$(transcript); [ -n "$f" ] && jq -r --arg m "$1" 'select(.type=="assistant") | select(any(.message.content[]?; .type=="text" and (.text|contains($m)))) | .timestamp' "$f" 2>/dev/null | tail -1; }
 squash() { tr -s ' \n' '  ' | sed 's/^ //; s/ $//'; }
@@ -152,11 +152,11 @@ run_session() {
   live_isolate
   mkdir -p "$WORK"; : > "$RUN/checks.tsv"; : > "$RUN/turns.jsonl"
   ID=$(uuidgen | tr 'A-Z' 'a-z'); echo "$ID" > "$RUN/session-id"
-  # roundsDir full at its cap: 150 slots, round-042 written longest ago, round-017 next.
+  # The chat's round files full at their cap: 150 slots, round-042 written longest ago, round-017 next.
   if [ "$S" = S3 ]; then
-    mkdir -p "$RUN/rounds"
-    for n in $(seq 1 150); do f=$RUN/rounds/$(printf 'round-%03d.txt' "$n"); echo "seeded $n" > "$f"; touch -t 202601020000 "$f"; done
-    touch -t 202501010000 "$RUN/rounds/round-042.txt"; touch -t 202501020000 "$RUN/rounds/round-017.txt"
+    ROUNDS=$(buddy_dir); mkdir -p "$ROUNDS"
+    for n in $(seq 1 150); do f=$ROUNDS/$(printf 'round-%03d.txt' "$n"); echo "seeded $n" > "$f"; touch -t 202601020000 "$f"; done
+    touch -t 202501010000 "$ROUNDS/round-042.txt"; touch -t 202501020000 "$ROUNDS/round-017.txt"
   fi
   if [ "$S" = S5 ]; then mkdir -p "$RUN/chars"; printf '%s\n' '{ "name": "Broken", "poses": 3 }' > "$RUN/chars/broken.json"; fi
   jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" \
@@ -225,24 +225,24 @@ run_session() {
   done
   if [ "$S" = S3 ]; then
     local st kept a
-    st=$(store_file); kept=$([ -n "$st" ] && jq -r --arg k "chatTurnsToRead:$ID" '[.[$k].blocks[]? | select(.turn) | .turn.prompt] | join(" | ")' "$st" 2>&1)
-    grep -q 'S3T2' <<<"$kept" && ! grep -q 'S3T1' <<<"$kept" && check PASS "chatTurnsToRead 1: the store holds only the last turn" "$kept" || check FAIL "chatTurnsToRead 1: the store holds only the last turn" "${kept:0:160}"
+    st=$(memory_file); kept=$([ -n "$st" ] && jq -r '[.blocks[]? | select(.turn) | .turn.prompt] | join(" | ")' "$st" 2>&1)
+    grep -q 'S3T2' <<<"$kept" && ! grep -q 'S3T1' <<<"$kept" && check PASS "chatTurnsToRead 1: memory.json holds only the last turn" "$kept" || check FAIL "chatTurnsToRead 1: memory.json holds only the last turn" "${st:-no memory.json}: ${kept:0:160}"
     # The buddy knows its memory is one turn long: asked about the turn before it, it says so, never guesses.
     ask "what Bash command did Claude run in the turn before my last one?" "ask-past"; a=$(stored question)
     [ "$(row_of outcome)" = answered ] && grep -q -i -E 'memory|remember|recall|forg' <<<"$a" && ! grep -q -E '(^|[^a-z])ls([^a-z]|$)' <<<"${a#*->}" && check PASS "a question past chatTurnsToRead is answered as out of memory" "$a" || check FAIL "a question past chatTurnsToRead is answered as out of memory" "$ASK_OUT / $(row_of outcome) / ${a:-nothing stored}"
-    # roundsDir at its cap: the session's start, T1 and T2 each overwrote the least recently written slot (042, 017, then one of the rest), the folder still holds 150.
+    # The chat's round files at their cap: the session's start, T1 and T2 each overwrote the least recently written slot (042, 017, then one of the rest), the folder still holds 150.
     # T1's round holds its prompt, the Bash call with its arguments and output, the log, the bubble, the turn's end and its end-of-turn call verbatim;
     # T2's round also the question, asked after T2 ended.
     local n r1 r2
-    n=$(ls "$RUN/rounds" | grep -c .)
-    r1=$(grep -l '─── IN · the prompt the turn began with ───' "$RUN/rounds"/*.txt | xargs grep -l 'S3T1' | head -1)
-    r2=$(grep -l '─── IN · the prompt the turn began with ───' "$RUN/rounds"/*.txt | xargs grep -l 'Reply with exactly: S3T2' | head -1)
-    [ "$n" = 150 ] && ! grep -q seeded "$RUN/rounds/round-042.txt" "$RUN/rounds/round-017.txt" \
+    n=$(ls "$ROUNDS" | grep -c '^round-')
+    r1=$(grep -l '─── IN · the prompt the turn began with ───' "$ROUNDS"/round-*.txt | xargs grep -l 'S3T1' | head -1)
+    r2=$(grep -l '─── IN · the prompt the turn began with ───' "$ROUNDS"/round-*.txt | xargs grep -l 'Reply with exactly: S3T2' | head -1)
+    [ "$n" = 150 ] && ! grep -q seeded "$ROUNDS/round-042.txt" "$ROUNDS/round-017.txt" \
       && [ -n "$r1" ] && grep -q 'IN · tool call Bash' "$r1" && grep -q '      command: ls' "$r1" && grep -q '  LOG info turn.call' "$r1" && grep -q 'OUT · bubble' "$r1" \
       && grep -q 'the turn ended (answer), as the buddy filed it' "$r1" && grep -q 'BUDDY CALL 1 · end-of-turn call' "$r1" && grep -q '─── IN: system ───' "$r1" \
       && [ -n "$r2" ] && grep -q '/buddy question' "$r2" && grep -q 'turn before my last one' "$r2" && grep -q '─── OUT: answered' "$r2" \
-      && check PASS "roundsDir at 150: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2")" \
-      || check FAIL "roundsDir at 150: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$RUN/rounds" | head -4 | tr '\n' ' ')"
+      && check PASS "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2")" \
+      || check FAIL "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$ROUNDS: $n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$ROUNDS" | head -4 | tr '\n' ' ')"
   fi
   if [ "$S" = S1 ]; then
     local a1 a2
