@@ -71,8 +71,8 @@ const lastWithUsage = (e) => recs.filter((r) => r.event === e && typeof r.inTok 
 // A refused ask made no call and carries no usage: the ask is the last one that did.
 const lastAsked = () => recs.filter((r) => r.event === 'ask.outcome' && r.outcome !== 'refused').at(-1) ?? null;
 const q = last('commentAfterEachTurn.outcome'), s = last('suggestNextPrompt.outcome'), a = lastAsked(), p = last('turn.prompt') ?? last('ask.prompt');
-// With commentAfterEachTurn off, the turn's only call is the watch call, which logs its usage on
-// verdict.outcome; the latest one that carries usage (a stale one may carry none).
+// A call that writes no commentAfterEachTurn (off) logs its usage on verdict.outcome; the latest one
+// that carries it (a stale one may carry none).
 const call = q ?? a ?? lastWithUsage('verdict.outcome');
 const end = endTs ? Date.parse(endTs) : NaN;
 const n = (v) => (typeof v === 'number' ? v : null);

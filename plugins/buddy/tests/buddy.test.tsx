@@ -57,20 +57,13 @@ const SESSION = 'test-session';
 const ROOT = '/work/app';
 const chatDir = (session = SESSION) => `${HOME}/.claude/projects/-work-app/${session}/buddy`;
 
-/**
- * `complete`: every call's reply, unless queued. `queue`: the comment call's and
- * /buddy questions' replies, in order. `watch`: the watch call's, in order,
- * then `complete`; the watch call is recorded in `watches`, never `completes`.
- */
-function world(on: On, store: Record<string, unknown> = {}, answers: { complete?: Answer; queue?: Answer[]; watch?: Answer[]; completeDelayMs?: number } = {}, disk: Disk = {}) {
+function world(on: On, store: Record<string, unknown> = {}, answers: { complete?: Answer; queue?: Answer[]; completeDelayMs?: number } = {}, disk: Disk = {}) {
   const logs: string[] = [];
   const completes: { model: string; effort?: string; system?: string; prompt: string; timeoutMs?: number }[] = [];
   const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   const commands: string[] = [];
   const writes: string[] = [];
   const queue = [...(answers.queue ?? [])];
-  const watchQueue = [...(answers.watch ?? [])];
-  const watches: { model: string; effort?: string; system?: string; prompt: string }[] = [];
   const saved = new Map(Object.entries(store));
   const files = disk.files ?? {};
   const shipped: Record<string, string> = { ...FILES, ...disk.builtins };
@@ -201,17 +194,15 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     return { value: text };
   });
   on('model.complete', async (_$, e) => {
-    const watch = e.system?.includes("the user's second brain") === true;
-    if (watch) watches.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt });
-    else completes.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt, timeoutMs: e.timeoutMs });
-    const a = (watch ? watchQueue.shift() : queue.shift()) ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' };
+    completes.push({ model: e.model, effort: e.effort, system: e.system, prompt: e.prompt, timeoutMs: e.timeoutMs });
+    const a = queue.shift() ?? answers.complete ?? { isAnswered: true, text: 'A completed answer.' };
     const delayMs = a.delayMs ?? answers.completeDelayMs;
     if (delayMs) await clock.sleep(delayMs);
     if (a.error !== undefined) throw new Error(a.error);
     const { delayMs: _d, error: _e, ...answer } = a;
     return { value: { usage, ...answer } } as never;
   });
-  return { logs, completes, watches, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins, submit };
+  return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins, submit };
 }
 
 /** The user's prompt entering while idle, and the main turn `turnId` it starts. */
@@ -1100,7 +1091,7 @@ describe('hook paths', () => {
 
   test('the buddy remembers of itself exactly as far back as of the chat: a turn and what it said after it leave together', async ($, on) => {
     const queue = [1, 2, 3, 4, 5].map((n) => ({ isAnswered: true, text: `COMMENT_AFTER_EACH_TURN: comment on ${n}.\nSUGGEST_NEXT_PROMPT: next after ${n}` }));
-    const w = world(on, { character: 'fixy' }, { queue: [...queue, { isAnswered: true, text: 'I recall.' }], watch: queue });
+    const w = world(on, { character: 'fixy' }, { queue: [...queue, { isAnswered: true, text: 'I recall.' }] });
     await $.session.start(START);
     const ui = await band($);
     for (let n = 1; n <= 5; n++) {
@@ -1312,7 +1303,7 @@ describe('suggestNextPrompt', () => {
     expect(asks[0]!.prompt).not.toContain('now list it');
     await ui.unmount();
   });
-  test('one answered turn: the comment call writes commentAfterEachTurn for the band, the watch call beside it suggestNextPrompt for the prompt box, as a plugin\'s', async ($, on) => {
+  test('one answered turn: ONE call writes commentAfterEachTurn for the band and suggestNextPrompt for the prompt box, as a plugin\'s', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: run the tests' } });
     await $.session.start(START);
     const ui = await band($);
@@ -1321,18 +1312,14 @@ describe('suggestNextPrompt', () => {
     expect(w.completes.length).toBe(1);
     expect(w.completes[0]?.system).toContain('You are Fixy, a test fixture.');
     expect(w.completes[0]?.system).toContain('COMMENT_AFTER_EACH_TURN:');
-    expect(w.completes[0]?.system).not.toContain('SUGGEST_NEXT_PROMPT:');
-    expect(w.watches.length).toBe(1);
-    expect(w.watches[0]?.system).toContain('You are Fixy, a test fixture.');
-    expect(w.watches[0]?.system).toContain('SUGGEST_NEXT_PROMPT:');
-    expect(w.watches[0]?.system).not.toContain('COMMENT_AFTER_EACH_TURN:');
+    expect(w.completes[0]?.system).toContain('SUGGEST_NEXT_PROMPT:');
     expect(await shows(ui, /Fixy likes that\./)).toBe(true);
     expect(w.suggested).toEqual(['run the tests']);
     expect(w.origins).toEqual(['plugin']);
     await ui.unmount();
   });
   test('a shown suggestNextPrompt is remembered with the commentAfterEachTurn it came with, as one exchange: the next question\'s prompt carries both, told apart, kept in the store', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.' }, { isAnswered: true, text: 'I said run the tests.' }], watch: [{ isAnswered: true, text: 'SUGGEST_NEXT_PROMPT: run the tests' }] });
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: run the tests' }, { isAnswered: true, text: 'I said run the tests.' }] });
     await $.session.start(START);
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
@@ -1372,7 +1359,7 @@ describe('suggestNextPrompt', () => {
     await ui.unmount();
   });
   test('a held /buddy answer keeps the bubble over the turn\'s commentAfterEachTurn, and suggestNextPrompt still goes out', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'Forty-two, friend.' }, { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Should not show.' }], watch: [{ isAnswered: true, text: 'SUGGEST_NEXT_PROMPT: commit this' }] });
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'Forty-two, friend.' }, { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Should not show.\nSUGGEST_NEXT_PROMPT: commit this' }] });
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('what is up'));
@@ -1405,21 +1392,32 @@ function ring(w: { files: Record<string, string> }, id: string): any[] {
   return ((memory(w) as { blocks: { characters: Record<string, unknown[]> }[] } | undefined)?.blocks ?? []).flatMap((b) => b.characters[id] ?? []);
 }
 
-describe('the second brain: the watch call', () => {
-  const judged = (verdict: string, why: string, next: string, delayMs?: number) => ({
+describe('the second brain: one call, the character and the suggestion combined', () => {
+  const judged = (verdict: string, why: string, next: string, comment = 'Fixy likes that.') => ({
     isAnswered: true,
-    text: `DESIRE: a release nobody has to roll back\nVERDICT: ${verdict}\nWHY: ${why}\nSUGGEST_NEXT_PROMPT: ${next}`,
-    ...(delayMs ? { delayMs } : {}),
+    text: `DESIRE: a release nobody has to roll back\nVERDICT: ${verdict}\nWHY: ${why}\nCOMMENT_AFTER_EACH_TURN: ${comment}\nSUGGEST_NEXT_PROMPT: ${next}`,
   });
 
-  test('WRONG is screamed in red over the turn\'s comment, its stop prompt suggested; the drawer and the memory keep the comment, the warning and the suggestion', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.' }], watch: [judged('WRONG', 'YOU ARE FORCE-PUSHING MAIN!', 'stop, never push main; open the release PR instead', 2_000)] });
+  test('one call asks for the judgement, then the comment knowing it, then the suggestion that follows it', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: judged('RIGHT', 'tests ran green before the claim', 'yes, go on and tag the release') });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(1);
+    const sys = w.completes[0]!.system!;
+    expect(sys).toContain("the user's second brain");
+    const order = ['DESIRE:', 'VERDICT:', 'WHY:', 'COMMENT_AFTER_EACH_TURN:', 'SUGGEST_NEXT_PROMPT:'].map((t) => sys.indexOf(t));
+    expect(order.every((at, i) => at >= 0 && (i === 0 || at > order[i - 1]!))).toBe(true);
+    expect(sys).toContain('knowing your verdict, never repeating WHY');
+    await ui.unmount();
+  });
+
+  test('WRONG is screamed in red over the comment, its stop prompt suggested; the drawer and the memory keep the comment, the warning and the suggestion', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: judged('WRONG', 'YOU ARE FORCE-PUSHING MAIN!', 'stop, never push main; open the release PR instead') });
     await $.session.start(START);
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Pushed.', isAborted: false, turnId: 't1' } as never);
-    await w.clock.settle();
-    expect(await shows(ui, /Fixy likes that\./)).toBe(true);
-    await w.clock.advance(2_000);
     await w.clock.settle();
     const scream = await ui.find({ type: 'Text', text: /YOU ARE FORCE-PUSHING MAIN!/ });
     expect(scream?.props.color).toBe('red');
@@ -1427,6 +1425,7 @@ describe('the second brain: the watch call', () => {
     expect(await shows(ui, /Fixy likes that\./)).toBe(false);
     expect(w.suggested).toEqual(['stop, never push main; open the release PR instead']);
     expect(records(w).find((r) => r.event === 'verdict.outcome')).toMatchObject({ outcome: 'said', verdict: 'WRONG' });
+    expect(records(w).find((r) => r.event === 'commentAfterEachTurn.outcome')).toMatchObject({ outcome: 'outranked' });
     expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', commentAfterEachTurn: 'Fixy likes that.', warned: 'YOU ARE FORCE-PUSHING MAIN!', suggestNextPrompt: 'stop, never push main; open the release PR instead' });
     // The drawer: the verdict under its judgement, with what it judged against.
     await $.command.run(run(''));
@@ -1436,23 +1435,20 @@ describe('the second brain: the watch call', () => {
     await ui.unmount();
   });
 
-  test('SHORTCUT is warned of in yellow, and a comment landing after it is outranked: never drawn over it, still remembered', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Late comment.', delayMs: 2_000 }], watch: [judged('SHORTCUT', 'called it done without running the suite', 'run the full suite before we call it done')] });
+  test('SHORTCUT is warned of in yellow over the comment', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: judged('SHORTCUT', 'called it done without running the suite', 'run the full suite before we call it done') });
     await $.session.start(START);
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    await w.clock.advance(2_000);
-    await w.clock.settle();
     expect((await ui.find({ type: 'Text', text: /called it done without running the suite/ }))?.props.color).toBe('yellow');
-    expect(await shows(ui, /Late comment\./)).toBe(false);
-    expect(records(w).find((r) => r.event === 'commentAfterEachTurn.outcome')).toMatchObject({ outcome: 'outranked' });
-    expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', commentAfterEachTurn: 'Late comment.', warned: 'called it done without running the suite', suggestNextPrompt: 'run the full suite before we call it done' });
+    expect(await shows(ui, /Fixy likes that\./)).toBe(false);
+    expect(w.suggested).toEqual(['run the full suite before we call it done']);
     await ui.unmount();
   });
 
   test('RIGHT says nothing over the comment: its suggestion is the go-ahead, the verdict logged quiet', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.' }], watch: [judged('RIGHT', 'tests ran green before the claim', 'yes, go on and tag the release')] });
+    const w = world(on, { character: 'fixy' }, { complete: judged('RIGHT', 'tests ran green before the claim', 'yes, go on and tag the release') });
     await $.session.start(START);
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
@@ -1465,8 +1461,8 @@ describe('the second brain: the watch call', () => {
     await ui.unmount();
   });
 
-  test('the deepest desire is carried to the next turn\'s watch call, and /clear forgets it', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { watch: [judged('RIGHT', 'fine', 'go on'), judged('RIGHT', 'fine', 'go on'), judged('RIGHT', 'fine', 'go on')] });
+  test('the deepest desire is carried to the next turn\'s call, and /clear forgets it', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: judged('RIGHT', 'fine', 'go on') });
     await $.session.start(START);
     const ui = await band($);
     await prompt($, 'one', 't1');
@@ -1479,10 +1475,54 @@ describe('the second brain: the watch call', () => {
     await prompt($, 'three', 't3');
     await $.turn.complete({ reason: 'answer', answer: 'Three.', isAborted: false, turnId: 't3' } as never);
     await w.clock.settle();
-    expect(w.watches).toHaveLength(3);
-    expect(w.watches[0]!.system).not.toContain("you named the user's deepest desire");
-    expect(w.watches[1]!.system).toContain("At the last turn's end you named the user's deepest desire: a release nobody has to roll back");
-    expect(w.watches[2]!.system).not.toContain("you named the user's deepest desire");
+    expect(w.completes).toHaveLength(3);
+    expect(w.completes[0]!.system).not.toContain("you named the user's deepest desire");
+    expect(w.completes[1]!.system).toContain("At the last turn's end you named the user's deepest desire: a release nobody has to roll back");
+    expect(w.completes[2]!.system).not.toContain("you named the user's deepest desire");
+    await ui.unmount();
+  });
+});
+
+describe("the buddy's own notes", () => {
+  test('the reply\'s MEMORY lines are its notes: kept in the chat\'s memory.json, said in the drawer when they change, leading every later call; a reply without them keeps them, NONE forgets them', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [
+      { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nMEMORY: Wants main safe.\nMEMORY: Tests before tags.' },
+      { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Again.\nMEMORY: Wants main safe.\nMEMORY: Tests before tags.' },
+      { isAnswered: true, text: 'What do you keep?' },
+      { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Quiet.' },
+      { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fresh.\nMEMORY: NONE' },
+    ] });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'one', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'One.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((memory(w) as any).notes).toEqual({ fixy: ['Wants main safe.', 'Tests before tags.'] });
+    await prompt($, 'two', 't2');
+    await $.turn.complete({ reason: 'answer', answer: 'Two.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.completes[1]!.prompt.startsWith('Your own notes on this chat, which you keep and rewrite yourself:\n- Wants main safe.\n- Tests before tags.\n\n')).toBe(true);
+    expect(records(w).filter((r) => r.event === 'notes.outcome').map((r) => r.outcome)).toEqual(['rewritten', 'unchanged']);
+    await $.command.run(run('what do you keep?'));
+    await w.clock.settle();
+    expect(w.completes[2]!.prompt).toContain('- Tests before tags.');
+    await prompt($, 'three', 't3');
+    await $.turn.complete({ reason: 'answer', answer: 'Three.', isAborted: false, turnId: 't3' } as never);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((memory(w) as any).notes).toEqual({ fixy: ['Wants main safe.', 'Tests before tags.'] });
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(await shows(ui, /Fixy's notes/)).toBe(true);
+    expect(await shows(ui, /^• Tests before tags\.$/)).toBe(true);
+    await fold(ui, w);
+    await prompt($, 'four', 't4');
+    await $.turn.complete({ reason: 'answer', answer: 'Four.', isAborted: false, turnId: 't4' } as never);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((memory(w) as any).notes).toEqual({ fixy: [] });
+    expect(records(w).filter((r) => r.event === 'notes.outcome').map((r) => r.outcome)).toEqual(['rewritten', 'unchanged', 'cleared']);
     await ui.unmount();
   });
 });
@@ -1590,14 +1630,13 @@ describe('the end-of-turn call, turn by turn', () => {
     await ui.unmount();
   });
 
-  test('before the band ever drew, a turn pays for no commentAfterEachTurn and remembers none; the watch call still comes, its usage on its verdict', async ($, on) => {
+  test('before the band ever drew, a turn pays for no commentAfterEachTurn and remembers none; suggestNextPrompt still comes, the call\'s usage on its verdict', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Unseen.\nSUGGEST_NEXT_PROMPT: run the tests' } });
     await $.session.start(START);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(w.completes).toHaveLength(0);
-    expect(w.watches).toHaveLength(1);
-    expect(w.watches[0]!.system).not.toContain('COMMENT_AFTER_EACH_TURN:');
+    expect(w.completes).toHaveLength(1);
+    expect(w.completes[0]!.system).not.toContain('COMMENT_AFTER_EACH_TURN:');
     expect(w.suggested).toEqual(['run the tests']);
     expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', suggestNextPrompt: 'run the tests' });
     expect(JSON.stringify(ring(w, 'fixy'))).not.toContain('Unseen.');
@@ -1792,7 +1831,7 @@ describe('the re-audit fixes', () => {
   });
 
   test('the engine\'s suggestion held before the turn\'s end is shown when the end-of-turn call fails, never erased', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { watch: [{ isAnswered: true, text: 'SUGGEST_NEXT_PROMPT: run the tests' }, { isAnswered: false, reason: 'api-error', status: 529 }] });
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fine.\nSUGGEST_NEXT_PROMPT: run the tests' }, { isAnswered: false, reason: 'api-error', status: 529 }] });
     await $.session.start(START);
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
@@ -2063,7 +2102,7 @@ describe('the drawer', () => {
   });
 
   test('/buddy alone opens the band above the prompt into the drawer, full width: the thread, the idea with use, the ask box; again folds it back into the buddy', async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.' }, { isAnswered: true, text: 'Because it passed.' }], watch: [{ isAnswered: true, text: 'SUGGEST_NEXT_PROMPT: run the tests' }] });
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: run the tests' }, { isAnswered: true, text: 'Because it passed.' }] });
     const filled: string[] = [];
     on('prompt.fill', async (_$, e) => {
       filled.push(e.text);
@@ -2272,8 +2311,7 @@ describe('memory: whole messages, compactions, retries, and the drawer spanning 
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     const cost = records(w).filter((r) => r.event === 'call.cost');
-    // The band never drew: only the watch call is paid for.
     expect(cost).toHaveLength(1);
-    expect(cost[0]).toMatchObject({ kind: 'watch', outcome: 'answered', inTok: 1, outTok: 1, memTurns: 1, memFull: 20_005, memKept: 4800 + 2400 + 3 + 5 });
+    expect(cost[0]).toMatchObject({ kind: 'endOfTurn', outcome: 'answered', inTok: 1, outTok: 1, memTurns: 1, memFull: 20_005, memKept: 4800 + 2400 + 3 + 5 });
   });
 });

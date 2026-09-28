@@ -109,6 +109,8 @@ function speaker(e: FeedEntry, v: DrawerView): { glyph: string; label: string; c
       if (e.verdict === 'WRONG') return { glyph: '✗', label: `${name}: WRONG`, color: 'red', text: 'red', bold: true };
       if (e.verdict === 'SHORTCUT') return { glyph: '!', label: `${name}: shortcut`, color: 'yellow', text: 'yellow', bold: false };
       return { glyph: '✓', label: `${name}: right call`, color: 'green', text: 'green', bold: false };
+    case 'memory':
+      return { glyph: '✎', label: `${name}'s notes`, color: ink, text: '', bold: false };
     case 'suggest':
       return { glyph: '✦', label: `${name} suggested`, color: 'magenta', text: 'magenta', bold: false };
     case 'failed':
@@ -165,7 +167,8 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
     if (e.kind === 'compact') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text) };
     if (e.kind === 'you') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, e.read === false ? `  · interrupted, ${v.name} never read it` : '') };
     const who = speaker(e, v);
-    const lines = wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);
+    // Its notes one bullet each; anything else as it was said.
+    const lines = e.kind === 'memory' ? e.text.split('\n').flatMap((n) => wrapText(`• ${n}`, textW)) : wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);
     // A verdict says, under its why, what it judged against.
     const wants = e.kind === 'verdict' && e.desire ? wrapText(`wants: ${e.desire}`, textW) : [];
     const tall = Math.max(1, lines.length + wants.length);

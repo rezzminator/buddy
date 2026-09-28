@@ -60,7 +60,26 @@ export type Exchange =
  */
 export type Block = { turnId?: string; turn?: Turn; at?: number; full?: number; characters: Record<string, Exchange[]> };
 /** What memory.json holds (and the store held under storeKey(sessionId) before 1.0.0): when it was last written, and the timeline. */
-export type Stored = { at: number; blocks: Block[] };
+/** Each character's own notes for this chat, which it writes and rewrites itself at every turn's end: at most NOTES_MAX, one sentence each. */
+export type Notes = Record<string, string[]>;
+export type Stored = { at: number; blocks: Block[]; notes?: Notes };
+
+/** The most notes a character keeps: past it, the first ones stay. */
+export const NOTES_MAX = 6;
+/** The longest note kept: past it, it is not one sentence, and it is dropped. */
+export const NOTE_MAX_CHARS = 300;
+
+/** Notes as the buddy wrote them, cleaned: each trimmed, a leading bullet or number stripped, empty, too long and repeated ones dropped, the first NOTES_MAX kept. */
+export function cleanNotes(lines: readonly string[]): string[] {
+  const kept: string[] = [];
+  for (const raw of lines) {
+    const note = raw.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').trim();
+    if (note === '' || note.length > NOTE_MAX_CHARS || kept.includes(note)) continue;
+    kept.push(note);
+    if (kept.length === NOTES_MAX) break;
+  }
+  return kept;
+}
 
 export function storeKey(sessionId: string): string {
   return `${CHAT_TURNS_TO_READ_KEY_PREFIX}${sessionId}`;
@@ -147,8 +166,6 @@ export function memoryStats(blocks: readonly Block[], n: number): { turns: numbe
  * newest remembered when the exchange began), or under the newest block when
  * `after` is undefined; with no block yet, under a first, turnless one. An
  * exchange whose turn is no longer remembered is older than the memory: dropped.
- * An end of turn right after another of the same character's is merged into
- * it: the comment call and the watch call file one exchange between them.
  */
 export function addExchange(blocks: readonly Block[], characterId: string, x: Exchange, after?: string): Block[] {
   const c = capped(x);
@@ -157,11 +174,7 @@ export function addExchange(blocks: readonly Block[], characterId: string, x: Ex
   const i = after === undefined ? blocks.length - 1 : blocks.findIndex((b) => b.turnId === after);
   if (i < 0) return [...blocks];
   const b = blocks[i]!;
-  const had = b.characters[characterId] ?? [];
-  // A turn's end is one exchange: the comment call and the watch call each land their part of it, in whichever order they answer.
-  const last = had.at(-1);
-  const merged = c.kind === 'endOfTurn' && last?.kind === 'endOfTurn' ? [...had.slice(0, -1), { ...c, ...last }] : null;
-  const exchanges = merged ?? dropOldLines([...had, c]);
+  const exchanges = dropOldLines([...(b.characters[characterId] ?? []), c]);
   return blocks.map((y, k) => (k === i ? { ...b, characters: { ...b.characters, [characterId]: exchanges } } : y));
 }
 
@@ -199,12 +212,17 @@ function exchangeLines(x: Exchange): string[] {
   }
 }
 
+/** A character's notes as the prompt carries them, first; '' when it has none. */
+export function renderNotes(notes: readonly string[]): string {
+  return notes.length > 0 ? ['Your own notes on this chat, which you keep and rewrite yourself:', ...notes.map((n) => `- ${n}`)].join('\n') : '';
+}
+
 /**
- * What `characterId` remembers, as the prompt carries it: the last `n` blocks,
- * oldest first, each turn with that character's exchanges after it, one list
- * item each; '' when there is nothing.
+ * What `characterId` remembers, as the prompt carries it: its own `notes`
+ * first, then the last `n` blocks, oldest first, each turn with that
+ * character's exchanges after it, one list item each; '' when there is nothing.
  */
-export function render(blocks: readonly Block[], characterId: string, n: number): string {
+export function render(blocks: readonly Block[], characterId: string, n: number, notes: readonly string[] = []): string {
   const kept = blocks.slice(-Math.max(1, n));
   const hasTurns = kept.some((b) => b.turn);
   let k = 0;
@@ -214,7 +232,8 @@ export function render(blocks: readonly Block[], characterId: string, n: number)
     const head = b.turn ? turnLines(b.turn, ++k) : exchanges.length > 0 ? [hasTurns ? 'Before those turns:' : 'Before any turn of the main chat:'] : [];
     return head.length > 0 ? [[...head, ...exchanges].join('\n')] : [];
   });
-  return parts.length > 0 ? ['What you remember, oldest first:', ...parts].join('\n\n') : '';
+  const timeline = parts.length > 0 ? ['What you remember, oldest first:', ...parts].join('\n\n') : '';
+  return [renderNotes(notes), timeline].filter(Boolean).join('\n\n');
 }
 
 /** A stored exchange, checked field by field: its capped form, or null when malformed. */
@@ -243,14 +262,32 @@ function turnOf(v: unknown): Turn | null {
   return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}) });
 }
 
-/** The timeline stored under a session's key: none is an empty timeline; a malformed one keeps what reads and says how much it dropped. */
-export function chatTurnsToReadOf(value: unknown): { blocks: Block[]; error?: string } {
-  if (value === undefined) return { blocks: [] };
-  if (typeof value !== 'object' || value === null || !Array.isArray((value as Stored).blocks)) {
-    return { blocks: [], error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' };
-  }
-  const blocks: Block[] = [];
+/** Stored notes, each character's cleaned (cleanNotes); a character whose notes are not a list of text is dropped, counted in `dropped`. */
+function notesOf(value: unknown): { notes: Notes; dropped: number } {
+  const notes: Notes = {};
   let dropped = 0;
+  if (value === undefined) return { notes, dropped };
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { notes, dropped: 1 };
+  for (const [id, list] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(list) || !list.every((n) => typeof n === 'string')) {
+      dropped++;
+      continue;
+    }
+    notes[id] = cleanNotes(list as string[]);
+  }
+  return { notes, dropped };
+}
+
+/** The timeline stored under a session's key, with each character's notes: none is an empty timeline; a malformed one keeps what reads and says how much it dropped. */
+export function chatTurnsToReadOf(value: unknown): { blocks: Block[]; notes: Notes; error?: string } {
+  if (value === undefined) return { blocks: [], notes: {} };
+  if (typeof value !== 'object' || value === null || !Array.isArray((value as Stored).blocks)) {
+    return { blocks: [], notes: {}, error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' };
+  }
+  const stored = notesOf((value as Stored).notes);
+  const notes = stored.notes;
+  const blocks: Block[] = [];
+  let dropped = stored.dropped;
   for (const raw of (value as Stored).blocks as unknown[]) {
     const b = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null;
     const turn = b && b.turn !== undefined ? turnOf(b.turn) : undefined;
@@ -274,5 +311,5 @@ export function chatTurnsToReadOf(value: unknown): { blocks: Block[]; error?: st
     const full = typeof b.full === 'number' && Number.isFinite(b.full) ? { full: b.full } : {};
     blocks.push(turn ? { turnId: b.turnId as string, turn, ...at, ...full, characters: kept } : { characters: kept });
   }
-  return dropped > 0 ? { blocks, error: `the stored chatTurnsToRead had ${dropped} malformed entr${dropped === 1 ? 'y' : 'ies'}, dropped` } : { blocks };
+  return dropped > 0 ? { blocks, notes, error: `the stored chatTurnsToRead had ${dropped} malformed entr${dropped === 1 ? 'y' : 'ies'}, dropped` } : { blocks, notes };
 }

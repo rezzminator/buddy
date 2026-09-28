@@ -64,7 +64,7 @@ Every text is whole: no entry is cut and the feed has no length cap, so the tab 
 | `{hh:mm}  chat compacted · {name} read its summary: {summary}` | a compaction of the main chat, filed into the memory as a turn |
 | `{hh:mm}  new conversation` | `/clear` |
 
-Under each section, in order: your questions and the buddy's answers, its `commentAfterEachTurn`, its second brain's verdict (`✓ {name}: right call` in green, `! {name}: shortcut` in yellow, `✗ {name}: WRONG` in red and bold, its why, and under it `wants: {desire}` dim), its `suggestNextPrompt`, marked at its right `✓ you sent it` once your next prompt was that idea, `not sent` once it was passed over, and the newest open one `ctrl+x u uses it`, its canned lines, and every failure.
+Under each section, in order: your questions and the buddy's answers, its `commentAfterEachTurn`, its second brain's verdict (`✓ {name}: right call` in green, `! {name}: shortcut` in yellow, `✗ {name}: WRONG` in red and bold, its why, and under it `wants: {desire}` dim), each rewrite of its own notes (`✎ {name}'s notes`, a bullet per note), its `suggestNextPrompt`, marked at its right `✓ you sent it` once your next prompt was that idea, `not sent` once it was passed over, and the newest open one `ctrl+x u uses it`, its canned lines, and every failure.
 An interrupted turn stays inside the window but does not count toward it, as the memory never holds it.
 The feed lives in `$.state` for the session, so a plugin reload keeps it; where it is gone (a resume, a restart) and the memory is not, it is drawn back from the memory (`feedOfMemory`, `seedFeed`).
 The tab's hint names the window: `everything {name} remembers: your last {n} turns with Claude`.

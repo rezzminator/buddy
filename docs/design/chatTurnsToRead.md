@@ -2,7 +2,7 @@
 
 `chatTurnsToRead` is the buddy's short-term memory: the main chat's last N answered turns, a compaction counting as one, and under each what the buddy and you said after it.
 Ask it to remember a word, and the next question gets the word back; ask about a turn older than its memory, and it says it doesn't remember that far back.
-It is one timeline per session, and every question and both end-of-turn calls read it, at no extra model call.
+It is one timeline per session, and every question and end-of-turn call reads it, at no extra model call.
 
 ## What it remembers
 
@@ -13,13 +13,23 @@ Only the first block may have no turn: what was said before the first turn remem
 | --- | --- |
 | `question` | a `/buddy` question with its answer, or the question alone if it got none: its call failed, or another character was drawn by the time the answer came, so it was dropped |
 | `line` | a canned line the bubble showed on its own |
-| `endOfTurn` | what a turn's end showed: its `commentAfterEachTurn` (said, or outranked by a warning), the second brain's warning or scream the bubble said (`warned`), and its `suggestNextPrompt`, if the prompt box showed it; at least one, kept together: the comment call and the watch call each file their part, merged into one exchange in whichever order they land |
+| `endOfTurn` | what a turn's end showed: its `commentAfterEachTurn` (said, or outranked by a warning), the second brain's warning or scream the bubble said (`warned`), and its `suggestNextPrompt`, if the prompt box showed it; at least one, kept together |
 
 - **As far back of itself as of the chat.** When a turn ends past the option's count, the oldest block goes, and every exchange filed under it goes with it (`addTurn`). The buddy never holds a comment about a turn it can no longer see.
 - **Filed where it happened.** An exchange is filed under the turn that was the newest when it began (`addExchange`, `lastTurnId`): a question asked while a turn runs is filed under the turn before it, however late its answer lands; an end-of-turn exchange under its own turn. One whose turn is no longer remembered is dropped.
 - **Only what was shown.** The `thinking` filler is not an exchange; a line said while the buddy is hidden was never shown, so it is dropped; a comment held back behind a `/buddy` answer is not filed. A line joins only once the band has drawn in the session: a headless `claude -p` or SDK session never draws it; before the first draw only the newest line is held, for when the band first shows it (`heard`).
 - **A compaction is a turn.** When the main chat compacts (`session.compact`, the main loop's, never a `precompute`), the summary Claude now holds is filed as a block of its own (`addCompaction`, `from: compaction`), its summary the answer, cut like an answer, and counts toward N. The model reads `Turn k. The main chat was compacted: Claude now holds only this summary of everything before it:`, so the buddy knows what the chat still holds of what it no longer remembers.
 - **Only answered turns.** An aborted turn, or a subagent's, is not filed. A headless session files no turn at all, so it never pushes an interactive session's memory out of the store.
+
+## Its own notes
+
+Beside the timeline, each character keeps its own notes on the chat (`Notes`), written and rewritten by itself: at every turn's end the end-of-turn call asks for its whole memory as `MEMORY:` lines, one note of one sentence each, at most 6 (`MEMORY_LINE`, `NOTES_MAX`): keep what still matters, edit what changed, drop what no longer holds, add what the turn taught it about the user, the work and its risks.
+
+- **Rewritten whole.** The reply's notes replace the ones it had (`rememberNotes`); a reply with no `MEMORY:` line keeps them, so a model that forgot to write them never erases them, and `MEMORY: NONE` alone forgets them all.
+- **Cleaned.** Each note trimmed, a leading bullet or number stripped, empty, repeated and too long ones (past 300 characters, `NOTE_MAX_CHARS`) dropped, the first 6 kept (`cleanNotes`); a stored file is cleaned the same way when read.
+- **Leading what it remembers.** `render` puts them first, before the timeline, so every question and end-of-turn call reads them: `Your own notes on this chat, which you keep and rewrite yourself:` (`renderNotes`).
+- **Per chat and per character,** kept in the same `memory.json` as the timeline (`Stored.notes`), so a `/clear` starts with none and a reopened chat finds them again.
+- **Said when they change.** The drawer's thread shows each rewrite as `✎ {name}'s notes`, one bullet per note; `notes.outcome` logs `rewritten`, `cleared` or `unchanged`, with the count.
 
 ## How a turn is filtered
 
@@ -55,14 +65,14 @@ The cost and the cut are measured in use, not only here: every model call logs o
 
 ## Where it is kept
 
-Each chat has one file in its own folder, beside its transcript: `{config}/projects/{project}/{session id}/buddy/memory.json` (`chatFolderFor`, `src/chatFolder.ts`), holding when it was last written and the blocks (`Stored`). `{config}` is `CLAUDE_CONFIG_DIR`, else `~/.claude`; `{project}` is the folder holding the transcript `{session id}.jsonl`: the one named from the session's root (every character but a letter or digit made `-`), else from its working directory, else any project folder holding it (a path too long to name so). Before the transcript exists (a new chat's start) it is the root's, and the adapter looks again at the next read. The chat's round files (`saveRounds`) go into the same folder.
+Each chat has one file in its own folder, beside its transcript: `{config}/projects/{project}/{session id}/buddy/memory.json` (`chatFolderFor`, `src/chatFolder.ts`), holding when it was last written, the blocks and each character's notes (`Stored`). `{config}` is `CLAUDE_CONFIG_DIR`, else `~/.claude`; `{project}` is the folder holding the transcript `{session id}.jsonl`: the one named from the session's root (every character but a letter or digit made `-`), else from its working directory, else any project folder holding it (a path too long to name so). Before the transcript exists (a new chat's start) it is the root's, and the adapter looks again at the next read. The chat's round files (`saveRounds`) go into the same folder.
 
 - **Per session.** The adapter asks `$.session.id()` before every read and loads the record again when the id changes. A `/clear` moves the process to a new session id, so it starts with no memory; a resume moves it to the resumed session's id, so that chat's memory comes back with it.
 - **Per character.** A character reads only its own exchanges (`render`), so a switched character never claims another's words, and switching back finds them again; the turns are the same for every character.
 - **In the chat's folder.** It survives `/reload`, restarts and a reopened chat: the session start loads it (`loadMemory`, for a hidden buddy too), and opening the drawer loads it, so the talk tab shows it at once. It lasts as long as the chat, and deleting the chat's folder deletes it.
 - **Moved from the store.** Before 1.0.0 it was kept in `$.store` under `chatTurnsToRead:{session id}` (`storeKey`), 20 sessions at most. A chat's first read with no `memory.json` reads that key, writes the file, and deletes the key (`chatTurnsToRead.moved`); other chats' keys wait until those chats are opened.
 
-Every read and write goes through one chain, in the order made, so a turn is filed before its end-of-turn calls read the memory, and an answer is saved before the next question reads it (`chainChatTurnsToRead`, on `chained`).
+Every read and write goes through one chain, in the order made, so a turn is filed before its end-of-turn call reads the memory, and an answer is saved before the next question reads it (`chainChatTurnsToRead`, on `chained`).
 A link's deadline counts only its own run: a write gets 60 seconds (`CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS`), a read what is left of its caller's deadline. A link still running at its deadline is abandoned, said once, and the chain goes on; a read whose caller gives up while it still waits is dropped unrun (`chatTurnsToRead.dropped`), never said failed.
 A write that failed or was abandoned is made again 5 seconds later (`CHAT_TURNS_TO_READ_RETRY_MS`), so the reads queued meanwhile go first, 3 tries in all (`CHAT_TURNS_TO_READ_WRITE_TRIES`), and only while the next main turn has not started and the conversation is the same (`changeChatTurnsToRead`); the change is applied to the timeline once, never twice. `chatTurnsToRead.retry` logs each try as `trying`, `landed` or `skipped`, and a retry that lands clears the failure the next reply would have said.
 An abandoned link writes nothing once it lands: a late store read never replaces the timeline a later link loaded, and at most one store write per session is in flight (`latestWrites`), so a late write never lands over a newer one.
@@ -98,7 +108,7 @@ A question that got no answer reads `You gave no answer.` under it; a turn whose
 | Call | What it gets |
 | --- | --- |
 | a question | the block, then the question (`questionPrompt`); its system prompt carries the memory rule (`oneLineSystem`, `memoryRule`) |
-| each end-of-turn call | the block, the turn just ended its last, then that turn's tally (`turnPrompt`) |
+| the end-of-turn call | the block, the turn just ended its last, then that turn's tally (`turnPrompt`) |
 
 The memory rule tells the character how far its memory reaches, in turns, and to say in character that its short-term memory doesn't reach that far when asked about anything older, never guessing or making it up.
 The block is read once, when the question is asked, so it holds what came before the question; the question joins the timeline with its answer.
@@ -142,19 +152,20 @@ A stored record that is malformed keeps what still reads and says how many entri
 
 | File | Symbols |
 | --- | --- |
-| [`src/chatTurnsToRead.ts`](../../plugins/buddy/src/chatTurnsToRead.ts) | `CHAT_TURNS_TO_READ_DEFAULT`, `CHAT_TURNS_TO_READ_MAX`, `TURN_PROMPT_HEAD`, `TURN_PROMPT_TAIL`, `TURN_ANSWER_HEAD`, `TURN_ANSWER_TAIL`, `LINES_PER_TURN_MAX`, `COMPACTION`, `CHAT_TURNS_TO_READ_KEY_PREFIX`, `CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS`, `CHAT_TURNS_TO_READ_WRITE_TRIES`, `CHAT_TURNS_TO_READ_RETRY_MS`, `Exchange`, `Block`, `Stored`, `storeKey`, `keepText`, `ends`, `cleanPrompt`, `cleanAnswer`, `addTurn`, `addCompaction`, `memoryStats`, `addExchange`, `render`, `chatTurnsToReadOf` |
+| [`src/chatTurnsToRead.ts`](../../plugins/buddy/src/chatTurnsToRead.ts) | `CHAT_TURNS_TO_READ_DEFAULT`, `CHAT_TURNS_TO_READ_MAX`, `Notes`, `NOTES_MAX`, `NOTE_MAX_CHARS`, `cleanNotes`, `renderNotes`, `TURN_PROMPT_HEAD`, `TURN_PROMPT_TAIL`, `TURN_ANSWER_HEAD`, `TURN_ANSWER_TAIL`, `LINES_PER_TURN_MAX`, `COMPACTION`, `CHAT_TURNS_TO_READ_KEY_PREFIX`, `CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS`, `CHAT_TURNS_TO_READ_WRITE_TRIES`, `CHAT_TURNS_TO_READ_RETRY_MS`, `Exchange`, `Block`, `Stored`, `storeKey`, `keepText`, `ends`, `cleanPrompt`, `cleanAnswer`, `addTurn`, `addCompaction`, `memoryStats`, `addExchange`, `render`, `chatTurnsToReadOf` |
 | [`src/chatFolder.ts`](../../plugins/buddy/src/chatFolder.ts) | `BUDDY_FOLDER`, `MEMORY_FILE`, `projectsDir`, `projectSlug`, `isSessionId`, `transcriptPath`, `buddyFolder` |
 | [`src/did.ts`](../../plugins/buddy/src/did.ts) | `DID_MAX`, `DID_HEAD`, `DID_TEXT_CAP`, `DID_FILES_MAX`, `Action`, `FileVerb`, `actionOf`, `didOf` |
 | [`src/chain.ts`](../../plugins/buddy/src/chain.ts) | `chained`, `newChain`, `latestWrites`, `LinkOutcome` |
-| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `memoryRule`, `oneLineSystem`, `questionPrompt`, `turnPrompt`, `Turn` |
+| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `MEMORY_LINE`, `parseTurnReply`, `memoryRule`, `oneLineSystem`, `questionPrompt`, `turnPrompt`, `Turn` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `chatFolderFor`, `chatTurnsToReadFor`, `loadMemory`, `chainChatTurnsToRead`, `changeChatTurnsToRead`, `onToolCall`, `rememberTurn`, `rememberCompaction`, `rememberExchange`, `completeRecorded`, `readChatTurnsToRead`, `heard`, `chatTurnsToReadFailed`, `ask`, `turnCall`, `onTurnComplete` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `chatFolderFor`, `chatTurnsToReadFor`, `loadMemory`, `chainChatTurnsToRead`, `changeChatTurnsToRead`, `onToolCall`, `rememberTurn`, `rememberCompaction`, `rememberExchange`, `rememberNotes`, `completeRecorded`, `readChatTurnsToRead`, `heard`, `chatTurnsToReadFailed`, `ask`, `turnCall`, `onTurnComplete` |
 | [`scripts/audit.mjs`](../../scripts/audit.mjs) | `npm run audit`: the `call.cost` records totalled |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `chatTurnsToRead` |
 
 ## How it's tested
 
 - Unit: [`tests/chatTurnsToRead.test.ts`](../../tests/chatTurnsToRead.test.ts): the window of turns and every exchange leaving with its turn, the turnless first block, filing under a turn and dropping one whose turn is gone, per-character exchanges kept whole and canned lines capped, the cut on turns, a compaction filed and rendered, the memory's stats, a prompt's markup and an answer's markdown dropped, what a turn did kept, the render, a malformed record said. [`tests/chatFolder.test.ts`](../../tests/chatFolder.test.ts): the projects folder, a project's folder name, the buddy folder beside the transcript, a session id that cannot name a folder. [`tests/prompts.test.ts`](../../tests/prompts.test.ts) covers the memory rule and where the block goes; [`tests/options.test.ts`](../../tests/options.test.ts) the option.
+- Unit, the notes: stored notes cleaned and read back, a malformed one dropped and counted, at most 6, leading what the character remembers; hooks: a reply's `MEMORY:` lines kept in `memory.json`, said in the drawer when they change, leading the next call and every question, kept by a reply without them, forgotten by `MEMORY: NONE`.
 - Unit: [`tests/did.test.ts`](../../tests/did.test.ts): a step per tool, bookkeeping dropped, files gathered under their verb, the caps.
 - Hooks: a turn is remembered with what it did and never a tool's output, a subagent's steps left out; a question sees the last 4 turns and is told its reach; the fifth turn pushes out the first together with what was said after it; a question asked during a turn is filed under the turn before it; a headless session files no turn; a resumed session's question carries its stored turns; `/clear` and a resume start from another session's memory; a memory that cannot be saved is said in the next reply; a refused write is made again and lands, and is not once the next turn started; a compaction's summary reaches the next call, a precomputed or subagent one never; every call logs `call.cost`; the memory and the round files land in the chat's folder, also when its project folder is named otherwise; a memory kept in the store moves into the file and leaves the store; a reopened chat draws its memory into the drawer at once, the buddy hidden or not.
 - Live: the (j) rows ask `/buddy remember the word pineapple`, then `/buddy what word did I ask you to remember?`, expect `pineapple` in the answer, and read this chat's `memory.json`, with no `thinking` filler in it. The configuration proof's S3 runs `chatTurnsToRead: 1`: the file holds only the last turn, and a question about the turn before it is answered as out of memory.

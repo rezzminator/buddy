@@ -3,7 +3,7 @@
 // line answers), the main chat's compactions, your questions and its answers,
 // its comment after each turn, its second brain's verdict on Claude's last
 // move with what you most deeply want, each next prompt it suggested and
-// whether you sent it, the canned lines it said on its own, and every failure, said as
+// whether you sent it, each rewrite of its own notes (one per line), the canned lines it said on its own, and every failure, said as
 // one. Texts are kept whole. It spans exactly what the buddy remembers
 // (src/chatTurnsToRead.ts): the same last turns, nothing before a /clear. No
 // I/O: the adapter keeps the feed in $.state and draws it.
@@ -11,7 +11,7 @@
 import { COMPACTION, type Block } from './chatTurnsToRead.ts';
 import type { Verdict } from './prompts.ts';
 
-export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'line' | 'failed' | 'clear';
+export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'memory' | 'line' | 'failed' | 'clear';
 
 /**
  * One entry. `who` and `color`: the character that said it (its name and

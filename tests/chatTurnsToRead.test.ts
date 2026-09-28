@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
   cleanAnswer, cleanPrompt,
-  addCompaction, addExchange, addTurn, chatTurnsToReadOf, memoryStats, render, storeKey, type Block, type Exchange,
+  NOTES_MAX, NOTE_MAX_CHARS, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, memoryStats, render, storeKey, type Block, type Exchange,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
 
 const qa = (question: string, answer?: string): Exchange => (answer === undefined ? { kind: 'question', question } : { kind: 'question', question, answer });
@@ -125,15 +125,13 @@ describe('render', () => {
     b = addExchange(addTurn([], 't1', turn('go'), 4), 'cat', endOfTurn('Tests pass.'), 't1');
     expect(render(b, 'cat', 4).endsWith('- After this turn, you commented: Tests pass.')).toBe(true);
   });
-  test('the comment call and the watch call file one exchange between them, in either order: the comment, the warning, the suggestion', () => {
-    const warnedTurn = (first: Exchange, second: Exchange) => addExchange(addExchange(addTurn([], 't1', turn('go'), 4), 'cat', first, 't1'), 'cat', second, 't1');
-    const watch: Exchange = { kind: 'endOfTurn', warned: 'no test ran', suggestNextPrompt: 'run the tests first' };
-    const both: Exchange = { kind: 'endOfTurn', commentAfterEachTurn: 'Shipped?', warned: 'no test ran', suggestNextPrompt: 'run the tests first' };
-    expect(warnedTurn(endOfTurn('Shipped?'), watch)[0]!.characters.cat).toEqual([both]);
-    expect(warnedTurn(watch, endOfTurn('Shipped?'))[0]!.characters.cat).toEqual([both]);
-    expect(render(warnedTurn(endOfTurn('Shipped?'), watch), 'cat', 4)).toContain(
+  test('a turn\'s end with a warning: the comment, the warning, the suggestion, in that order', () => {
+    const b = addExchange(addTurn([], 't1', turn('go'), 4), 'cat', { kind: 'endOfTurn', commentAfterEachTurn: 'Shipped?', warned: 'no test ran', suggestNextPrompt: 'run the tests first' }, 't1');
+    expect(render(b, 'cat', 4)).toContain(
       "- After this turn, you commented: Shipped?\n  With it, you warned the user: no test ran\n  With it, you suggested the user's next prompt: run the tests first",
     );
+    const alone = addExchange(addTurn([], 't1', turn('go'), 4), 'cat', { kind: 'endOfTurn', warned: 'no test ran' }, 't1');
+    expect(render(alone, 'cat', 4).endsWith('- After this turn, you warned the user: no test ran')).toBe(true);
   });
   test('a warning survives the store round trip; a malformed one drops the exchange', () => {
     const b = addExchange(addTurn([], 't1', turn('go'), 4), 'cat', { kind: 'endOfTurn', warned: 'no test ran' }, 't1');
@@ -166,14 +164,14 @@ describe('the store', () => {
     expect(storeKey('abc')).toBe('chatTurnsToRead:abc');
   });
   test('nothing stored is an empty timeline; a stored one reads back', () => {
-    expect(chatTurnsToReadOf(undefined)).toEqual({ blocks: [] });
+    expect(chatTurnsToReadOf(undefined)).toEqual({ blocks: [], notes: {} });
     let b = addExchange([], 'cat', line('Hi.'));
     b = addTurn(b, 't1', { prompt: 'one', answer: 'Done.', from: 'peer' }, 4);
     b = addExchange(b, 'cat', endOfTurn('ha', 'go'), 't1');
-    expect(chatTurnsToReadOf({ at: 1, blocks: b })).toEqual({ blocks: b });
+    expect(chatTurnsToReadOf({ at: 1, blocks: b })).toEqual({ blocks: b, notes: {} });
   });
   test('a malformed record says so and keeps what reads, never an empty timeline in silence', () => {
-    expect(chatTurnsToReadOf('nope')).toEqual({ blocks: [], error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' });
+    expect(chatTurnsToReadOf('nope')).toEqual({ blocks: [], notes: {}, error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' });
     // An older record's shape (`characters` at the top) is not this record: said, never read.
     expect(chatTurnsToReadOf({ at: 1, characters: { cat: [line('hi')] } }).error).toBe('the stored chatTurnsToRead is not a chatTurnsToRead record');
     const long = 'x'.repeat(500);
@@ -185,8 +183,27 @@ describe('the store', () => {
       { turnId: 't3', turn: { prompt: 'x', answer: '', did: 'nope' }, characters: {} },
     ] })).toEqual({
       blocks: [{ turnId: 't1', turn: { prompt: 'one', answer: 'Done.' }, characters: { cat: [endOfTurn(long)] } }],
+      notes: {},
       error: 'the stored chatTurnsToRead had 7 malformed entries, dropped',
     });
+  });
+  test('the notes: each character\'s own, cleaned, read back with the timeline; a character whose notes are not text is dropped and counted', () => {
+    const b = addTurn([], 't1', turn('go'), 4);
+    expect(chatTurnsToReadOf({ at: 1, blocks: b, notes: { cat: ['- Wants main safe.', 'Wants main safe.', '  ', 'x'.repeat(NOTE_MAX_CHARS + 1), '2) Tests before tags.'] } })).toEqual({ blocks: b, notes: { cat: ['Wants main safe.', 'Tests before tags.'] } });
+    expect(chatTurnsToReadOf({ at: 1, blocks: b, notes: { cat: 'nope', duck: ['Quack.'] } })).toEqual({ blocks: b, notes: { duck: ['Quack.'] }, error: 'the stored chatTurnsToRead had 1 malformed entry, dropped' });
+    expect(chatTurnsToReadOf({ at: 1, blocks: b, notes: ['x'] }).error).toBe('the stored chatTurnsToRead had 1 malformed entry, dropped');
+  });
+  test('cleanNotes keeps at most NOTES_MAX, the first ones', () => {
+    expect(NOTES_MAX).toBe(6);
+    expect(cleanNotes(['a', 'b', 'c', 'd', 'e', 'f', 'g'])).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+  });
+  test('the notes lead what the character remembers, before its timeline; notes alone still render', () => {
+    const b = addTurn([], 't1', turn('go'), 4);
+    expect(render(b, 'cat', 4, ['Wants main safe.', 'Tests before tags.']).startsWith(
+      'Your own notes on this chat, which you keep and rewrite yourself:\n- Wants main safe.\n- Tests before tags.\n\nWhat you remember, oldest first:',
+    )).toBe(true);
+    expect(render([], 'cat', 4, ['Wants main safe.'])).toBe('Your own notes on this chat, which you keep and rewrite yourself:\n- Wants main safe.');
+    expect(render(b, 'cat', 4)).not.toContain('Your own notes');
   });
   test('a compaction is a turn of its own: its summary what Claude holds, cut and counted like any turn', () => {
     let b = addTurn([], 't1', turn('one'), 2);

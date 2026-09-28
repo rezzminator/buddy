@@ -20,7 +20,7 @@ export type RoundTurn = { turnId: string; reason: string; prompt: string; answer
 
 /** One model call, literally: what was sent and what came back. */
 export type RoundCall = {
-  kind: 'endOfTurn' | 'watch' | 'question';
+  kind: 'endOfTurn' | 'question';
   at: number;
   settings: Record<string, unknown>;
   system: string;
@@ -104,7 +104,7 @@ export function turnEndSection(at: number, turn: RoundTurn): string {
 
 /** The `n`th call of a round, verbatim: its settings, system prompt and prompt going in, its outcome and reply coming out. */
 export function callSection(n: number, call: RoundCall): string {
-  const kind = call.kind === 'endOfTurn' ? 'end-of-turn call' : call.kind === 'watch' ? 'second-brain call' : '/buddy question';
+  const kind = call.kind === 'endOfTurn' ? 'end-of-turn call' : '/buddy question';
   const settings = Object.entries(call.settings).filter(([, v]) => v !== undefined).map(([k, v]) => `${k} ${String(v)}`).join(' · ');
   const usage = Object.entries(call.usage).map(([k, v]) => `${k} ${v}`).join(' · ');
   return [

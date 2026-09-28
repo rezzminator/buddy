@@ -5,10 +5,11 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 ## [Unreleased]
 
 ### Added
-- The buddy's second brain: `suggestNextPrompt` now comes from a call of its own, beside the comment's, with its own prompt. It names what you most deeply want from the chat (carried to the next turn's call, forgotten at `/clear`), judges Claude's last move against it (`RIGHT`, `SHORTCUT` or `WRONG`) and writes your next prompt to match: after `RIGHT` a go-ahead, after `SHORTCUT` a request for the proper way, after `WRONG` a stop naming what to do instead. A `SHORTCUT` is warned of in yellow in the bubble and a `WRONG` screamed in red, both outranking that turn's comment; the drawer shows each verdict with what it judged against (`wants: …`), and the buddy remembers its warning with the turn. Each verdict logs `verdict.outcome` with the call's usage; round files name it the second-brain call.
+- The buddy's second brain behind `suggestNextPrompt`: the end-of-turn call's prompt now combines the character's with the suggestion's, still one call. It names what you most deeply want from the chat (carried to the next turn, forgotten at `/clear`), judges Claude's last move against it (`RIGHT`, `SHORTCUT` or `WRONG`), writes the turn's comment knowing that verdict, and writes your next prompt to match: after `RIGHT` a go-ahead, after `SHORTCUT` a request for the proper way, after `WRONG` a stop naming what to do instead. A `SHORTCUT` is warned of in yellow in the bubble and a `WRONG` screamed in red, both outranking that turn's comment; the drawer shows each verdict with what it judged against (`wants: …`), and the buddy remembers its warning with the turn. Each verdict logs `verdict.outcome`, carrying the call's usage when no comment was written.
+- The buddy's own notes: the same end-of-turn reply rewrites the buddy's memory of the chat, at most 6 one-sentence notes it keeps, edits and drops itself (`MEMORY:` lines; a reply without them keeps the notes, `MEMORY: NONE` forgets them). They are kept per chat and per character in the chat's `memory.json`, lead what every later question and end-of-turn call reads, show in the drawer's thread when they change, and log `notes.outcome`.
 
 ### Changed
-- An answered turn now makes two short `model` calls when both options are on, run side by side: one for `commentAfterEachTurn`, one for `suggestNextPrompt`. `suggestNextPrompt`'s usage moves to `verdict.outcome`, and a suggestion may run to 200 characters (was 160).
+- A suggestion may run to 200 characters (was 160). The character rule now also comes with a `suggestNextPrompt`-only call, since its `WHY` is said in character.
 
 ## [1.0.0] — 2026-09-28
 
