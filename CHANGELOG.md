@@ -4,7 +4,10 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-09-28
+
 ### Added
+- Terry, a built-in character: a lone-wolf systems programmer in a 640x480, 16-color world who cheers when the code gets smaller.
 - The `suggestNextPrompt` option (on by default): at the end of every answered turn the buddy proposes the next prompt in your words, the persona deciding what it nudges toward, as the prompt box's dim suggestion (Tab takes it). It comes from the same short `model` call that writes `commentAfterEachTurn` (at most 2048 output tokens, the model's thinking included, a 30-second deadline). Claude Code's own suggestion is held back meanwhile and shown only when the buddy has none (it answers `NONE`, nothing, or not within 30 seconds); a suggestion another plugin proposes still shows, and a `suggestNextPrompt` overtaken by the next turn or by `/buddy off` is dropped. `suggestNextPrompt: false` turns it off; with it on, turning off Claude Code's own prompt suggestions saves paying for both.
 - `inherit` for `model` and `effort`: `model: inherit` follows the main chat's model, read at every call (`opus` when it cannot be read); `effort: inherit` uses the effort of the latest request of the main chat's running turn (a subagent's, or a request outside that turn, never counts), and sends none before its first (or when that request carries none, or a number), so the model's default applies. The defaults stay `opus` and `low`.
 - The buddy remembers its `suggestNextPrompt`: one the prompt box showed is filed under its turn together with the `commentAfterEachTurn` the same turn showed, as one `endOfTurn` exchange, so it can say what it suggested last, with which comment, and whether the next prompt took it.
@@ -125,7 +128,8 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 - Your own characters: JSON files in the folder the `characterDir` option names, checked against `plugins/buddy/schema/character.schema.json`; an invalid one is listed with its first error, and choosing it draws the Professor with a bubble naming the error.
 - Options `character`, `characterDir`, `motion`, `questionMode` (`fork`, `complete` or `off`), `quips` (off by default), `quipModel` and `quipCooldownSec`.
 
-[Unreleased]: https://github.com/rezzminator/buddy/compare/buddy--v0.3.0...HEAD
+[Unreleased]: https://github.com/rezzminator/buddy/compare/buddy--v1.0.0...HEAD
+[1.0.0]: https://github.com/rezzminator/buddy/compare/buddy--v0.3.0...buddy--v1.0.0
 [0.3.0]: https://github.com/rezzminator/buddy/compare/buddy--v0.2.1...buddy--v0.3.0
 [0.2.1]: https://github.com/rezzminator/buddy/compare/buddy--v0.2.0...buddy--v0.2.1
 [0.2.0]: https://github.com/rezzminator/buddy/compare/c6aa41e...buddy--v0.2.0

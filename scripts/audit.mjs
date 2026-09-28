@@ -75,7 +75,7 @@ if (read === 0) {
   process.exit(1);
 }
 if (calls.length === 0) {
-  console.log(`No call.cost lines in ${read} log file(s)${since ? ' in that span' : ''}: the plugin logs one per model call from 0.4.0.`);
+  console.log(`No call.cost lines in ${read} log file(s)${since ? ' in that span' : ''}: the plugin logs one per model call from 1.0.0.`);
   process.exit(0);
 }
 

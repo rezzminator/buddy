@@ -126,7 +126,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     gets.push(e.key);
     const value = saved.get(e.key);
     if (e.key === 'hidden' && slow.hiddenMs > 0) await clock.sleep(slow.hiddenMs);
-    // A chatTurnsToRead read in flight (one kept in the store before 0.4.0) answers what the store held when asked.
+    // A chatTurnsToRead read in flight (one kept in the store before 1.0.0) answers what the store held when asked.
     if (e.key.startsWith('chatTurnsToRead:') && slow.chatTurnsToReadGetMs > 0) await clock.sleep(slow.chatTurnsToReadGetMs);
     return { value };
   });
@@ -1554,7 +1554,7 @@ describe('a question\'s one deadline', () => {
     await ui.unmount();
   });
 
-  test("a chatTurnsToRead kept in the store before 0.4.0 moves into the chat's folder at its first read; another chat's stays", async ($, on) => {
+  test("a chatTurnsToRead kept in the store before 1.0.0 moves into the chat's folder at its first read; another chat's stays", async ($, on) => {
     const old = { at: 1, blocks: [{ turnId: 'old', at: 1, turn: { prompt: 'build the thing', answer: 'Built.' }, characters: { fixy: [{ kind: 'question', question: 'remember pineapple', answer: 'Pineapple, noted.' }] } }] };
     const w = world(on, { character: 'fixy', [`chatTurnsToRead:${SESSION}`]: old, 'chatTurnsToRead:another-chat': old });
     await $.session.start(START);

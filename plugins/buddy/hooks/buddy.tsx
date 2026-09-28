@@ -304,7 +304,7 @@ async function chatFolderFor(st: State, $: EngineInterface, sessionId: string): 
 /**
  * The session's chatTurnsToRead, by `$.session.id()` (the transcript's
  * name): a new id loads its own from memory.json in its chat folder; one
- * kept in the store before 0.4.0 is moved there. null when the link asking,
+ * kept in the store before 1.0.0 is moved there. null when the link asking,
  * `live` false, was abandoned while the file answered: a later link may have
  * loaded and written since, and this stale read never replaces that.
  */
