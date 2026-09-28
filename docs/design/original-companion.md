@@ -157,5 +157,5 @@ Every sprite, hat, line and persona text is buddy's own, and no Claude Code sour
 ## How it's tested
 
 - Unit: [`tests/hatch.test.ts`](../../tests/hatch.test.ts) (the 300 + 300 vectors, the Bun cross-check, the pieces), [`tests/config-source.test.ts`](../../tests/config-source.test.ts) (the config and backup places, backup names, the newest 10), [`tests/original.test.ts`](../../tests/original.test.ts) (identity, soul, backups, the worn frame, shiny, the card, the persona, the saved pick), [`tests/species.test.ts`](../../tests/species.test.ts) (the validator, the schema agreeing with it, all 18 shipped templates and `hats.json`).
-- Hooks: the `/buddy-personality` group feeds an invented `~/.claude.json` and backups from memory, and checks that no file is written and that the identity appears in no log line and no stored value.
+- Hooks: the "drawer's personality tab" group feeds an invented `~/.claude.json` and backups from memory, and checks that no file is written and that the identity appears in no log line and no stored value.
 - Live: none. The live proof keeps the real HOME ([Verification](./verification.md)).

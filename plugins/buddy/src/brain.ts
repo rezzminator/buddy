@@ -2,7 +2,9 @@ import type { Character, LineEvent, Pose } from './character.ts';
 import { pickLine, poolFor } from './lines.ts';
 import { initialMotion, maxX, periodMs, tickMotion, type MotionState } from './motion.ts';
 import { CONFETTI_MS, CONFETTI_TICK_MS } from './particles.ts';
+import { type AmbiguousCharacterWidth } from './width.ts';
 import { lostThread, stillThinking, type TurnSummary } from './prompts.ts';
+import type { Action } from './did.ts';
 import { REACTIONS, classifyToolCall, type Outcome, type ToolCall } from './reactions.ts';
 import { buildScene, type Scene } from './scene.ts';
 
@@ -13,10 +15,8 @@ import { buildScene, type Scene } from './scene.ts';
 export const BUBBLE_MS = 6000;
 export const ANSWER_MS = 15000;
 export const ERROR_MS = 10000;
-/** One deadline per /buddy question, from when it is asked: every model call it makes shares it. */
-export const ASK_DEADLINE_MS = 90_000;
-/** What the bubble says, after "{name} couldn't answer: ", once the deadline passed. */
-export const ASK_DEADLINE_REASON = `no answer in ${ASK_DEADLINE_MS / 1000} s`;
+/** A /buddy question's deadline, on `model`: a safety net so the bubble always ends. */
+export const COMPLETE_DEADLINE_MS = 90_000;
 export const SLEEP_IDLE_MS = 60000;
 export const REST_LINE_CHANCE = 0.25;
 export const WORKING_LINE_CHANCE = 0.25;
@@ -25,12 +25,13 @@ export const WORKING_LINE_CHANCE = 0.25;
 /** Lines nobody asked for: they never cover a held answer. */
 const AMBIENT: ReadonlySet<LineEvent> = new Set(['toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake']);
 
-export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean };
+/** `turn`: the commentAfterEachTurn (or why there is none), held against lines nobody asked for, never against the next turn's commentAfterEachTurn. */
+export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean; turn?: boolean };
 
 export type Brain = {
   character: Character;
-  /** The motion option; the character's own motion.walk also has to allow it. */
-  walkOption: boolean;
+  /** The walkOverPromptBar option; the character's own motion.walk also has to allow it. */
+  walkOverPromptBar: boolean;
   now: number;
   motion: MotionState;
   talk: Talk | null;
@@ -44,23 +45,23 @@ export type Brain = {
   questions: number;
   lastLines: Partial<Record<LineEvent, string>>;
   turn: TurnSummary;
-  lastQuipAt: number | null;
+  lastCommentAfterEachTurnAt: number | null;
   /** The pose last drawn: a new pose starts at its first frame. */
   lastPose: Pose | null;
   /** The latest line nobody asked for that came while an answer held the bubble: said once it ends. */
   after: { event: LineEvent; pose: Pose | null; ms: number } | null;
-  /** Canned lines said since the adapter last took them, with who said them: its memory records the shown ones. The thinking filler is never among them. */
+  /** Canned lines said since the adapter last took them, with who said them: its chatTurnsToRead records the shown ones. The thinking filler is never among them. */
   said: { id: string; text: string }[];
-  /** East Asian ambiguous-width characters take two columns (the ambiguousWidth option). */
-  ambiguousWide: boolean;
+  /** East Asian ambiguous-width characters take two columns (the ambiguousCharacterWidth option). */
+  ambiguousCharacterWidth: AmbiguousCharacterWidth;
   /** The /buddy question waiting for its answer: its thinking line, said again whenever the bubble frees up while its asker is drawn; null when none. */
   pending: { askerId: string; talk: Talk } | null;
 };
 
-export function createBrain(character: Character, walkOption: boolean, ambiguousWide = false): Brain {
+export function createBrain(character: Character, walkOverPromptBar: boolean, ambiguousCharacterWidth: AmbiguousCharacterWidth = 'narrow'): Brain {
   return {
     character,
-    walkOption,
+    walkOverPromptBar,
     now: 0,
     motion: initialMotion(0),
     talk: null,
@@ -73,18 +74,18 @@ export function createBrain(character: Character, walkOption: boolean, ambiguous
     pets: 0,
     questions: 0,
     lastLines: {},
-    turn: { tools: [], failures: 0, lastBash: '' },
-    lastQuipAt: null,
+    turn: { tools: [], failures: 0, lastBash: '', actions: [] },
+    lastCommentAfterEachTurnAt: null,
     lastPose: null,
     said: [],
-    ambiguousWide,
+    ambiguousCharacterWidth,
     after: null,
     pending: null,
   };
 }
 
 export function walks(b: Brain): boolean {
-  return b.walkOption && b.character.motion.walk;
+  return b.walkOverPromptBar && b.character.motion.walk;
 }
 
 /** The clock period the brain wants now. */
@@ -154,7 +155,7 @@ export function tick(b: Brain, hour: number, rand: () => number): void {
   const m = b.character.motion;
   const r = tickMotion(
     b.motion,
-    { now: b.now, cols: b.cols, width: b.character.width, walk: walks(b), still: b.talk !== null || b.working || b.sleeping, restChance: m.restChance, restTicks: m.restTicks },
+    { now: b.now, cols: b.cols, width: b.character.width, walkOverPromptBar: walks(b), still: b.talk !== null || b.working || b.sleeping, restChance: m.restChance, restTicks: m.restTicks },
     rand,
   );
   b.motion = r.state;
@@ -182,13 +183,14 @@ export function currentPose(b: Brain): Pose {
   return 'idle';
 }
 
-/** A finished tool call: counted for the turn, and reacted to per REACTIONS. */
-export function react(b: Brain, call: ToolCall & { command: string }, rand: () => number): Outcome | null {
+/** A finished tool call: counted for the turn, its step (`action`, actionOf) kept, and reacted to per REACTIONS. */
+export function react(b: Brain, call: ToolCall & { command: string; action?: Action | null }, rand: () => number): Outcome | null {
   const outcome = classifyToolCall(call);
   wake(b, rand, { silent: outcome !== null });
   b.turn.tools.push(call.tool);
   if (call.isError || call.denied) b.turn.failures++;
   if (call.tool === 'Bash' && call.command) b.turn.lastBash = call.command.slice(0, 120);
+  if (call.action) b.turn.actions.push(call.action);
   if (!outcome) return null;
   const r = REACTIONS[outcome];
   sayLine(b, r.line, r.pose, BUBBLE_MS, rand);
@@ -220,9 +222,18 @@ export function endQuestion(b: Brain): void {
   b.pending = null;
 }
 
-/** What is left of the one deadline of a question asked at `askedAt`, at `now`; 0 once it passed, never more than the whole. */
-export function askLeft(askedAt: number, now: number): number {
-  return Math.min(ASK_DEADLINE_MS, Math.max(0, Math.ceil(askedAt + ASK_DEADLINE_MS - now)));
+/** What the bubble says, after "{name} couldn't answer: ", once a deadline of `ms` passed. */
+export function deadlineReason(ms: number): string {
+  return `no answer in ${ms / 1000} s`;
+}
+
+/**
+ * Why a model call gave no answer, as the bubble says it: `api-error` carries
+ * its status, every other reason reads as itself.
+ */
+export function noAnswerReason(r: { reason: string; status?: number | null }): string {
+  if (r.reason === 'api-error') return `api-error ${typeof r.status === 'number' ? r.status : '(no response)'}`;
+  return r.reason;
 }
 
 /** Whether an answer of `askerId` may be said: always without one, else only while that character is drawn. */
@@ -230,18 +241,30 @@ function isAsker(b: Brain, askerId: string | undefined): boolean {
   return askerId === undefined || askerId === b.character.id;
 }
 
-/** The answer in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. */
-export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string): boolean {
+/**
+ * The answer in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now.
+ * `turn`: the commentAfterEachTurn, which the next turn's commentAfterEachTurn may replace (holdsAnswer ignores it).
+ */
+export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string, turn = false): boolean {
   if (!isAsker(b, askerId)) return false;
-  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true };
+  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}) };
   return true;
 }
 
-/** The failure in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. */
-export function failAnswer(b: Brain, reason: string, askerId?: string): boolean {
+/** The failure in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. `turn` as in `answer`. */
+export function failAnswer(b: Brain, reason: string, askerId?: string, turn = false): boolean {
   if (!isAsker(b, askerId)) return false;
-  b.talk = { text: lostThread(b.character.name, reason), pose: 'oops', until: b.now + ANSWER_MS, held: true };
+  b.talk = { text: lostThread(b.character.name, reason), pose: 'oops', until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}) };
   return true;
+}
+
+/**
+ * A /buddy answer, its failure, a refusal or the thinking line holds the
+ * bubble: a commentAfterEachTurn must not replace it yet. The commentAfterEachTurn
+ * itself holds only against lines nobody asked for (`sayLine`).
+ */
+export function holdsAnswer(b: Brain): boolean {
+  return b.talk?.held === true && b.talk.turn !== true && b.now < b.talk.until;
 }
 
 /** A /buddy question refused because the last one is still waiting. */
@@ -257,16 +280,26 @@ export function farewell(b: Brain, rand: () => number): string {
 }
 
 /**
- * The turn ended: its summary when a quip is due (quips on, a tool used, the
- * cooldown passed), else null. The turn's tally starts over either way.
+ * Whether an event's loop is the main conversation's, the user's own turn: it
+ * carries no agent id. A subagent's loop, or any other loop the engine runs
+ * beside the main one, carries one, and never feeds the main turn's tally or
+ * ends it.
  */
-export function endTurn(b: Brain, quips: boolean, cooldownSec: number): TurnSummary | null {
-  const t = b.turn;
-  b.turn = { tools: [], failures: 0, lastBash: '' };
-  if (!quips || t.tools.length === 0) return null;
-  if (b.lastQuipAt !== null && b.now - b.lastQuipAt < cooldownSec * 1000) return null;
-  b.lastQuipAt = b.now;
-  return t;
+export function isMainLoop(agentId: string | undefined): boolean {
+  return agentId === undefined;
+}
+
+/**
+ * The turn ended: its summary, tools or none, and whether the buddy's
+ * commentAfterEachTurn is due (on, and secondsBetweenComments passed; 0 is every turn). The
+ * turn's tally starts over either way.
+ */
+export function endTurn(b: Brain, commentAfterEachTurn: boolean, secondsBetweenComments: number): { turn: TurnSummary; commentAfterEachTurnDue: boolean } {
+  const turn = b.turn;
+  b.turn = { tools: [], failures: 0, lastBash: '', actions: [] };
+  const commentAfterEachTurnDue = commentAfterEachTurn && (b.lastCommentAfterEachTurnAt === null || b.now - b.lastCommentAfterEachTurnAt >= secondsBetweenComments * 1000);
+  if (commentAfterEachTurnDue) b.lastCommentAfterEachTurnAt = b.now;
+  return { turn, commentAfterEachTurnDue };
 }
 
 /** The scene to draw now; the sprite keeps the column the bubble pushed it to. */
@@ -290,7 +323,7 @@ export function sceneOf(b: Brain): Scene | null {
     zTick: b.motion.stillFrame,
     stats: { pets: b.pets, questions: b.questions },
     now: b.now,
-    ambiguousWide: b.ambiguousWide,
+    ambiguousCharacterWidth: b.ambiguousCharacterWidth,
   });
   if (scene && scene.x !== b.motion.x) b.motion = { ...b.motion, x: scene.x };
   return scene;

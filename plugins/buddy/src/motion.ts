@@ -12,8 +12,8 @@ export type TickInput = {
   now: number;
   cols: number;
   width: number;
-  /** Walking is on: the character's motion.walk and the motion option. */
-  walk: boolean;
+  /** Walking is on: the character's motion.walk and the walkOverPromptBar option. */
+  walkOverPromptBar: boolean;
   /** Something holds him still: a bubble, work, sleep. */
   still: boolean;
   restChance: number;
@@ -30,8 +30,8 @@ export function maxX(cols: number, width: number): number {
 }
 
 /** The clock period: a walker's step, else STILL_PERIOD_MS. */
-export function periodMs(walk: boolean, stepMs: number): number {
-  return walk ? stepMs : STILL_PERIOD_MS;
+export function periodMs(walkOverPromptBar: boolean, stepMs: number): number {
+  return walkOverPromptBar ? stepMs : STILL_PERIOD_MS;
 }
 
 /** One clock tick. `restStarted` is true on the tick a rest begins. */
@@ -40,7 +40,7 @@ export function tickMotion(s: MotionState, i: TickInput, rand: () => number): { 
   const max = maxX(i.cols, i.width);
   if (n.x > max) n.x = max;
   let restStarted = false;
-  const moving = i.walk && !i.still;
+  const moving = i.walkOverPromptBar && !i.still;
   if (moving && n.restLeft > 0) n.restLeft--;
   else if (moving) {
     n.x += n.dir;

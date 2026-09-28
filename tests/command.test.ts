@@ -3,8 +3,8 @@ import { USAGE, parseCommand } from '../plugins/buddy/src/command.ts';
 
 describe('parseCommand', () => {
   test.each([
-    ['', { kind: 'pet' }],
-    ['   ', { kind: 'pet' }],
+    ['', { kind: 'drawer' }],
+    ['   ', { kind: 'drawer' }],
     ['OFF', { kind: 'off' }],
     ['off', { kind: 'off' }],
     ['on', { kind: 'on' }],
@@ -22,8 +22,9 @@ describe('parseCommand', () => {
   ])('%j', (args, action) => {
     expect(parseCommand(args)).toEqual(action);
   });
-  test('the usage names every command, and switching lives in the menu', () => {
+  test('the usage names every command, one /buddy, and the drawer', () => {
     expect(USAGE).not.toMatch(/\/buddy (list|use)\b/);
-    for (const word of ['off', 'on', 'reload', 'help', '{question}', '/buddy-personality']) expect(USAGE).toContain(word);
+    expect(USAGE).not.toMatch(/\/buddy-/);
+    for (const word of ['off', 'on', 'reload', 'help', '{question}', 'drawer', 'ctrl+x q']) expect(USAGE).toContain(word);
   });
 });

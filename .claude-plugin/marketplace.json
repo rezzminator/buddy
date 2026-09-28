@@ -15,7 +15,7 @@
         "ref": "main"
       },
       "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
-      "version": "0.3.0",
+      "version": "1.0.0",
       "license": "MIT",
       "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "duck", "ascii-art", "terminal-pet", "virtual-pet", "tamagotchi", "function-hooks", "claude-mods", "professor"],
       "author": {

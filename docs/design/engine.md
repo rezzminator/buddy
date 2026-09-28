@@ -29,7 +29,7 @@ One timer drives everything: `$.clock.every(period, onTick)`.
 The period is the character's `motion.stepMs` when it walks, else `STILL_PERIOD_MS` (300 ms); a switch to a character with another period restarts the timer.
 `/buddy off` stops it and `/buddy on` starts it again, so a hidden buddy costs nothing.
 Two sessions share one store, which raises no change event, so each reads `hidden` back (`syncHidden`): every 15 ticks (`SHARED_TICKS`) while drawn, and on a band draw at most every 3 s (`SHARED_MS`) while hidden; another session's `/buddy off` or `/buddy on` reaches this one that way.
-`/buddy` likewise counts on from the stored pet count.
+A pet likewise counts on from the stored pet count.
 
 Each tick advances the brain's own clock, `b.now`, by exactly one period, then expires the bubble and the confetti, checks for sleep, and moves the character.
 Brain time is the tick count times the period, never the wall clock, so a test that advances the clock by N ms sees exactly N ms of behaviour.
@@ -44,7 +44,7 @@ A tick that throws is logged once, and again only when the message changes, so a
 - **Rest.** Every step rolls `restChance`; a hit stops it for `restTicks` steps and draws `rest`. One rest in four (`REST_LINE_CHANCE`) also says a `rest` line.
 - **Held still.** A bubble, work or sleep holds it in place, and a rest's countdown waits too.
 - **Frames.** Walking frames advance one per step. Every other pose changes frame every `STILL_FRAME_MS` (900 ms). A new pose starts at its first frame.
-- **Standing.** Walking needs both the `motion` option and the character's `motion.walk`. Without either, the character stands on its `idle` frames and still animates.
+- **Standing.** Walking needs both the `walkOverPromptBar` option and the character's `motion.walk`. Without either, the character stands on its `idle` frames and still animates.
 - **Working.** When `isWorking` turns true, the brain draws `working` and stands still. Work starting wakes it; with no bubble up, one time in four (`WORKING_LINE_CHANCE`) it says a `working` line.
 - **Sleep.** From midnight to 6 am local time (`isSleepHour`), after `SLEEP_IDLE_MS` (60 s) with no event, no bubble and no work, it falls asleep: the `sleep` pose and a `z Z` drift above it. Any event wakes it with a `wake` line; until one comes, it sleeps on past six.
 
@@ -75,9 +75,10 @@ Hidden is the adapter's state, not the brain's: the band yields and the clock st
 | session start, a switch, `/buddy reload` | `setCharacter` | the new character greets (6 s); at a session start or `/buddy reload` the choice's load error and the roster's errors (a folder that could not be listed, a file taking the reserved id `original`) show instead (10 s), and at the session's first greeting so does every ignored or capped option, once (`startWarning`) |
 | `/buddy on` | `wake`, `greet` | the greeting |
 | a finished tool call | `react` | wakes, adds the call to the turn's tally, reacts per the table below |
-| a turn ends | `wake`, `endTurn` | the tally resets; a quip is due or not ([Voice](./voice.md)) |
-| `/buddy` | `pet` | `petted` pose and line, one more pet |
-| `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's 90 s deadline, then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
+| a turn ends | `wake`, `endTurn` | the tally resets; a `commentAfterEachTurn` is due or not ([Voice](./voice.md)) |
+| ctrl+x p in the drawer | `pet` | `petted` pose and line, one more pet |
+| `/buddy` alone | | opens or folds the drawer ([Drawer](./drawer.md)) |
+| `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's deadline (90 s), then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
 | the band draws | `observeBand` | width, height, and work starting or stopping |
 | a tick | `tick` | brain time, expiries, sleep, motion |
 
@@ -110,14 +111,14 @@ It opens toward the free side: to the left when the sprite stands past the middl
 When the row does not fit, the bubble pushes the sprite, and the sprite keeps the pushed column after the bubble closes, so it never jumps back.
 Below 40 columns (`MIN_BUBBLE_COLS`), or when a bubble beside the sprite would be under 10 columns, the line is drawn above the sprite instead, unboxed, across the band's width; when the band is narrower than the sprite plus 2, the line is drawn alone.
 A bubble is never dropped: it is cut to the rows the band has (`maxRows`), its last line ending in `…` (`wrapCells`), and the confetti or the sleep drift gives way to it.
-Text is measured in terminal cells, not characters (`src/width.ts`): CJK and most emoji take two, combining marks none, and East Asian ambiguous-width characters (`★ █ × · …`) one, or two with the `ambiguousWidth` option set to `wide`, for a terminal whose font draws them wide. The bubble, the sprite rows and the hover card are laid out to it.
+Text is measured in terminal cells, not characters (`src/width.ts`): CJK and most emoji take two, combining marks none, and East Asian ambiguous-width characters (`★ █ × · …`) one, or two with the `ambiguousCharacterWidth` option set to `wide`, for a terminal whose font draws them wide. The bubble, the sprite rows and the hover card are laid out to it.
 
 | Bubble | Lasts |
 | --- | --- |
 | a canned line (`BUBBLE_MS`) | 6 s |
 | a load error, a failed save (`ERROR_MS`) | 10 s |
 | a model answer, or why it failed (`ANSWER_MS`) | 15 s |
-| the `thinking` line while a question runs | until the answer, the failure or the question's 90 s deadline |
+| the `thinking` line while a question runs | until the answer, the failure or the question's deadline (90 s) |
 
 While a bubble shows, the character stands still.
 Hovering the sprite shows a card, in terminals that report the mouse: the name, the description (or an original's subtitle), `pets N | questions N | {mood}`, and an original's stat rows.
@@ -142,7 +143,7 @@ The card opens on the side away from the bubble, or not at all when neither side
 | File | Symbols |
 | --- | --- |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bandScene`, `drawBand`, `refresh`, `startClock`, `stopClock`, `onTick`, `syncHidden`, `onToolCall`, `onTurnComplete` |
-| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `setCharacter`, `greet`, `react`, `pet`, `wake`, `beginQuestion`, `endQuestion`, `askLeft`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `ASK_DEADLINE_MS`, `ASK_DEADLINE_REASON`, `SLEEP_IDLE_MS`, `REST_LINE_CHANCE`, `WORKING_LINE_CHANCE` |
+| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `setCharacter`, `greet`, `react`, `pet`, `wake`, `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason`, `SLEEP_IDLE_MS`, `REST_LINE_CHANCE`, `WORKING_LINE_CHANCE` |
 | [`src/motion.ts`](../../plugins/buddy/src/motion.ts) | `tickMotion`, `maxX`, `periodMs`, `STILL_FRAME_MS`, `STILL_PERIOD_MS` |
 | [`src/reactions.ts`](../../plugins/buddy/src/reactions.ts) | `REACTIONS`, `classifyToolCall`, `TEST_RUNNER`, `TEST_PASS`, `TEST_FAIL`, `toolOutput`, `bashCommand` |
 | [`src/particles.ts`](../../plugins/buddy/src/particles.ts) | `particles`, `CONFETTI_MS`, `CONFETTI_TICK_MS`, `CONFETTI_ROWS` |
@@ -151,6 +152,6 @@ The card opens on the side away from the bubble, or not at all when neither side
 
 ## How it's tested
 
-- Unit: [`tests/brain.test.ts`](../../tests/brain.test.ts) (greeting then walking, sleep hours, work, reactions, quips, frame order, the pushed column), [`tests/motion.test.ts`](../../tests/motion.test.ts), [`tests/scene.test.ts`](../../tests/scene.test.ts), [`tests/particles.test.ts`](../../tests/particles.test.ts), [`tests/reactions.test.ts`](../../tests/reactions.test.ts).
+- Unit: [`tests/brain.test.ts`](../../tests/brain.test.ts) (greeting then walking, sleep hours, work, reactions, `commentAfterEachTurn`, frame order, the pushed column), [`tests/motion.test.ts`](../../tests/motion.test.ts), [`tests/scene.test.ts`](../../tests/scene.test.ts), [`tests/particles.test.ts`](../../tests/particles.test.ts), [`tests/reactions.test.ts`](../../tests/reactions.test.ts).
 - Hooks: the `the band` and `reactions` groups of [`plugins/buddy/tests/buddy.test.tsx`](../../plugins/buddy/tests/buddy.test.tsx) draw the real adapter on a mock clock.
 - Live: rows (a), (b), (e) and (h) of the live proof ([Verification](./verification.md)).

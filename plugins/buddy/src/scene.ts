@@ -1,6 +1,6 @@
 import { frameAt, type Character, type Pose } from './character.ts';
 import { CONFETTI_ROWS, particles } from './particles.ts';
-import { cellWidth, padEndCells, wrapCells, type WidthOptions } from './width.ts';
+import { cellWidth, padEndCells, wrapCells, type AmbiguousCharacterWidth, type WidthOptions } from './width.ts';
 
 // What the AbovePrompt band shows, as plain data: the adapter maps it to
 // Box/Text one to one, and its JSON is the key that decides a redraw.
@@ -41,7 +41,7 @@ export type SceneInput = {
   /** The brain's clock in ms: a shiny sprite's color cycles with it. */
   now?: number;
   /** The terminal draws East Asian Ambiguous characters (★ █ × ·) two cells wide; default one. */
-  ambiguousWide?: boolean;
+  ambiguousCharacterWidth?: AmbiguousCharacterWidth;
 };
 
 export const MIN_BUBBLE_COLS = 40;
@@ -110,7 +110,7 @@ function toSegs(cells: readonly { col: number; text: string; color: string }[]):
  */
 export function buildScene(i: SceneInput): Scene | null {
   const c = i.character;
-  const o: WidthOptions = { ambiguousWide: i.ambiguousWide === true };
+  const o: WidthOptions = { ambiguousCharacterWidth: i.ambiguousCharacterWidth ?? 'narrow' };
   const sw = spriteWidth(c, o);
   const color = spriteColor(c, i.now ?? 0);
   if (i.maxRows < 1) return null;

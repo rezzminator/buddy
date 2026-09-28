@@ -15,6 +15,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - hook tests: function-hook tests on the testing kit of the `claude-code` module; `claude plugin test` requires them inside the plugin directory · `plugins/buddy/tests/`
 - plugin API: every hook's shape; grep it before using an event · `types/claude-code.d.ts`, untracked, written by `npm run types` (run by `npm run typecheck`)
 - live proof: a real Haiku session driven in tmux · `scripts/live-proof.sh`
+- live configuration proof: five sessions over option sets, buddy on opus low, each turn's time and tokens in a report · `scripts/live-configs.sh`, helpers shared in `scripts/live-lib.sh`
 - release check: the version agrees everywhere and the CHANGELOG section is dated · `scripts/release-check.sh`
 - CI: the gates on push and pull request, and the GitHub release on a tag · `.github/workflows/`
 - repo agents: `gitter`, the only git writer · `.claude/agents/`
@@ -30,7 +31,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 ### Local
 
 - `npm test` (vitest, then `claude plugin test plugins/buddy`), `npm run typecheck` and `npm run validate:plugin` (root and plugin, `--strict`) pass before a commit.
-- `npm run live` runs the live proof with `--plugin-dir plugins/buddy`; run it after any change to the adapter.
+- `npm run live` runs the live proof and `npm run live:configs` the configuration proof, both with `--plugin-dir plugins/buddy`; run both after any change to the adapter.
 - `npm run release:check` proves a release's versions and CHANGELOG section.
 
 ### CI
@@ -50,16 +51,16 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 
 - A new behaviour lands in the engine as a pure function with a test watched failing first; the adapter only wires it.
 - `$` is passed only to functions declared at the top level of the adapter and always spelled `$.noun.event(...)`, and `$.env` names are string literals: otherwise Claude Code loads the module with zero hooks, and `npm run validate:plugin` reports it.
-- Every hook catches, logs `buddy: {what} failed: {err}` with `$.ui.log`, and returns `next(e)` or the original result.
-- A failure shows on screen: a missing or invalid character draws the duck with a bubble naming the error and pointing at `/buddy-personality`, which lists it as `(invalid)`.
-- Only a `/buddy` question, or `quips` when on, calls a model; walking, reactions and every other command stay local.
+- Every hook catches, logs `{what} failed: {err}` through `say` (Claude Code names the plugin on a command's reply, never on a `$.ui.log` transcript line, so `notice()` adds `buddy:`; the debug log's copy then reads `buddy: buddy:`, accepted, as `$.ui.log` has no transcript-only sink), and returns `next(e)` or the original result.
+- A failure shows on screen: a missing or invalid character draws the duck with a bubble naming the error and pointing at the drawer's personality tab (`/buddy`), which lists it as `(invalid)`.
+- Only a `/buddy` question, or `commentAfterEachTurn` or `suggestNextPrompt` when on, calls a model; walking, reactions and every other command stay local.
 - Dev files live outside the plugin directory, which installs whole.
 
 ### Characters
 
 - A built-in character carries `"$schema": "../schema/character.schema.json"`, validates against it, and its art and persona are original.
 - A missing line pool falls back to the engine's neutral pool, in no character's voice.
-- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit.
+- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit; an option's also moves `config.example.json`.
 
 ### Branches and releases
 

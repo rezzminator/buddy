@@ -11,6 +11,20 @@
 // WRITE_ATTEMPTS times. A record is lost only when the other session's write
 // lands after that re-read, and then the fallback says so.
 
+/** The plugin's name, which every transcript notice leads with. */
+export const PLUGIN_NAME = 'buddy';
+
+/**
+ * A line for `$.ui.log`'s transcript, naming the plugin: Claude Code states
+ * that it files a line under the plugin's name only in the debug log, so a
+ * transcript notice names the plugin itself. The debug log's copy of the line
+ * then reads `buddy: buddy: …`, accepted: `$.ui.log` has no transcript-only
+ * sink (UiLogSink: `transcript` goes to the debug log too, `debug` only there).
+ */
+export function notice(text: string): string {
+  return `${PLUGIN_NAME}: ${text}`;
+}
+
 export type LogLevel = 'error' | 'info' | 'debug';
 export const LOG_LEVELS: readonly LogLevel[] = ['error', 'info', 'debug'];
 export const LOG_CAP = 1_000_000;
@@ -44,6 +58,8 @@ export class Logger {
   /** The log file; '' writes no file (errors still reach the fallback). */
   file: string;
   context: { session?: string; character?: string } = {};
+  /** Sees every record, at any level and whether or not the file is on, before the level decides: the round files' timeline. */
+  tap: ((record: { at: number; level: LogLevel; event: string; fields: LogFields }) => void) | null = null;
   private readonly now: () => number;
   private readonly cap: number;
   private pending: string[] = [];
@@ -66,6 +82,11 @@ export class Logger {
 
   /** Queues one record when `level` is on; the next flush writes it after every one before it. */
   log(level: LogLevel, event: string, fields: LogFields = {}): void {
+    try {
+      this.tap?.({ at: this.now(), level, event, fields });
+    } catch {
+      // A tap that throws never costs the log its record.
+    }
     if (!this.enabled(level)) return;
     let line: string;
     try {
@@ -94,11 +115,12 @@ export class Logger {
     this.log('debug', event, fields);
   }
 
-  /** Writes every queued record through `io`, after every flush before; never rejects. */
+  /** Writes every queued record through `io`, after every flush before; never throws or rejects. */
   flush(io: LogIO): Promise<void> {
-    for (const l of this.orphans.splice(0)) io.fallback(`buddy: ${l}`);
+    for (const l of this.orphans.splice(0)) this.fallback(io, l);
     if (this.pending.length === 0) return this.chain;
-    this.chain = this.chain.then(() => this.drain(io));
+    // Never left rejected: a rejected chain would skip every later drain, the log dead in silence.
+    this.chain = this.chain.then(() => this.drain(io)).catch(() => undefined);
     return this.chain;
   }
 
@@ -119,11 +141,20 @@ export class Logger {
       for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
         if (await this.landed(io, file, await this.put(io, file, add))) return;
       }
-      io.fallback(`buddy: the log ${file} lost ${lines.length} records to another writer at the same time`);
+      this.fallback(io, `the log ${file} lost ${lines.length} records to another writer at the same time`);
     } catch (error) {
-      io.fallback(`buddy: writing the log ${file} failed: ${errorFields(error).message}`);
+      this.fallback(io, `writing the log ${file} failed: ${errorFields(error).message}`);
     }
-    for (const l of lines) if (l.includes('"level":"error"')) io.fallback(`buddy: ${l}`);
+    for (const l of lines) if (l.includes('"level":"error"')) this.fallback(io, l);
+  }
+
+  /** `line` to the fallback; a fallback that throws is swallowed, there being nowhere left to say it. */
+  private fallback(io: LogIO, line: string): void {
+    try {
+      io.fallback(line);
+    } catch {
+      // The fallback is the last place a record can go.
+    }
   }
 
   /** Adds `add` to the file, rotating it past the cap; resolves with the text that went in. */
@@ -144,4 +175,26 @@ export class Logger {
     if (((await io.read(file)) ?? '').includes(text)) return true;
     return ((await io.read(`${file}.1`)) ?? '').includes(text);
   }
+}
+
+/** Two calls' raw usage added key by key (numbers only), so a retried call logs what both cost. */
+export function sumUsage(a: unknown, b: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const u of [a, b]) {
+    if (typeof u !== 'object' || u === null) continue;
+    for (const [k, v] of Object.entries(u)) if (typeof v === 'number') out[k] = (out[k] ?? 0) + v;
+  }
+  return out;
+}
+
+/** A model call's usage as short log fields, with the share of its input read from the prompt cache; {} when there is none. */
+export function usageFields(usage: unknown): Record<string, number> {
+  if (typeof usage !== 'object' || usage === null) return {};
+  const u = usage as Record<string, unknown>;
+  const n = (k: string) => (typeof u[k] === 'number' ? (u[k] as number) : 0);
+  const inTok = n('input_tokens');
+  const cacheRead = n('cache_read_input_tokens');
+  const cacheWrite = n('cache_creation_input_tokens');
+  const all = inTok + cacheRead + cacheWrite;
+  return { inTok, cacheRead, cacheWrite, outTok: n('output_tokens'), cachePct: all === 0 ? 0 : Math.round((cacheRead / all) * 100) };
 }

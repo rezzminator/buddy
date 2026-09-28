@@ -1,21 +1,14 @@
 import { frameAt, type Character } from './character.ts';
 import type { Variant } from './hatch.ts';
 import { poolFor } from './lines.ts';
-import { ORIGINAL_ID, SHOWN_CONFIG, originalLabel, type Soul } from './original.ts';
+import { ORIGINAL_ID, originalLabel, type Soul } from './original.ts';
 import type { Entry, Roster } from './roster.ts';
 import { spriteColor } from './scene.ts';
 
-// `/buddy-personality`: the menu as plain data. Three titled groups of
-// entries, one focusable row each, and the preview of the one the focus is
-// on. The adapter draws it one to one; an error is a line in its group.
-
-export const MENU_COMMAND = 'buddy-personality';
-export const MENU_PANE = 'buddy-personality';
-export const MENU_TITLE = 'Pick a personality';
-/** How often the preview's idle frames turn. */
-export const PREVIEW_MS = 500;
-export const MENU_MAX_ROWS = 30;
-export const PREVIEW_ROWS = 14;
+// The drawer's personality tab as plain data. Two titled groups of
+// entries, Shipped and Yours (your original companion's two rolls, then your
+// own character files), one row each, and the preview of the one lit.
+// The drawer draws it one to one; an error is a line in its group.
 
 export type Pick = { kind: 'use'; id: string } | { kind: 'original'; variant: Variant };
 /** `about`: the line the preview says of it, its description, or an original's personality. */
@@ -24,18 +17,18 @@ export type Item = { key: string; label: string; pick: Pick; character?: Charact
 export type Section = { title: string; lines: string[]; items: Item[] };
 export type Menu = { sections: Section[] };
 
-/** What the "Yours" group found: a failure to look, nothing, or the companion rolled both ways. */
+/** What the look for your original companion found: a failure to look, nothing, or the companion rolled both ways. */
 export type Originals =
   | { kind: 'error'; error: string }
-  | { kind: 'none'; notes: string[]; shownConfig?: string }
+  | { kind: 'none'; notes: string[] }
   | { kind: 'found'; soul: Soul; from?: string; notes: string[]; rolls: { variant: Variant; character?: Character; error?: string }[] };
 
 export type MenuInput = {
   roster: Roster;
   /** Why the plugin's characters/ could not be listed, if it could not. */
   shippedError?: string;
-  /** Whether a characterDir is set, and why it could not be listed. */
-  folder: { isSet: boolean; error?: string };
+  /** Whether a customCharactersDir is set, and why it could not be listed. */
+  customCharactersDir: { isSet: boolean; error?: string };
   originals: Originals;
 };
 
@@ -48,10 +41,10 @@ function entryItem(e: Entry): Item {
   return e.character ? { key: itemKey(pick), label: `${e.character.name} (${e.id})`, pick, character: e.character, about: e.character.description } : { key: itemKey(pick), label: `${e.id} (invalid)`, pick, error: e.error ?? 'invalid' };
 }
 
-function yours(o: Originals): Section {
-  const title = 'Yours';
-  if (o.kind === 'error') return { title, lines: [o.error], items: [] };
-  if (o.kind === 'none') return { title, lines: [`No companion in ${o.shownConfig ?? SHOWN_CONFIG} or its backups.`, ...o.notes], items: [] };
+/** Your original companion's rolls, and the lines said of the look for it: a failure, where a backup was read from, its notes; nothing when there is none. */
+function originals(o: Originals): { lines: string[]; items: Item[] } {
+  if (o.kind === 'error') return { lines: [o.error], items: [] };
+  if (o.kind === 'none') return { lines: o.notes, items: [] };
   const items = o.rolls.map((r): Item => {
     const pick: Pick = { kind: 'original', variant: r.variant };
     const item: Item = { key: itemKey(pick), label: originalLabel(o.soul.name, r.variant), pick };
@@ -61,22 +54,23 @@ function yours(o: Originals): Section {
     } else item.error = r.error ?? 'no art for it';
     return item;
   });
-  return { title, lines: [...(o.from ? [`From the backup ${o.from}.`] : []), ...o.notes], items };
+  return { lines: [...(o.from ? [`From the backup ${o.from}.`] : []), ...o.notes], items };
 }
 
 export function buildMenu(i: MenuInput): Menu {
   const shipped = i.roster.entries.filter((e) => e.source === 'builtin').map(entryItem);
   const mine = i.roster.entries.filter((e) => e.source === 'user').map(entryItem);
   const shippedLines = i.shippedError ? [i.shippedError] : shipped.length === 0 ? ['No shipped characters found.'] : [];
-  // A roster error that is not a listing failure: a file taking a reserved id, said in the folder's group.
-  const listing = new Set([i.shippedError, i.folder.error]);
+  // A roster error that is not a listing failure: a file taking a reserved id, said in Yours.
+  const listing = new Set([i.shippedError, i.customCharactersDir.error]);
   const refused = i.roster.errors.filter((e) => !listing.has(e));
-  const folderLines = [...(!i.folder.isSet ? ['No folder set: the characterDir option names one.'] : i.folder.error ? [i.folder.error] : mine.length === 0 ? ['No character files in your folder.'] : []), ...refused];
+  const original = originals(i.originals);
+  const items = [...original.items, ...mine];
+  const dir = i.customCharactersDir.error ? [i.customCharactersDir.error] : items.length > 0 ? [] : i.customCharactersDir.isSet ? ['No character files in customCharactersDir.'] : ['None yet: set customCharactersDir to a folder of your own character files.'];
   return {
     sections: [
       { title: 'Shipped', lines: shippedLines, items: shipped },
-      yours(i.originals),
-      { title: 'Your folder', lines: folderLines, items: mine },
+      { title: 'Yours', lines: [...original.lines, ...dir, ...refused], items },
     ],
   };
 }
@@ -89,14 +83,6 @@ export function findItem(m: Menu, key: string): Item | undefined {
   return allItems(m).find((i) => i.key === key);
 }
 
-/** The key `by` rows from `key`, kept inside the list: what Down (+1) and Up (-1) reach. */
-export function moveKey(m: Menu, key: string, by: number): string | undefined {
-  const items = allItems(m);
-  if (items.length === 0) return undefined;
-  const at = Math.max(0, items.findIndex((i) => i.key === key));
-  return items[Math.max(0, Math.min(items.length - 1, at + by))]!.key;
-}
-
 /** The entry drawn now: the original by its roll, any other by its id. */
 export function currentKeyOf(drawnId: string, originalVariant: Variant | undefined): string {
   return drawnId === ORIGINAL_ID && originalVariant ? itemKey({ kind: 'original', variant: originalVariant }) : itemKey({ kind: 'use', id: drawnId });
@@ -107,10 +93,21 @@ export function rowLabel(item: Item, current: string): string {
   return `${item.key === current ? '* ' : '  '}${item.label}`;
 }
 
-/** The rows the pane wants: every title, line and entry, a gap between groups. */
-export function menuRows(m: Menu): number {
-  const left = m.sections.reduce((n, s) => n + 1 + s.lines.length + s.items.length, 0) + m.sections.length - 1;
-  return Math.min(MENU_MAX_ROWS, Math.max(left, PREVIEW_ROWS));
+/** The narrowest the entry list gets, so a notice under a short list still reads. */
+export const LIST_MIN_WIDTH = 24;
+
+/**
+ * The entry list's width: its widest title or entry row (with the current marker),
+ * never a notice line, which wraps inside it; a long notice widening the list
+ * squeezed the preview beside it to a few columns.
+ */
+export function listWidth(m: Menu): number {
+  let w = LIST_MIN_WIDTH;
+  for (const s of m.sections) {
+    w = Math.max(w, s.title.length);
+    for (const item of s.items) w = Math.max(w, `* ${item.label}`.length);
+  }
+  return w;
 }
 
 export type Preview =

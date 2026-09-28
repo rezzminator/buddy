@@ -1,9 +1,9 @@
 import { validateCharacter, type Character } from './character.ts';
 import { ORIGINAL_ID } from './original.ts';
 
-// Every character the buddy knows: the built-ins, then the user's folder, an
+// Every character the buddy knows: the built-ins, then the user's customCharactersDir, an
 // id in both taken from the user's. An invalid file stays in the roster with
-// its first error, so /buddy-personality shows it rather than hiding it.
+// its first error, so the drawer's personality tab shows it rather than hiding it.
 
 export const DEFAULT_ID = 'duck';
 
@@ -88,11 +88,11 @@ export const STANDIN_DEFAULT: Character = STANDIN.character;
 /**
  * What the first greeting's bubble says instead of a greeting: the choice's
  * error, the roster's errors (a folder that did not list, a file taking a
- * reserved id) pointing at /buddy-personality, and every ignored option,
+ * reserved id) pointing at the drawer's personality tab, and every ignored option,
  * joined; undefined when none.
  */
 export function startWarning(choiceError: string | undefined, rosterErrors: readonly string[], optionErrors: readonly string[]): string | undefined {
-  const roster = rosterErrors.length > 0 ? `${rosterErrors.join('; ')}; /buddy-personality lists your characters` : '';
+  const roster = rosterErrors.length > 0 ? `${rosterErrors.join('; ')}; the personality tab in /buddy lists your characters` : '';
   const all = [choiceError ?? '', roster, ...optionErrors].filter(Boolean);
   return all.length > 0 ? all.join('; ') : undefined;
 }
@@ -108,5 +108,5 @@ export function choose(r: Roster, storeChoice: string | undefined, optionChoice:
   if (entry?.character) return { id, character: entry.character };
   const why = entry?.error ?? 'no such character';
   const fallback = findEntry(r, DEFAULT_ID)?.character ?? STANDIN_DEFAULT;
-  return { id, character: fallback, error: `Couldn't load ${id}: ${why}; /buddy-personality picks another` };
+  return { id, character: fallback, error: `Couldn't load ${id}: ${why}; the personality tab in /buddy picks another` };
 }

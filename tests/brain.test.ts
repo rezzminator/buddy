@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ANSWER_MS, ASK_DEADLINE_MS, ASK_DEADLINE_REASON, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, askLeft, beginQuestion, createBrain, currentPose, endQuestion, endTurn,
-  failAnswer, farewell, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
+  ANSWER_MS, COMPLETE_DEADLINE_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
+  failAnswer, farewell, holdsAnswer, sayLine, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { raw } from './fixtures.ts';
@@ -57,7 +57,7 @@ describe('brain', () => {
     expect(react(b, { tool: 'Edit', isError: false, denied: true, output: '', command: '' }, never)).toBe('toolFail');
     expect(currentPose(b)).toBe('oops');
     expect(react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never)).toBeNull();
-    expect(b.turn).toEqual({ tools: ['Bash', 'Edit', 'Read'], failures: 1, lastBash: 'npm test' });
+    expect(b.turn).toEqual({ tools: ['Bash', 'Edit', 'Read'], failures: 1, lastBash: 'npm test', actions: [] });
     ticks(b, 2000 / 200);
     expect(b.confetti).toBeNull();
   });
@@ -121,19 +121,23 @@ describe('brain', () => {
     expect(b.motion.x).toBe(0);
     expect(b.sleeping).toBe(false);
   });
-  test('quips: only with the option, a tool used, and past the cooldown', () => {
+  test('the turn\'s summary at every end, tools or none; commentAfterEachTurn due only when on and past secondsBetweenComments', () => {
     const b = createBrain(char(), true);
-    expect(endTurn(b, true, 45)).toBeNull();
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, false, 45)).toBeNull();
+    const read = () => react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: [], failures: 0, lastBash: '', actions: [] }, commentAfterEachTurnDue: true });
+    read();
+    expect(endTurn(b, false, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '', actions: [] }, commentAfterEachTurnDue: false });
     expect(b.turn.tools).toEqual([]);
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).toEqual({ tools: ['Read'], failures: 0, lastBash: '' });
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).toBeNull();
+    read();
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '', actions: [] }, commentAfterEachTurnDue: false });
     ticks(b, 45000 / 200);
-    react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).not.toBeNull();
+    expect(endTurn(b, true, 45).commentAfterEachTurnDue).toBe(true);
+  });
+  test('secondsBetweenComments 0: commentAfterEachTurn is due at every turn\'s end', () => {
+    const b = createBrain(char(), true);
+    expect(endTurn(b, true, 0).commentAfterEachTurnDue).toBe(true);
+    expect(endTurn(b, true, 0).commentAfterEachTurnDue).toBe(true);
+    expect(endTurn(b, true, 0).commentAfterEachTurnDue).toBe(true);
   });
   test('a new pose starts at its first frame and steps through every frame in order', () => {
     const b = createBrain(char({ poses: { idle: [['1'], ['2'], ['3'], ['2']], walkRight: [['a'], ['b']] }, motion: { walk: false } }), true);
@@ -185,17 +189,49 @@ describe('a held answer', () => {
   });
 });
 
-describe('one deadline per question', () => {
-  test('a call gets only what is left of the 90 s since the question was asked; none left is the deadline', () => {
-    expect(ASK_DEADLINE_MS).toBe(90_000);
-    expect(askLeft(1000, 1000)).toBe(90_000);
-    // A fork that took 60 s leaves its fallback 30 s, never a fresh 90.
-    expect(askLeft(1000, 61_000)).toBe(30_000);
-    expect(askLeft(1000, 91_000)).toBe(0);
-    expect(askLeft(1000, 500_000)).toBe(0);
-    // A clock stepped back never grants more than the whole deadline.
-    expect(askLeft(1000, 0)).toBe(90_000);
-    expect(ASK_DEADLINE_REASON).toBe('no answer in 90 s');
+describe('holdsAnswer', () => {
+  test('true while an answer, a failure or the thinking line holds the bubble; false once it ends or for a canned line', () => {
+    const b = createBrain(char(), false);
+    b.talk = null;
+    expect(holdsAnswer(b)).toBe(false);
+    answer(b, 'Held.');
+    expect(holdsAnswer(b)).toBe(true);
+    b.now += ANSWER_MS - 1;
+    expect(holdsAnswer(b)).toBe(true);
+    b.now += 1;
+    expect(holdsAnswer(b)).toBe(false);
+    failAnswer(b, 'timeout');
+    expect(holdsAnswer(b)).toBe(true);
+    beginQuestion(b, () => 0);
+    b.now += COMPLETE_DEADLINE_MS * 10;
+    expect(holdsAnswer(b)).toBe(true);
+    b.talk = { text: 'a canned line', pose: null, until: b.now + BUBBLE_MS };
+    expect(holdsAnswer(b)).toBe(false);
+  });
+  test('a commentAfterEachTurn, or its failure, never holds against the next turn\'s commentAfterEachTurn, yet a line nobody asked for waits behind it', () => {
+    const b = createBrain(char(), false);
+    expect(answer(b, 'Turn one.', 'yay', undefined, true)).toBe(true);
+    expect(holdsAnswer(b)).toBe(false);
+    sayLine(b, 'toolFail', 'oops', BUBBLE_MS, () => 0);
+    expect(b.talk?.text).toBe('Turn one.');
+    expect(b.after?.event).toBe('toolFail');
+    failAnswer(b, 'timeout', undefined, true);
+    expect(holdsAnswer(b)).toBe(false);
+    answer(b, 'A /buddy answer.');
+    expect(holdsAnswer(b)).toBe(true);
+  });
+});
+
+describe('a question\'s deadline and failures', () => {
+  test('a question gets 90 s on `model`; the bubble names the deadline that passed', () => {
+    expect(COMPLETE_DEADLINE_MS).toBe(90_000);
+    expect(deadlineReason(COMPLETE_DEADLINE_MS)).toBe('no answer in 90 s');
+  });
+  test('why a model call gave no answer, as the bubble says it', () => {
+    expect(noAnswerReason({ reason: 'api-error', status: 529 })).toBe('api-error 529');
+    expect(noAnswerReason({ reason: 'api-error', status: null })).toBe('api-error (no response)');
+    expect(noAnswerReason({ reason: 'empty-reply' })).toBe('empty-reply');
+    expect(noAnswerReason({ reason: 'aborted' })).toBe('aborted');
   });
 });
 
@@ -230,7 +266,7 @@ describe('a pending question', () => {
     ticks(b, BUBBLE_MS / 200);
     expect(b.talk).toBeNull();
     endQuestion(b);
-    expect(failAnswer(b, ASK_DEADLINE_REASON, 'fixy')).toBe(false);
+    expect(failAnswer(b, deadlineReason(COMPLETE_DEADLINE_MS), 'fixy')).toBe(false);
     expect(b.talk).toBeNull();
   });
   test('ended with no answer to replace it, the thinking line goes at the next tick', () => {
@@ -239,5 +275,13 @@ describe('a pending question', () => {
     endQuestion(b);
     ticks(b, 1);
     expect(b.talk).toBeNull();
+  });
+});
+
+describe('isMainLoop', () => {
+  test('only the main loop, which carries no agent id, is the user\'s turn; a subagent\'s loop is not', () => {
+    expect(isMainLoop(undefined)).toBe(true);
+    expect(isMainLoop('a1b2')).toBe(false);
+    expect(isMainLoop('')).toBe(false);
   });
 });

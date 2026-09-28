@@ -15,9 +15,9 @@ makes the file invalid.
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in built-ins |
-| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the Your folder group of `/buddy-personality` and in the bubble at a session's start and after `/buddy reload`; the id `/buddy-personality` stores |
+| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the Yours group of the drawer's personality tab and in the bubble at a session's start and after `/buddy reload`; the id the personality tab stores |
 | `name` | string ≤ 40 | yes | display name |
-| `description` | string ≤ 100 | yes | one line for the menu's preview and the hover card |
+| `description` | string ≤ 100 | yes | one line for the personality tab's preview and the hover card |
 | `author` | string ≤ 60 | no | credit |
 | `persona` | string ≤ 1200 | yes | the character's voice prompt, 2nd person ("You are …") |
 | `color` | Ink color name or `#rrggbb` | no | sprite color, default `"yellow"` |
@@ -68,7 +68,7 @@ voice.
 
 | Event | Said when |
 | --- | --- |
-| `greeting` | the session starts, or after Enter in `/buddy-personality`, `/buddy reload` and `/buddy on` |
+| `greeting` | the session starts, or after a switch in the drawer's personality tab, `/buddy reload` and `/buddy on` |
 | `toolFail` | a tool call failed or was denied |
 | `testPass` | a Bash command's output reads like a test pass |
 | `testFail` | a Bash command's output reads like a test failure |
@@ -81,10 +81,17 @@ voice.
 
 ### Persona
 
-`persona` is the prompt a model answers in when you ask a question (and for
-quips, when they are on). Write it in the second person ("You are …"): who
-the character is, how it talks, a phrase or two it likes. The engine adds
-the rule that answers are one line, so the persona does not need to.
+`persona` is the prompt a model answers in when you ask a question, and at
+the end of every answered turn, when it voices `commentAfterEachTurn` and
+decides what `suggestNextPrompt` nudges toward, though
+`suggestNextPrompt` itself is written in the user's words. Write it in the second person ("You are …"): who
+the character is, how it talks, a phrase or two it likes. The engine puts
+its character rule (`CHARACTER_RULE`) right after the persona: become the
+character completely and say one useful thing that both the user and Claude
+missed, the character deciding how it is said, never what is true. So write
+the persona for voice, not for tasks: what to say comes from the rule. The
+engine also adds the rule that answers are one line, so the persona does
+not need to.
 
 ### Motion
 
@@ -130,15 +137,15 @@ Every pose it leaves out falls back as the table above says: `oops`,
 
 1. Save the file in a folder of your own, for example
    `my-characters/blob.json`.
-2. Point the `characterDir` option at that folder: through `/plugin configure`, or in
-   `settings.json` under `pluginConfigs["buddy@buddy"].options.characterDir`.
+2. Point the `customCharactersDir` option at that folder: through `/plugin configure`, or in
+   `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersDir`.
    Start a new session.
-3. `/buddy-personality` lists it under Your folder, or as `blob (invalid)`
+3. `/buddy` opens the drawer; its personality tab (ctrl+x t) lists it under Yours, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.
-4. Enter on it draws it.
+4. ctrl+x n or ctrl+x b onto it draws it.
 5. Edit the file, save, and run `/buddy reload` to see the change. Try a
    narrow window as well as a wide one.
-6. Pick your usual character in `/buddy-personality` to go back to it.
+6. Pick your usual character in the personality tab to go back to it.
 
 An editor that reads `$schema` checks the file as you type. Inside this
 repository, the built-ins use the relative path
@@ -160,7 +167,7 @@ repository, the built-ins use the relative path
    ```
 
 4. Try it in a real session: `claude --plugin-dir plugins/buddy`, then
-   pick it in `/buddy-personality`.
+   pick it in the personality tab of `/buddy`.
 5. Open a pull request against `develop`, with each pose pasted in a text
    block.
 
@@ -174,7 +181,7 @@ A character ships when:
 
 ## Species templates
 
-The "Yours" group of `/buddy-personality` brings back the companion that
+The "Yours" group of the drawer's personality tab brings back the companion that
 Claude Code's old `/buddy` hatched for you. Your account decides its species, eye, hat and rarity; its
 look comes from a species template, `plugins/buddy/species/{species}.json`,
 and its hat from `plugins/buddy/species/hats.json`. A template is ASCII art
@@ -239,7 +246,7 @@ node -e 'const t=require("./plugins/buddy/species/blob.json");for(const [p,fs] o
 
 The engine checks a template with `validateSpecies` in
 `plugins/buddy/src/species.ts`, which reports the first thing wrong by its
-path. `/buddy-personality` previews your own companion live. A template ships under
+path. The drawer's personality tab previews your own companion live. A template ships under
 the same rules as a character: the art and the lines are your own work, and
 they are friendly.
 

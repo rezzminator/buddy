@@ -1,0 +1,22 @@
+{
+  "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
+  "pluginConfigs": {
+    "buddy@buddy": {
+      "options": {
+        "character": "duck",
+        "customCharactersDir": "",
+        "walkOverPromptBar": true,
+        "commentAfterEachTurn": true,
+        "model": "opus",
+        "effort": "low",
+        "secondsBetweenComments": 0,
+        "suggestNextPrompt": true,
+        "chatTurnsToRead": 4,
+        "logLevel": "info",
+        "logFile": "$CLAUDE_CONFIG_DIR/buddy/buddy.log",
+        "saveRounds": true,
+        "ambiguousCharacterWidth": "narrow"
+      }
+    }
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, type LogIO } from '../plugins/buddy/src/log.ts';
+import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, notice, sumUsage, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
 
 function disk(refuse = false) {
   const files: Record<string, string> = {};
@@ -76,8 +76,8 @@ describe('Logger', () => {
     L.log('info', 'fine');
     L.error('reading x', new Error('nope'));
     await expect(L.flush(io)).resolves.toBeUndefined();
-    expect(d.fallback[0]).toBe('buddy: the log /l/b.log lost 2 records to another writer at the same time');
-    expect(d.fallback[1]).toMatch(/^buddy: \{.*"event":"reading x"/);
+    expect(d.fallback[0]).toBe('the log /l/b.log lost 2 records to another writer at the same time');
+    expect(d.fallback[1]).toMatch(/^\{.*"event":"reading x"/);
     expect(d.fallback).toHaveLength(2);
   });
 
@@ -87,9 +87,34 @@ describe('Logger', () => {
     L.log('info', 'fine');
     L.error('reading x', new Error('nope'));
     await expect(L.flush(d.io)).resolves.toBeUndefined();
-    expect(d.fallback[0]).toBe('buddy: writing the log /l/b.log failed: EACCES: /l/b.log');
-    expect(d.fallback[1]).toMatch(/^buddy: \{.*"event":"reading x".*"message":"nope"/);
+    expect(d.fallback[0]).toBe('writing the log /l/b.log failed: EACCES: /l/b.log');
+    expect(d.fallback[1]).toMatch(/^\{.*"event":"reading x".*"message":"nope"/);
     expect(d.fallback).toHaveLength(2);
+  });
+
+  test('a fallback that throws never kills the log: a later flush still writes, and flush never throws', async () => {
+    const d = disk();
+    let refuse = true;
+    const bad: LogIO = {
+      read: d.io.read,
+      write: async (p, t) => {
+        if (refuse) throw new Error(`EACCES: ${p}`);
+        await d.io.write(p, t);
+      },
+      fallback: () => {
+        throw new Error('no debug log either');
+      },
+    };
+    const L = new Logger('info', '/l/b.log');
+    L.error('first', new Error('lost'));
+    await expect(L.flush(bad)).resolves.toBeUndefined();
+    refuse = false;
+    L.log('info', 'second');
+    await expect(L.flush(d.io)).resolves.toBeUndefined();
+    expect(lines(d.files['/l/b.log']).map((x) => x.event)).toEqual(['second']);
+    const orphaned = new Logger('info', '');
+    orphaned.error('orphan', 'plain');
+    expect(() => orphaned.flush(bad)).not.toThrow();
   });
 
   test('no file: errors still reach the fallback, nothing is written', async () => {
@@ -134,5 +159,44 @@ describe('Logger', () => {
   test('errorFields: message and stack of an Error; a string of anything else', () => {
     expect(errorFields('x')).toEqual({ message: 'x' });
     expect(errorFields(new Error('y')).message).toBe('y');
+  });
+});
+
+describe('usageFields', () => {
+  test('a model call\'s token counts as short log fields; the share read from the prompt cache as a percent', () => {
+    expect(usageFields({ input_tokens: 10, output_tokens: 40, cache_read_input_tokens: 90, cache_creation_input_tokens: 0 })).toEqual({ inTok: 10, cacheRead: 90, cacheWrite: 0, outTok: 40, cachePct: 90 });
+    expect(usageFields({ input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 })).toEqual({ inTok: 0, cacheRead: 0, cacheWrite: 0, outTok: 0, cachePct: 0 });
+  });
+  test('no usage, or not an object: no fields', () => {
+    expect(usageFields(undefined)).toEqual({});
+    expect(usageFields('x')).toEqual({});
+  });
+});
+
+describe('notice', () => {
+  test('a transcript notice names the plugin: Claude Code states its name only for the debug log', () => {
+    expect(notice('reading the chatTurnsToRead failed: EIO')).toBe('buddy: reading the chatTurnsToRead failed: EIO');
+  });
+});
+
+describe('sumUsage', () => {
+  test('adds two calls\' usage, key by key, so a retried question logs what both cost', () => {
+    expect(usageFields(sumUsage({ input_tokens: 600, output_tokens: 0 }, { input_tokens: 610, output_tokens: 30, cache_read_input_tokens: 5 }))).toEqual({ inTok: 1210, cacheRead: 5, cacheWrite: 0, outTok: 30, cachePct: 0 });
+    expect(sumUsage(undefined, { input_tokens: 1 })).toEqual({ input_tokens: 1 });
+  });
+  test('the tap sees every record at any level, and one that throws costs the log nothing', async () => {
+    const d = disk();
+    const L = new Logger('error', '/logs/b.log', 1000, () => 7);
+    const seen: string[] = [];
+    L.tap = (r) => seen.push(`${r.at} ${r.level} ${r.event} ${JSON.stringify(r.fields)}`);
+    L.log('debug', 'quiet', { a: 1 });
+    L.log('error', 'loud');
+    expect(seen).toEqual(['7 debug quiet {"a":1}', '7 error loud {}']);
+    L.tap = () => {
+      throw new Error('tap broke');
+    };
+    L.log('error', 'still');
+    await L.flush(d.io);
+    expect(d.files['/logs/b.log']).toContain('"event":"still"');
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back \u2014 or bring back your /buddy",
   "type": "module",
@@ -16,7 +16,10 @@
     "typecheck": "npm run types && tsc --noEmit && tsc -p tsconfig.hooks.json",
     "validate:plugin": "claude plugin validate --strict . && claude plugin validate --strict plugins/buddy",
     "release:check": "scripts/release-check.sh",
-    "live": "scripts/live-proof.sh"
+    "live": "scripts/live-proof.sh",
+    "live:configs": "scripts/live-configs.sh",
+    "live:drawer": "scripts/live-drawer.sh",
+    "audit": "node scripts/audit.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

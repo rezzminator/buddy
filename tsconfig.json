@@ -18,5 +18,5 @@
       "claude-code/testing": ["./types/claude-code.d.ts"]
     }
   },
-  "include": ["plugins/buddy/hooks", "plugins/buddy/src", "plugins/buddy/tests", "types"]
+  "include": ["plugins/buddy/hooks", "plugins/buddy/src", "plugins/buddy/tests", "plugins/buddy/types", "types"]
 }
