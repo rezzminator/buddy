@@ -125,7 +125,7 @@ the variable is set.
 
 | Command | What it does |
 | --- | --- |
-| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, status, counts, its pets as `♥ N`), a talk tab and a personality tab, a box to ask it centred right above your prompt, and on its last row the [shortcuts](#shortcuts). The talk tab is everything the buddy remembers, whole and scrollable: your last `chatTurnsToRead` turns with Claude, each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each next-prompt idea marked at its right `✓ you sent it` or `not sent`, and the newest open one `ctrl+x u uses it`. The drawer has no buttons: every act is a ctrl+x chord. ctrl+x x closes it from the prompt (while no pane is open), and so does `/buddy` again. |
+| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, status, its pets as `♥ N`, counts), sized to the rows the band has, a talk tab and a personality tab; its bottom row holds the tabs and the [shortcuts](#shortcuts) at the left and a box to ask it at the right. The talk tab is everything the buddy remembers, its newest messages that fit, the older ones counted above them: your last `chatTurnsToRead` turns with Claude, each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each next-prompt idea marked at its right `✓ you sent it` or `not sent`, and the newest open one `ctrl+x u uses it`. The drawer has no buttons: every act is a ctrl+x chord. ctrl+x x closes it from the prompt (while no pane is open), and so does `/buddy` again. |
 | `/buddy {question}` | Ask it: it thinks, then answers in one line, in character. While hidden it replies `{name} is hidden; /buddy on first`. |
 | `/buddy off` / `/buddy on` | Hide or show it, remembered across restarts and shared with your other sessions. |
 | `/buddy reload` | Rescan the characters, after you edit one. |
@@ -135,8 +135,8 @@ the variable is set.
 
 ### Shortcuts
 
-The drawer's last row, at its bottom-left, is its guide:
-`ctrl+x tab ask · ctrl+x t talk/personality · ctrl+x u use the idea · ctrl+x n/b next/previous character · ctrl+x p pet · ctrl+x x close`.
+The drawer's bottom-left, beside the ask box, is its guide, one ctrl+x for all:
+`ctrl+x  tab ask · t talk/personality · u use the idea · n next character · b previous character · p pet · x close`.
 
 | Chord | Does |
 | --- | --- |

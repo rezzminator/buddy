@@ -217,7 +217,7 @@ if [ "$(marked)" = "$DEFAULT" ] && in_pane "$(about_of "$DEFAULT")"; then add "(
 else add "(i) ctrl+x b steps back to $DEFAULT" FAIL "pane in $RUN/i-back.txt"; fi
 tab_close
 pane > "$RUN/i-close.txt"
-if ! in_pane "ctrl+x t talk/personality" && shows_any "$RUN/default.rows"; then add "(i) ctrl+x x folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
+if ! in_pane "ctrl+x  tab ask" && shows_any "$RUN/default.rows"; then add "(i) ctrl+x x folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
 else add "(i) ctrl+x x folds it, $DEFAULT drawn" FAIL "pane in $RUN/i-close.txt"; fi
 tab_open
 if step_to "$PICK" && in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi

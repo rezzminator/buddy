@@ -9,7 +9,7 @@ import { CHARACTER_RULE, memoryRule } from '../src/prompts.ts';
 // tests draw inline fixture characters, never the shipped characters/*.json.
 
 const START = { cwd: '.', surface: null, isInteractive: true } as const;
-const BAND = { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 100 };
+const BAND = { hasSurvey: false, isWorking: false, maxRows: 40, bodyColumns: 100 };
 
 function fixture(id: string, name: string, face: string, lines: Record<string, string[]> = {}) {
   return JSON.stringify({
@@ -1917,7 +1917,7 @@ describe('the round-3 audit fixes', () => {
 });
 
 describe('the drawer', () => {
-  test('the drawer has no button but its shortcuts: each a ctrl+x chord on an engine action, their guide the last row', async ($, on) => {
+  test('the drawer has no button but its shortcuts: each a ctrl+x chord on an engine action, their guide one ctrl+x at the bottom-left, the ask box at the bottom-right', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($, { bodyColumns: 140, maxRows: 40 });
@@ -1925,17 +1925,19 @@ describe('the drawer', () => {
     await w.clock.settle();
     const buttons = (await ui.findAll({ type: 'Button' })) as { key: string; props: { label: string; action?: string } }[];
     expect(buttons.map((b) => [b.key, b.props.label, b.props.action])).toEqual([
-      ['key-tab', 'ctrl+x t talk/personality', 'pane:next'],
-      ['key-use', 'ctrl+x u use the idea', 'pane:previous'],
-      ['key-next', 'ctrl+x n next character', 'diff:back'],
-      ['key-back', 'ctrl+x b previous character', 'app:cycleDiffBase'],
-      ['key-pet', 'ctrl+x p pet', 'permission:toggleDebug'],
-      ['close', 'ctrl+x x close', 'pane:close'],
+      ['key-tab', 't talk/personality', 'pane:next'],
+      ['key-use', 'u use the idea', 'pane:previous'],
+      ['key-next', 'n next character', 'diff:back'],
+      ['key-back', 'b previous character', 'app:cycleDiffBase'],
+      ['key-pet', 'p pet', 'permission:toggleDebug'],
+      ['close', 'x close', 'pane:close'],
     ]);
-    // The guide is drawn after everything else: the drawer's bottom-left.
+    // The bar under the body: the tabs and the guide at its left, the ask box last, at its right.
     const drawn = JSON.stringify(await ui.drawn());
-    expect(drawn.lastIndexOf('"guide"')).toBeGreaterThan(drawn.lastIndexOf('ask-input'));
-    expect((await ui.find({ key: 'guide' }))?.text).toMatch(/^ctrl\+x tab ask · ctrl\+x t talk\/personality/);
+    expect(drawn.indexOf('"bar"')).toBeGreaterThan(drawn.indexOf('"body"'));
+    expect(drawn.indexOf('"guide"')).toBeGreaterThan(drawn.indexOf('"bar"'));
+    expect(drawn.indexOf('ask-input')).toBeGreaterThan(drawn.lastIndexOf('"close"'));
+    expect((await ui.find({ key: 'guide' }))?.text).toMatch(/^ctrl\+x {2}tab ask · t talk\/personality · u use the idea/);
     expect(await shows(ui, /←|↑↓|Enter presses/)).toBe(false);
     await ui.unmount();
   });
@@ -1972,6 +1974,31 @@ describe('the drawer', () => {
     await w.clock.settle();
     expect(await shows(ui, /^F I X Y$/)).toBe(false);
     expect(await shows(ui, /\(f_f\)/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('it fits the rows the band has: the thread its newest messages, saying how many older; the personality list round the lit character', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 140, maxRows: 12 });
+    const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', 'kilo', 'lima'];
+    for (const [n, word] of words.entries()) {
+      await $.turn.start({ text: `do ${word}`, turnId: `t${n}` } as never);
+      await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: `t${n}` } as never);
+      await w.clock.settle();
+    }
+    await $.command.run(run(''));
+    await w.clock.settle();
+    const drawn = JSON.stringify(await ui.drawn());
+    expect(drawn).toContain('do lima');
+    expect(drawn).not.toContain('do alpha');
+    expect(await shows(ui, /^↑ \d+ older messages$/)).toBe(true);
+    await personality($, w, ui);
+    // The list is taller than the body: a window round the lit row, the rest counted.
+    expect(JSON.stringify((await ui.find({ key: 'use:fixy' }))?.children ?? null)).toContain('"inverse":true');
+    expect(await shows(ui, /^[↑↓] \d+ more$/)).toBe(true);
+    await pick(ui, w, 'use:duck');
+    expect(await ui.find({ key: 'use:duck' })).toBeDefined();
     await ui.unmount();
   });
 });

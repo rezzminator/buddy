@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  DEFAULT_BG, answerSuggestions, feedOfMemory, markRead, mix, packCells, pruneToMemory, pushEntry, rgbOf, seconds, shimmerRule, short, statsOf, wrapText,
+  answerSuggestions, feedOfMemory, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
   type FeedEntry,
 } from '../plugins/buddy/src/feed.ts';
 
@@ -70,26 +70,5 @@ describe('the words the panels draw', () => {
     expect(wrapText('the quick brown fox', 9)).toEqual(['the quick', 'brown fox']);
     expect(wrapText('abcdefghij xy', 4)).toEqual(['abcd', 'efgh', 'ij', 'xy']);
     expect(wrapText('a\n\nb', 5)).toEqual(['a', '', 'b']);
-  });
-});
-
-describe('the Raster cells', () => {
-  test('packed as little-endian u32 triplets in padded base64', () => {
-    // RasterProps' own example: one orange full block on the default background.
-    expect(packCells([['█', 0xff8800, DEFAULT_BG]])).toBe(Buffer.from(new Uint8Array(Uint32Array.of(0x2588, 0xff8800, DEFAULT_BG).buffer)).toString('base64'));
-    const two = packCells([['a', 1, 2], ['b', 3, 4]]);
-    expect(Buffer.from(two, 'base64').length).toBe(24);
-  });
-  test('inks as RGB, a hex color as itself, an unknown one gold; colors mixed', () => {
-    expect(rgbOf('red')).toBe(0xe5534b);
-    expect(rgbOf('#102030')).toBe(0x102030);
-    expect(rgbOf('nope')).toBe(0xe0b341);
-    expect(mix(0x000000, 0xffffff, 0.5)).toBe(0x808080);
-  });
-  test('a shimmer rule is as wide as asked, brightest at its phase', () => {
-    const r = shimmerRule(10, 0x000000, 0xffffff, 0.5);
-    expect(r).toHaveLength(10);
-    expect(r[5]![1]).toBe(0xffffff);
-    expect(r[0]![1]).toBe(0x000000);
   });
 });

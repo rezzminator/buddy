@@ -1,4 +1,4 @@
-import { clockOf, mix, packCells, rgbOf, seconds, shimmerRule, short, statsOf, wrapText, type FeedEntry } from '../src/feed.ts';
+import { clockOf, seconds, short, statsOf, wrapText, type FeedEntry } from '../src/feed.ts';
 import { findItem, listWidth, previewOf, rowLabel, type Menu } from '../src/menu.ts';
 import type { Soul } from '../src/original.ts';
 
@@ -6,13 +6,13 @@ import type { Soul } from '../src/original.ts';
 // two tabs, talk (the buddy and its whole thread with you, src/feed.ts) and
 // personality (every character to pick, with a live preview, src/menu.ts).
 // It has no buttons: every act is a ctrl+x chord (SHORTCUTS), their guide the
-// drawer's last row, at its left. No `$` here: buddy.tsx hands it the surface's elements, what to draw and
+// drawer's bottom-left, beside the ask box at its bottom-right. No `$` here: buddy.tsx hands it the surface's elements, what to draw and
 // the handlers.
 
 /** A surface's element constructor, as buddy.tsx types it. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Component = any;
-export type Elements = { Box: Component; Text: Component; Button: Component; Input?: Component; Raster?: Component };
+export type Elements = { Box: Component; Text: Component; Button: Component; Input?: Component };
 
 /** The personality tab: its characters, the one drawn now and the one the preview shows (keys), the soul an original is rolled from. */
 export type MenuState = { model: Menu; current: string; focused: string; soul: Soul | null };
@@ -54,22 +54,6 @@ function statusOf(v: DrawerView): { glyph: string; text: string; color: string }
   return v.status === 'thinking' ? { ...s, glyph: SPIN[v.frame % SPIN.length]! } : s;
 }
 
-
-/** How long the light takes to run along the rule once. */
-const SWEEP_MS = 3200;
-
-/** The rule's cells at `now`: `width` cells in the ink `color`, dim, a light passing along it. */
-function ruleCells(color: string, width: number, now: number): string {
-  const ink = rgbOf(color);
-  return packCells(shimmerRule(width, mix(ink, 0x000000, 0.7), ink, (now % SWEEP_MS) / SWEEP_MS));
-}
-
-/** A rule of light running along the drawer in the buddy's ink, or a plain one where there is no Raster. */
-function Shimmer(E: Elements, v: DrawerView, width: number) {
-  const { Raster, Text } = E;
-  if (!Raster) return <Text color={v.color}>{'━'.repeat(Math.max(1, width))}</Text>;
-  return <Raster key="rule" columns={Math.max(1, width)} rows={1} cells={ruleCells(v.color, width, v.now)} />;
-}
 
 /** The sprite, each row in the buddy's ink. */
 function Sprite(E: Elements, v: DrawerView) {
@@ -162,20 +146,21 @@ function sectionRule(E: Elements, key: string, width: number, head: string, body
   );
 }
 
-/** The whole thread the buddy remembers, oldest first: a section per turn of yours or compaction, each message of yours and its under it. */
-function thread(E: Elements, v: DrawerView, centerW: number) {
+/** The thread the buddy remembers, oldest first: a section per turn of yours or compaction, each message of yours and its under it; the newest `height` rows of it, the first then saying how many messages are older. */
+function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
   const { Box, Text } = E;
   const textW = Math.max(10, centerW - LABEL_W - DRAWER_MARK - 1);
   // Messages only: its canned idle lines are the band's chatter, never a message.
   const messages = v.feed.filter((e) => e.kind !== 'line');
   // The newest idea still open is the one ctrl+x u uses.
   const idea = openIdea(messages)?.id;
-  const rows = messages.map((e) => {
-    if (e.kind === 'clear') return sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  new conversation`, '');
-    if (e.kind === 'compact') return sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text);
-    if (e.kind === 'you') return sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, e.read === false ? `  · interrupted, ${v.name} never read it` : '');
+  const drawn = messages.map((e) => {
+    if (e.kind === 'clear') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  new conversation`, '') };
+    if (e.kind === 'compact') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text) };
+    if (e.kind === 'you') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, e.read === false ? `  · interrupted, ${v.name} never read it` : '') };
     const who = speaker(e, v);
     const lines = wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);
+    const tall = Math.max(1, lines.length);
     const end = e.kind !== 'suggest'
       ? null
       : e.taken === true
@@ -185,7 +170,7 @@ function thread(E: Elements, v: DrawerView, centerW: number) {
           : e.id === idea
             ? <Text color="magenta">ctrl+x u uses it</Text>
             : null;
-    return (
+    return { tall, node: (
       <Box key={`d${e.id}`} flexDirection="row">
         <Box width={LABEL_W} flexShrink={0}>
           <Text wrap="truncate-end">
@@ -198,28 +183,44 @@ function thread(E: Elements, v: DrawerView, centerW: number) {
         </Box>
         <Box width={DRAWER_MARK} flexShrink={0} justifyContent="flex-end">{end}</Box>
       </Box>
-    );
+    ) };
   });
-  return rows.length === 0 ? <Text dimColor>{`Nothing between you and ${v.name} yet: ask it below, or finish a turn with Claude.`}</Text> : rows;
+  if (drawn.length === 0) return <Text dimColor>{`Nothing between you and ${v.name} yet: ask it below, or finish a turn with Claude.`}</Text>;
+  let from = drawn.length;
+  let used = 0;
+  while (from > 0 && used + drawn[from - 1]!.tall <= height) used += drawn[--from]!.tall;
+  // Past the height, the oldest go, a row left to say so; the newest is drawn whole even when it is taller.
+  if (from > 0 && used + 1 > height && from < drawn.length - 1) used -= drawn[from++]!.tall;
+  if (from === drawn.length) from = drawn.length - 1;
+  const shown = drawn.slice(from).map((d) => d.node);
+  return from === 0 ? shown : [<Text key="older" dimColor>{`↑ ${from} older message${from === 1 ? '' : 's'}`}</Text>, ...shown];
 }
 
-/** The personality tab: every character as a row, the one ctrl+x n and b stepped to lit, beside its preview. */
-function personality(E: Elements, v: DrawerView) {
+/** The personality tab: every character as a row, the one ctrl+x n and b stepped to lit, beside its preview; `height` rows of the list, round the lit one. */
+function personality(E: Elements, v: DrawerView, height: number) {
   const { Box, Text } = E;
   const m = v.menu;
   if (!m) return <Text dimColor>Finding every character…</Text>;
   const p = previewOf(findItem(m.model, m.focused), v.frame, v.now);
-  const groups = m.model.sections.map((s, n) => (
-    <Box key={`group:${n}`} flexDirection="column" marginTop={n === 0 ? 0 : 1}>
-      <Text bold>{s.title}</Text>
-      {s.lines.map((line) => <Text wrap="wrap">{line}</Text>)}
-      {s.items.map((item) => (
+  // One row each: a group's gap, title and lines, then its characters.
+  const rows: { key: string; node: unknown }[] = m.model.sections.flatMap((s, n) => [
+    ...(n === 0 ? [] : [{ key: `gap:${n}`, node: <Text key={`gap:${n}`}> </Text> }]),
+    { key: `group:${n}`, node: <Text key={`group:${n}`} bold>{s.title}</Text> },
+    ...s.lines.map((line, i) => ({ key: `line:${n}:${i}`, node: <Text key={`line:${n}:${i}`} wrap="truncate-end">{line}</Text> })),
+    ...s.items.map((item) => ({
+      key: item.key,
+      node: (
         <Box key={item.key}>
           <Text inverse={item.key === m.focused} wrap="truncate-end">{rowLabel(item, m.current)}</Text>
         </Box>
-      ))}
-    </Box>
-  ));
+      ),
+    })),
+  ]);
+  const at = Math.max(0, rows.findIndex((r) => r.key === m.focused));
+  const { from, to } = windowAround(rows.length, at, Math.max(3, height));
+  const groups = rows.slice(from, to).map((r) => r.node);
+  if (from > 0) groups[0] = <Text key="up" dimColor>{`↑ ${from + 1} more`}</Text>;
+  if (to < rows.length) groups[groups.length - 1] = <Text key="down" dimColor>{`↓ ${rows.length - to + 1} more`}</Text>;
   const preview =
     p.kind === 'error' ? (
       <Box key="preview" flexDirection="column">
@@ -227,7 +228,7 @@ function personality(E: Elements, v: DrawerView) {
         <Text wrap="wrap">{`Can't draw it: ${p.error}`}</Text>
       </Box>
     ) : (
-      <Box key="preview" flexDirection="column">
+      <Box key="preview" flexDirection="column" height={height} overflow="hidden">
         {p.rows.map((row) => <Text color={p.color}>{row}</Text>)}
         <Text bold>{p.name}</Text>
         <Text dimColor wrap="wrap">{p.about}</Text>
@@ -243,7 +244,7 @@ function personality(E: Elements, v: DrawerView) {
   );
 }
 
-/** The last row, at the drawer's left: every shortcut, each pressed by its chord. */
+/** The drawer's bottom-left: every shortcut after one ctrl+x, each pressed by its chord. */
 function guide(E: Elements, v: DrawerView, act: DrawerActs) {
   const { Box, Text, Button } = E;
   const idea = openIdea(v.feed);
@@ -259,15 +260,22 @@ function guide(E: Elements, v: DrawerView, act: DrawerActs) {
   };
   return (
     <Box key="guide" flexDirection="row" flexWrap="wrap">
-      <Text dimColor>{E.Input ? 'ctrl+x tab ask · ' : ''}</Text>
+      <Text dimColor>{E.Input ? 'ctrl+x  tab ask · ' : 'ctrl+x  '}</Text>
       {SHORTCUTS.map((k, n) => (
         <Box key={`g${k.key}`} flexDirection="row">
-          <Button key={k.key} label={`${k.chord} ${k.does}`} plain dimColor action={k.action} onPress={does[k.key]} />
+          <Button key={k.key} label={`${k.chord.slice('ctrl+x '.length)} ${k.does}`} plain dimColor action={k.action} onPress={does[k.key]} />
           <Text dimColor>{n < SHORTCUTS.length - 1 ? ' · ' : ''}</Text>
         </Box>
       ))}
     </Box>
   );
+}
+
+/** The rows [from, to) of `count` a window of `size` shows with row `at` in it. */
+export function windowAround(count: number, at: number, size: number): { from: number; to: number } {
+  if (count <= size) return { from: 0, to: count };
+  const from = Math.min(Math.max(0, at - Math.floor(size / 2)), count - size);
+  return { from, to: from + size };
 }
 
 export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
@@ -280,43 +288,45 @@ export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
   const centerW = Math.max(24, innerW - DRAWER_LEFT - 1 - 4);
   const frame = { borderStyle: 'single', borderColor: 'gray', borderDimColor: true };
   const talking = v.tab === 'talk';
+  // The drawer fits the band's rows: the frame's border and the body's (4), the bar under them (the ask box's 3, else the tabs and guide's 2); the body takes the rest, never less than the card.
+  const cardRows = v.sprite.length + 5;
+  const bodyRows = Math.max(cardRows, v.rows - 4 - (Input ? 3 : 2));
   const left = (
     <Box key="left" flexDirection="column" width={DRAWER_LEFT} flexShrink={0} alignItems="center" {...frame}>
       {Sprite(E, v)}
       <Text bold color={v.color}>{v.name.toUpperCase().split('').join(' ')}</Text>
       <Text>
         <Text color={s.color}>{s.glyph}</Text>
-        <Text dimColor>{` ${s.text}`}</Text>
+        <Text dimColor>{` ${s.text}  `}</Text>
+        <Text color="red">{`♥ ${v.pets}`}</Text>
       </Text>
       <Text dimColor>{`${st.comments + st.answers} replies`}</Text>
       <Text dimColor>{`${st.taken} of ${st.suggestions} ideas used`}</Text>
       <Text dimColor>{st.avgMs === null ? v.engine : `${seconds(st.avgMs)} · ${short(st.tokens)} tokens`}</Text>
-      <Text color="red">{`♥ ${v.pets}`}</Text>
     </Box>
   );
-  const askW = Math.max(30, Math.floor(W / 2));
+  const askW = Math.min(64, Math.max(30, Math.floor(innerW * 0.4)));
   return (
-    <Box flexDirection="column" width={W}>
-      {Shimmer(E, v, W)}
-      <Box key="frame" flexDirection="column" width={W} borderStyle="round" borderColor={v.color} paddingX={1}>
-        <Box key="tabs" flexDirection="row" gap={2}>
-          <Text key="tab-talk" bold={talking} inverse={talking} dimColor={!talking}>{' talk '}</Text>
-          <Text key="tab-personality" bold={!talking} inverse={!talking} dimColor={talking}>{' personality '}</Text>
-          <Text dimColor wrap="truncate-end">{talking ? `  everything ${v.name} remembers: your last ${v.turnsRemembered} turns with Claude` : `  who sits above your prompt: ctrl+x n and b switch`}</Text>
-        </Box>
-        <Box flexDirection="row" gap={1}>
-          {left}
-          <Box key="body" flexDirection="column" flexGrow={1} justifyContent="flex-end" paddingX={1} {...frame}>{talking ? thread(E, v, centerW) : personality(E, v)}</Box>
-        </Box>
+    <Box key="frame" flexDirection="column" width={W} borderStyle="round" borderColor={v.color} paddingX={1}>
+      <Box flexDirection="row" gap={1}>
+        {left}
+        <Box key="body" flexDirection="column" flexGrow={1} justifyContent="flex-end" paddingX={1} {...frame}>{talking ? thread(E, v, centerW, bodyRows) : personality(E, v, bodyRows)}</Box>
       </Box>
-      {Input ? (
-        <Box key="ask" flexDirection="row" justifyContent="center">
-          <Box borderStyle="round" borderColor={v.status === 'thinking' ? 'yellow' : v.color} borderDimColor={v.status !== 'thinking'} paddingX={1} width={askW}>
+      <Box key="bar" flexDirection="row" gap={2}>
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} justifyContent="flex-end">
+          <Box key="tabs" flexDirection="row" gap={2}>
+            <Text key="tab-talk" bold={talking} inverse={talking} dimColor={!talking}>{' talk '}</Text>
+            <Text key="tab-personality" bold={!talking} inverse={!talking} dimColor={talking}>{' personality '}</Text>
+            <Text dimColor wrap="truncate-end">{talking ? `everything ${v.name} remembers: your last ${v.turnsRemembered} turns with Claude` : `who sits above your prompt`}</Text>
+          </Box>
+          {guide(E, v, act)}
+        </Box>
+        {Input ? (
+          <Box key="ask" borderStyle="round" borderColor={v.status === 'thinking' ? 'yellow' : v.color} borderDimColor={v.status !== 'thinking'} paddingX={1} width={askW} flexShrink={0}>
             <Input key="ask-input" autoFocus placeholder={v.status === 'thinking' ? `${v.name} is thinking…` : `ask ${v.name}…`} submitLabel="ask" value={act.draft} onInput={(t: string) => act.setDraft(t)} onSubmit={(t: string) => act.ask(t)} />
           </Box>
-        </Box>
-      ) : null}
-      {guide(E, v, act)}
+        ) : null}
+      </Box>
     </Box>
   );
 }
