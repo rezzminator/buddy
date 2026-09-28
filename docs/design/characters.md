@@ -53,7 +53,7 @@ flowchart LR
 
 | Source | Where | Marked |
 | --- | --- | --- |
-| Shipped (`builtin`) | the plugin's `characters/`: `cat`, `dragon`, `duck`, `ghost`, `professor`, `robot`, `yellow-duck` | |
+| Shipped (`builtin`) | the plugin's `characters/`: `cat`, `dragon`, `duck`, `ghost`, `professor`, `robot`, `terry`, `yellow-duck` | |
 | `customCharactersDir` (`user`) | the folder the `customCharactersDir` option names; `~` expands to HOME | the personality tab's Yours group, after your original |
 | Original (`original`) | built from the account's roll and a species template, id `original`, reserved: a character file with that id is refused with an error naming the file, said in the personality tab's Yours group, the log, and the bubble at each session start and `/buddy reload` (`mergeRoster`, `startWarning`) | [Original companion](./original-companion.md) |
 
@@ -125,4 +125,4 @@ A shipped character is original work (no copied character, trademark or real per
 - Unit: [`tests/character.test.ts`](../../tests/character.test.ts) (defaults, padding, first error by path, pose fallback), [`tests/roster.test.ts`](../../tests/roster.test.ts) (candidates, invalid entries, your file wins, choice order, the stand-in), [`tests/lines.test.ts`](../../tests/lines.test.ts). They use inline fixtures ([`tests/fixtures.ts`](../../tests/fixtures.ts)), never the shipped files.
 - Hooks: the band draws the stored character, defaults to the duck, and says why for an invalid or unknown choice, pointing at the drawer's personality tab.
 - Live: rows (a), (c), (g) and (i) load shipped files for real: the duck, the first other character by id (`cat` today, also the menu's pick), and the one listed after the duck.
-- Shipped files: `tests/character.test.ts` names the seven shipped characters and runs each through `validateCharacter`, as `tests/species.test.ts` does for the species templates, so a broken shipped file fails the suite before it can show as `(invalid)` in the menu.
+- Shipped files: `tests/character.test.ts` names the eight shipped characters and runs each through `validateCharacter`, as `tests/species.test.ts` does for the species templates, so a broken shipped file fails the suite before it can show as `(invalid)` in the menu.

@@ -2,7 +2,7 @@
 
 buddy is a Claude Code function-hooks plugin that draws a small ASCII character on the line above the prompt.
 The character walks, rests, sleeps and reacts to tool calls and test runs, and it answers `/buddy` questions in one line through Claude Code's own model calls.
-Characters are JSON files, seven shipped and any number of your own, and the drawer's personality tab can bring back the companion that Claude Code's removed `/buddy` hatched for your account.
+Characters are JSON files, eight shipped and any number of your own, and the drawer's personality tab can bring back the companion that Claude Code's removed `/buddy` hatched for your account.
 
 ## The designs
 
@@ -61,6 +61,6 @@ flowchart LR
 | `hidden` | `true` while hidden | `/buddy off`, `/buddy on` |
 | `pets` | the pet count | ctrl+x p in the drawer |
 | `original` | the picked original's roll (`native` or `npm`) and its soul | a switch to a "Yours" original in the personality tab |
-| `chatTurnsToRead:{session}` | before 0.4.0 only: a chat's memory, moved into its folder's `memory.json` when the chat is next opened | see [chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept) |
+| `chatTurnsToRead:{session}` | before 1.0.0 only: a chat's memory, moved into its folder's `memory.json` when the chat is next opened | see [chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept) |
 
 Every session shares one store, and Claude Code raises no event when it changes, so a session reads back what another may have written: a pet counts on from the stored `pets`, and `hidden` is read back while the band draws ([Engine](./engine.md#the-tick)).

@@ -174,6 +174,7 @@ Without them only ctrl+x b and ctrl+x tab work.
 | `ghost` | A gentle ghost that drifts along your prompt line, softly spooky. |
 | `dragon` | A very small dragon with very large pride, guarding your code. |
 | `yellow-duck` | A listening duck: explain your bug out loud, get a quack back. |
+| `terry` | A lone-wolf systems programmer in a 640x480, 16-color world. Simplicity above all. |
 
 The choice is, in order: your last pick in the drawer's personality tab, then the
 `character` option, then `duck`. Your own characters sit beside these, and one with

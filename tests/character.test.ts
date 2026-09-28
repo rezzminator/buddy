@@ -86,8 +86,8 @@ describe('the shipped characters', () => {
   const dir = new URL('../plugins/buddy/characters/', import.meta.url);
   const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
 
-  test('the directory holds the seven shipped characters', () => {
-    expect(files).toEqual(['cat.json', 'dragon.json', 'duck.json', 'ghost.json', 'professor.json', 'robot.json', 'yellow-duck.json']);
+  test('the directory holds the eight shipped characters', () => {
+    expect(files).toEqual(['cat.json', 'dragon.json', 'duck.json', 'ghost.json', 'professor.json', 'robot.json', 'terry.json', 'yellow-duck.json']);
   });
 
   test.each(files)('%s validates', (f) => {

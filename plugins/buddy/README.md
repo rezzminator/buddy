@@ -1,6 +1,6 @@
 # buddy
 
-A tiny companion that walks on your Claude Code prompt line and talks back: Quack the duck by default, six more characters built in (`professor`, `cat`, `robot`, `ghost`, `dragon`, `yellow-duck`), or your own.
+A tiny companion that walks on your Claude Code prompt line and talks back: Quack the duck by default, seven more characters built in (`professor`, `cat`, `robot`, `ghost`, `dragon`, `yellow-duck`, `terry`), or your own.
 
 ```text
 /buddy                  open or fold the drawer: the buddy, its thread with you, its personalities
