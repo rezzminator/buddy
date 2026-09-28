@@ -1,6 +1,6 @@
 # The drawer
 
-`/buddy` alone opens the band above the prompt full width into the drawer; `/buddy` again, or ctrl+x x from the prompt (while no pane is open), folds it back into the buddy.
+`/buddy` alone opens the band above the prompt full width into the drawer; `/buddy` again, or ctrl+x q from the prompt, folds it back into the buddy.
 It has two tabs: talk, everything the buddy remembers, and personality, where the character is picked from a list instead of by id, a live preview of the lit one beside it.
 It is the one command: `/buddy {question}` asks, and every other surface of the plugin lives in the drawer.
 
@@ -34,7 +34,7 @@ The personality tab's list comes from a `Menu` that `buildMenu` makes as plain d
 
 ## The shortcuts: ctrl+x chords
 
-The drawer has nothing to press or step through. Every act is a ctrl+x chord pressed from the prompt, and their guide (`guide`) sits at the drawer's bottom-left, each chord spelled whole and bright: `ctrl+x tab` ask · `ctrl+x t` talk/personality · `ctrl+x u` use the idea · `ctrl+x n` next character · `ctrl+x b` previous character · `ctrl+x p` pet · `ctrl+x x` close (`DRAWER_KEYS` in `src/command.ts` says them in full in `/buddy help` and the reply to `/buddy`).
+The drawer has nothing to press or step through. Every act is a ctrl+x chord pressed from the prompt, and their guide (`guide`) sits at the drawer's bottom-left, each chord spelled whole and bright: `ctrl+x tab` ask · `ctrl+x t` talk/personality · `ctrl+x u` use the idea · `ctrl+x n` next character · `ctrl+x b` previous character · `ctrl+x p` pet · `ctrl+x q` close (`DRAWER_KEYS` in `src/command.ts` says them in full in `/buddy help` and the reply to `/buddy`).
 
 A plugin hears a chord only through a `Button` naming a Claude Code keybinding action that no engine handler holds at the prompt: the engine runs the Button's `onPress` when the action's chord is pressed.
 So each chord is a plain `Button` in the guide (`SHORTCUTS`), drawn as its dim label, its `action` borrowed:
@@ -47,9 +47,11 @@ So each chord is a plain `Button` in the guide (`SHORTCUTS`), drawn as its dim l
 | ctrl+x n | `key-next` | `diff:back` | your `keybindings.json` | the next character (`stepCharacter`, 1) |
 | ctrl+x b | `key-back` | `app:cycleDiffBase` | Claude Code's default | the previous character (`stepCharacter`, -1) |
 | ctrl+x p | `key-pet` | `permission:toggleDebug` | your `keybindings.json` | pets it |
-| ctrl+x x | `close` | `pane:close` | Claude Code's default | folds the drawer (`toggleDrawer`) |
+| ctrl+x q | `close` | `confirm:previousField` | your `keybindings.json` | folds the drawer (`toggleDrawer`) |
 
-The four the engine does not bind are a block for `keybindings.json`, context `Global`, that the README's Shortcuts gives; without it only ctrl+x b, ctrl+x x and ctrl+x tab work.
+The five the engine does not bind are a block for `keybindings.json`, context `Global`, that the README's Shortcuts gives; without it only ctrl+x b and ctrl+x tab work.
+
+Each action is one Claude Code handles only inside a panel or dialog: `pane:next` and `pane:previous` in a plugin's `Pane`, `diff:back` in the diff dialog, `app:cycleDiffBase` in the diff panel, `permission:toggleDebug` and `confirm:previousField` in a permission dialog. The engine presses a Button's action only with no dialog up and no engine handler of that action mounted, so while one of those is open its chord does Claude Code's thing, never the drawer's; and none is a chord Claude Code uses at the prompt, so the drawer takes nothing from it (`ctrl+x ctrl+k`, `ctrl+x ctrl+e`, `ctrl+x enter` and the rest are untouched).
 
 ## The talk tab: exactly what the buddy remembers
 
@@ -130,6 +132,7 @@ Every failure to look is a line where the missing rows would be, and every entry
 - **One command.** Rejected: `/buddy-personality` and `/buddy-drawer` beside `/buddy`. Three names for one companion; `/buddy` alone opens the drawer, with words it asks, and ctrl+x p in the drawer pets.
 - **The talk tab spans the memory, no more and no less.** Rejected: a feed capped at a count of entries and a text length. The drawer is where you check what the buddy knows, so it shows exactly the turns it reads, whole, and marks the one it never read.
 - **The personality list in the band, not a pane.** Rejected: a focused pane opened beside the band. One surface, one set of chords, and no pane that can open unplaced.
+- **Close is ctrl+x q, never ctrl+x x.** Rejected: `pane:close`, Claude Code's own ctrl+x x. It is the chord Claude Code closes things with, so with the drawer open it could fold the drawer where you meant to close something else.
 - **Every act a ctrl+x chord, no buttons.** Rejected: buttons in the drawer walked with the arrows and pressed with Enter. The arrows could not reach the drawer without ctrl+x tab first, and every act under one prefix is one thing to learn; a chord works from the prompt, the drawer never taking the focus. A chord reaches a plugin only as an engine keybinding action, so each borrows one no engine handler holds at the prompt, four of them bound in `keybindings.json`.
 - **A step switches at once.** Rejected: lighting an entry and confirming with a second key. With no focus to move there is no browse-then-pick, and the next step is the undo; an entry that cannot draw is lit, never picked, so stepping past it is safe.
 - **A switch remembers, and the tab stays open.** Rejected: a switch that lasts one session, and a tab that closes on a switch: the `*` moving is the confirmation.
@@ -152,4 +155,4 @@ Every failure to look is a line where the missing rows would be, and every entry
 
 - Unit: [`tests/menu.test.ts`](../../tests/menu.test.ts): the two groups, a failure to look as a line, the current entry marked, the preview's frames, card and errors. [`tests/feed.test.ts`](../../tests/feed.test.ts): whole texts, the window cut to the memory, the feed drawn back from it.
 - Hooks: "the drawer" checks it has no button but its shortcuts, each a ctrl+x chord on its engine action, their guide at the bottom-left before the ask box, and opens and folds it; it fits a 12-row band, the thread counting its older messages and the list windowed round the lit row; "the drawer's personality tab" steps with ctrl+x n and b, switching at once (saved, greeted, the tab open on it), lights a character that cannot be drawn without picking it, goes back to the thread with ctrl+x t, shows an original from an invented `~/.claude.json` or its newest backup, restores it at a restart, and turns every unreadable or invalid file into its line; "memory: whole messages, compactions, retries, and the drawer spanning it" checks the talk tab spans the memory, marks an interrupted turn, shows a compaction and is drawn back after a resume.
-- Live: `npm run live:drawer` opens the drawer with `/buddy` in a real session, captures it, opens the personality tab with ctrl+x t, reaches the ask box with ctrl+x tab and folds it with ctrl+x x; the live proof switches characters through the personality tab with ctrl+x n and b, and pets with ctrl+x p. Both run with the Shortcuts block in their own config dir's `keybindings.json` (`live_isolate`).
+- Live: `npm run live:drawer` opens the drawer with `/buddy` in a real session, captures it, opens the personality tab with ctrl+x t, reaches the ask box with ctrl+x tab and folds it with ctrl+x q; the live proof switches characters through the personality tab with ctrl+x n and b, and pets with ctrl+x p. Both run with the Shortcuts block in their own config dir's `keybindings.json` (`live_isolate`).

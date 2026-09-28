@@ -16,7 +16,7 @@
 #   (h) /buddy off hides the band; /buddy on brings it back
 #   (i) /buddy opens the drawer and its personality tab, the duck marked;
 #       ctrl+x n lights the next entry and switches to it, the preview following;
-#       ctrl+x b steps back; ctrl+x x folds it, the duck drawn; stepping onto
+#       ctrl+x b steps back; ctrl+x q folds it, the duck drawn; stepping onto
 #       cat draws the cat, the tab open with cat marked, and the reopened tab
 #       marks it; stepping back to the duck returns. The run's config dir holds
 #       no companion, so no row reads an original in "Yours": hook tests prove
@@ -104,8 +104,8 @@ tab_open() {
   sleep 2
   $T send-keys -t proof C-x t; sleep 3
 }
-# ctrl+x x from the prompt folds it.
-tab_close() { $T send-keys -t proof C-x x; sleep 2; }
+# ctrl+x q from the prompt folds it.
+tab_close() { $T send-keys -t proof C-x q; sleep 2; }
 # The lines drawn in inverse video, the lit entry among them, escapes stripped.
 lit() { $T capture-pane -e -p -t proof | grep -a -E $'\e\\[(1;)?7m' | sed $'s/\e\\[[0-9;]*m//g'; }
 # Steps from the marked entry to the one of id $1, ctrl+x n forward or ctrl+x b
@@ -217,8 +217,8 @@ if [ "$(marked)" = "$DEFAULT" ] && in_pane "$(about_of "$DEFAULT")"; then add "(
 else add "(i) ctrl+x b steps back to $DEFAULT" FAIL "pane in $RUN/i-back.txt"; fi
 tab_close
 pane > "$RUN/i-close.txt"
-if ! in_pane "ctrl+x b previous character" && shows_any "$RUN/default.rows"; then add "(i) ctrl+x x folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
-else add "(i) ctrl+x x folds it, $DEFAULT drawn" FAIL "pane in $RUN/i-close.txt"; fi
+if ! in_pane "ctrl+x b previous character" && shows_any "$RUN/default.rows"; then add "(i) ctrl+x q folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
+else add "(i) ctrl+x q folds it, $DEFAULT drawn" FAIL "pane in $RUN/i-close.txt"; fi
 tab_open
 if step_to "$PICK" && in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi
 pane > "$RUN/i-pick.txt"

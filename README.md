@@ -125,7 +125,7 @@ the variable is set.
 
 | Command | What it does |
 | --- | --- |
-| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, status, its pets as `♥ N`, counts), sized to the rows the band has, a talk tab and a personality tab; its bottom row holds the tabs and the [shortcuts](#shortcuts) at the left and a box to ask it at the right. The talk tab is everything the buddy remembers, its newest messages that fit, the older ones counted above them: your last `chatTurnsToRead` turns with Claude, each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each next-prompt idea marked at its right `✓ you sent it` or `not sent`, and the newest open one `ctrl+x u uses it`. The drawer has no buttons: every act is a ctrl+x chord. ctrl+x x closes it from the prompt (while no pane is open), and so does `/buddy` again. |
+| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, status, its pets as `♥ N`, counts), sized to the rows the band has, a talk tab and a personality tab; its bottom row holds the tabs and the [shortcuts](#shortcuts) at the left and a box to ask it at the right. The talk tab is everything the buddy remembers, its newest messages that fit, the older ones counted above them: your last `chatTurnsToRead` turns with Claude, each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each next-prompt idea marked at its right `✓ you sent it` or `not sent`, and the newest open one `ctrl+x u uses it`. The drawer has no buttons: every act is a ctrl+x chord. ctrl+x q closes it from the prompt (while no pane is open), and so does `/buddy` again. |
 | `/buddy {question}` | Ask it: it thinks, then answers in one line, in character; asked for a prompt ("put it in a prompt for me"), it also puts one in your prompt box. While hidden it replies `{name} is hidden; /buddy on first`. |
 | `/buddy off` / `/buddy on` | Hide or show it, remembered across restarts and shared with your other sessions. |
 | `/buddy reload` | Rescan the characters, after you edit one. |
@@ -136,7 +136,7 @@ the variable is set.
 ### Shortcuts
 
 The drawer's bottom-left, beside the ask box, is its guide, each chord spelled whole and bright:
-`ctrl+x tab` ask · `ctrl+x t` talk/personality · `ctrl+x u` use the idea · `ctrl+x n` next character · `ctrl+x b` previous character · `ctrl+x p` pet · `ctrl+x x` close.
+`ctrl+x tab` ask · `ctrl+x t` talk/personality · `ctrl+x u` use the idea · `ctrl+x n` next character · `ctrl+x b` previous character · `ctrl+x p` pet · `ctrl+x q` close.
 
 | Chord | Does |
 | --- | --- |
@@ -145,20 +145,23 @@ The drawer's bottom-left, beside the ask box, is its guide, each chord spelled w
 | ctrl+x u | puts the newest open idea in your prompt box |
 | ctrl+x n / ctrl+x b | switches to the next or previous character in the personality tab |
 | ctrl+x p | pets the buddy |
-| ctrl+x x | closes the drawer |
+| ctrl+x q | closes the drawer |
 
 A plugin hears a chord only through a Claude Code keybinding action that
-nothing else holds at the prompt, so buddy borrows six: ctrl+x b
-(`app:cycleDiffBase`) and ctrl+x x (`pane:close`) are Claude Code's own
-defaults, and ctrl+x tab is its own step-in. The other four need these lines
+nothing else holds at the prompt, so buddy borrows six that Claude Code
+handles only inside a panel or dialog: ctrl+x b (`app:cycleDiffBase`, the diff
+panel's) is Claude Code's own default, and ctrl+x tab is its own step-in. It
+never takes a chord Claude Code uses at the prompt: while one of those panels
+or dialogs is open, Claude Code's handler wins, and the drawer's chords are
+off while it is folded. The other five need these lines
 in your `~/.claude/keybindings.json` (or `$CLAUDE_CONFIG_DIR/keybindings.json`
 when that is set); merge them into the file if you have one:
 
 ```json
-{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x n":"diff:back","ctrl+x p":"permission:toggleDebug"}}]}
+{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x n":"diff:back","ctrl+x p":"permission:toggleDebug","ctrl+x q":"confirm:previousField"}}]}
 ```
 
-Without them only ctrl+x b, ctrl+x x and ctrl+x tab work.
+Without them only ctrl+x b and ctrl+x tab work.
 
 ## 🎭 Characters
 
@@ -457,7 +460,7 @@ npm run validate:plugin
 claude setup-token    # once, for the live scripts: save the token to ~/.config/buddy/live-token (chmod 600)
 npm run live          # live proof in tmux, spends a few cents of Haiku
 npm run live:configs  # five sessions, one per configuration, every turn measured; report in /tmp/buddy/configs-*/
-npm run live:drawer   # one session: two turns, a question, then /buddy opens the drawer, kept and closed with ctrl+x x; screen in /tmp/buddy/drawer-*/
+npm run live:drawer   # one session: two turns, a question, then /buddy opens the drawer, kept and closed with ctrl+x q; screen in /tmp/buddy/drawer-*/
 ```
 
 Work lands on `develop`; `main` holds only releases, and each one is tagged

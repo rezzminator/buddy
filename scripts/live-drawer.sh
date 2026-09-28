@@ -6,7 +6,7 @@
 # colors and all ($RUN/drawer.ansi, the screen with its escape codes, and
 # drawer.txt), checks its talk tab spans the memory and its personality tab
 # lists the characters, each reached by its ctrl+x chord, and folds it back
-# with ctrl+x x from the prompt.
+# with ctrl+x q from the prompt.
 # Each check prints PASS or FAIL; the exit code counts the FAILs.
 # Usage: scripts/live-drawer.sh [columns] [rows]  (default 200 x 60)
 set -uo pipefail
@@ -73,9 +73,9 @@ check "ctrl+x t again goes back to the thread" "pane | grep -q -F 'what do you m
 $T send-keys -t drawer C-x Tab; sleep 1
 check "ctrl+x tab reaches the ask box" "pane | grep -q -F '⏎ ask'"
 $T send-keys -t drawer Escape; sleep 1
-# ctrl+x x from the prompt folds it back (pane:close, while no pane is open).
-$T send-keys -t drawer C-x x
+# ctrl+x q from the prompt folds it back (confirm:previousField).
+$T send-keys -t drawer C-x q
 sleep 3
-check "ctrl+x x from the prompt folded it back" "! pane | grep -q -F 'ctrl+x b previous character'"
+check "ctrl+x q from the prompt folded it back" "! pane | grep -q -F 'ctrl+x b previous character'"
 echo "screen: $RUN/drawer.txt (and .ansi with colors)"
 exit "$FAILS"

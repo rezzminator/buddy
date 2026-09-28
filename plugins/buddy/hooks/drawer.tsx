@@ -79,8 +79,10 @@ const DRAWER_MARK = 16;
  * The drawer's shortcuts, each a ctrl+x chord. A plugin hears a chord only
  * through an engine keybinding action no engine handler holds at the prompt:
  * each is drawn as a plain Button naming its action, which the chord presses
- * while the drawer is open. ctrl+x b and ctrl+x x are the engine's own
- * defaults; the others are bound in keybindings.json (README: Shortcuts).
+ * while the drawer is open. Each action is one the engine handles only inside
+ * a panel or dialog, so none is a chord it uses at the prompt, and with that
+ * panel or dialog open the engine's handler wins. ctrl+x b is the engine's own
+ * default; the others are bound in keybindings.json (README: Shortcuts).
  */
 export const SHORTCUTS = [
   { key: 'key-tab', chord: 'ctrl+x t', does: 'talk/personality', action: 'pane:next' },
@@ -88,7 +90,7 @@ export const SHORTCUTS = [
   { key: 'key-next', chord: 'ctrl+x n', does: 'next character', action: 'diff:back' },
   { key: 'key-back', chord: 'ctrl+x b', does: 'previous character', action: 'app:cycleDiffBase' },
   { key: 'key-pet', chord: 'ctrl+x p', does: 'pet', action: 'permission:toggleDebug' },
-  { key: 'close', chord: 'ctrl+x x', does: 'close', action: 'pane:close' },
+  { key: 'close', chord: 'ctrl+x q', does: 'close', action: 'confirm:previousField' },
 ] as const;
 export type Shortcut = (typeof SHORTCUTS)[number]['key'];
 

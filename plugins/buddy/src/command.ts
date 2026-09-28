@@ -15,7 +15,7 @@ export type Action =
   | { kind: 'question'; text: string };
 
 /** The drawer's shortcuts, as its guide and /buddy help say them (hooks/drawer.tsx SHORTCUTS). */
-export const DRAWER_KEYS = 'ctrl+x tab ask · ctrl+x t talk/personality · ctrl+x u use the idea · ctrl+x n/b next/previous character · ctrl+x p pet · ctrl+x x close';
+export const DRAWER_KEYS = 'ctrl+x tab ask · ctrl+x t talk/personality · ctrl+x u use the idea · ctrl+x n/b next/previous character · ctrl+x p pet · ctrl+x q close';
 
 export const USAGE = [
   '/buddy               open or fold the drawer: your buddy, your thread with it, its personalities',

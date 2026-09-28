@@ -1,6 +1,6 @@
 import type { On } from 'claude-code';
 import { describe, expect, mock, test } from 'claude-code/testing';
-import { guideRows } from '../hooks/drawer.tsx';
+import { SHORTCUTS, guideRows } from '../hooks/drawer.tsx';
 import { roll } from '../src/hatch.ts';
 import { CHARACTER_RULE, memoryRule } from '../src/prompts.ts';
 
@@ -1932,7 +1932,7 @@ describe('the round-3 audit fixes', () => {
 });
 
 describe('the drawer', () => {
-  test('the drawer has no button but its shortcuts: each a ctrl+x chord on an engine action, their guide one ctrl+x at the bottom-left, the ask box at the bottom-right', async ($, on) => {
+  test('the drawer has no button but its shortcuts: each a whole ctrl+x chord on an action Claude Code handles only in a panel or dialog, their guide at the bottom-left, the ask box at the bottom-right', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($, { bodyColumns: 140, maxRows: 40 });
@@ -1945,8 +1945,15 @@ describe('the drawer', () => {
       ['key-next', 'next character', 'diff:back'],
       ['key-back', 'previous character', 'app:cycleDiffBase'],
       ['key-pet', 'pet', 'permission:toggleDebug'],
-      ['close', 'close', 'pane:close'],
+      ['close', 'close', 'confirm:previousField'],
     ]);
+    // Borrowed, never taken: each action one Claude Code handles only in a panel or dialog, each chord none it binds at the prompt.
+    const panelOnly = ['pane:next', 'pane:previous', 'diff:back', 'app:cycleDiffBase', 'permission:toggleDebug', 'confirm:previousField'];
+    const itsCtrlX = ['ctrl+x ctrl+k', 'ctrl+x enter', 'ctrl+x ctrl+s', 'ctrl+x ctrl+e', 'ctrl+x ctrl+b', 'ctrl+x ctrl+a', 'ctrl+x tab', 'ctrl+x x', 'ctrl+x left', 'ctrl+x up', 'ctrl+x right', 'ctrl+x down'];
+    for (const k of SHORTCUTS) {
+      expect(panelOnly).toContain(k.action);
+      expect(itsCtrlX).not.toContain(k.chord);
+    }
     // The bar under the body: the tabs and the guide at its left, the ask box last, at its right.
     const drawn = JSON.stringify(await ui.drawn());
     expect(drawn.indexOf('"bar"')).toBeGreaterThan(drawn.indexOf('"body"'));
@@ -1985,7 +1992,7 @@ describe('the drawer', () => {
     expect(w.completes.at(-1)!.prompt).toContain('off');
     expect(await shows(ui, /^off$/)).toBe(true);
     expect(await shows(ui, /^Because it passed\.$/)).toBe(true);
-    // ctrl+x x folds it back, as the command again does.
+    // ctrl+x q folds it back, as the command again does.
     await ui.press({ key: 'close' });
     await w.clock.settle();
     expect(await shows(ui, /^F I X Y$/)).toBe(false);

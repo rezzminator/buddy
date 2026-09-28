@@ -25,6 +25,6 @@ describe('parseCommand', () => {
   test('the usage names every command, one /buddy, and the drawer', () => {
     expect(USAGE).not.toMatch(/\/buddy (list|use)\b/);
     expect(USAGE).not.toMatch(/\/buddy-/);
-    for (const word of ['off', 'on', 'reload', 'help', '{question}', 'drawer', 'ctrl+x x']) expect(USAGE).toContain(word);
+    for (const word of ['off', 'on', 'reload', 'help', '{question}', 'drawer', 'ctrl+x q']) expect(USAGE).toContain(word);
   });
 });
