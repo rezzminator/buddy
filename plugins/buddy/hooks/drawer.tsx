@@ -244,7 +244,7 @@ function personality(E: Elements, v: DrawerView, height: number) {
   );
 }
 
-/** The drawer's bottom-left: every shortcut after one ctrl+x, each pressed by its chord. */
+/** The drawer's bottom-left: every shortcut, its whole chord bright and what it does dim, each pressed by its chord. */
 function guide(E: Elements, v: DrawerView, act: DrawerActs) {
   const { Box, Text, Button } = E;
   const idea = openIdea(v.feed);
@@ -259,16 +259,40 @@ function guide(E: Elements, v: DrawerView, act: DrawerActs) {
     close: act.close,
   };
   return (
-    <Box key="guide" flexDirection="row" flexWrap="wrap">
-      <Text dimColor>{E.Input ? 'ctrl+x  tab ask · ' : 'ctrl+x  '}</Text>
-      {SHORTCUTS.map((k, n) => (
+    <Box key="guide" flexDirection="row" flexWrap="wrap" columnGap={GUIDE_GAP}>
+      {E.Input ? (
+        <Text key="g-ask">
+          <Text bold color={v.color}>ctrl+x tab</Text>
+          <Text dimColor> ask</Text>
+        </Text>
+      ) : null}
+      {SHORTCUTS.map((k) => (
         <Box key={`g${k.key}`} flexDirection="row">
-          <Button key={k.key} label={`${k.chord.slice('ctrl+x '.length)} ${k.does}`} plain dimColor action={k.action} onPress={does[k.key]} />
-          <Text dimColor>{n < SHORTCUTS.length - 1 ? ' · ' : ''}</Text>
+          <Text bold color={v.color}>{`${k.chord} `}</Text>
+          <Button key={k.key} label={k.does} plain dimColor action={k.action} onPress={does[k.key]} />
         </Box>
       ))}
     </Box>
   );
+}
+
+/** The gap between the guide's shortcuts. */
+const GUIDE_GAP = 3;
+
+/** How many rows the guide wraps to in `width` cells: its shortcuts packed whole, a row at a time. */
+export function guideRows(width: number, withAsk: boolean): number {
+  const items = [...(withAsk ? ['ctrl+x tab ask'] : []), ...SHORTCUTS.map((k) => `${k.chord} ${k.does}`)];
+  let rows = 1;
+  let used = 0;
+  for (const item of items) {
+    const need = used === 0 ? item.length : used + GUIDE_GAP + item.length;
+    if (need <= width || used === 0) used = need;
+    else {
+      rows++;
+      used = item.length;
+    }
+  }
+  return rows;
 }
 
 /** The rows [from, to) of `count` a window of `size` shows with row `at` in it. */
@@ -288,24 +312,22 @@ export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
   const centerW = Math.max(24, innerW - DRAWER_LEFT - 1 - 4);
   const frame = { borderStyle: 'single', borderColor: 'gray', borderDimColor: true };
   const talking = v.tab === 'talk';
-  // The drawer fits the band's rows: the frame's border and the body's (4), the bar under them (the ask box's 3, else the tabs and guide's 2); the body takes the rest, never less than the card.
-  const cardRows = v.sprite.length + 5;
-  const bodyRows = Math.max(cardRows, v.rows - 4 - (Input ? 3 : 2));
+  // The drawer fits the band's rows: the frame's border and the body's (4), the bar under them (the tabs over the guide, beside the ask box's 3); the body takes the rest, the card's sprite left out when it would not fit.
+  const askW = Math.min(64, Math.max(30, Math.floor(innerW * 0.4)));
+  const barRows = Math.max(Input ? 3 : 0, 1 + guideRows(innerW - (Input ? askW + 2 : 0), Boolean(Input)));
+  const bodyRows = Math.max(2, v.rows - 4 - barRows);
+  const withSprite = v.sprite.length + 2 <= bodyRows;
   const left = (
     <Box key="left" flexDirection="column" width={DRAWER_LEFT} flexShrink={0} alignItems="center" {...frame}>
-      {Sprite(E, v)}
+      {withSprite ? Sprite(E, v) : null}
       <Text bold color={v.color}>{v.name.toUpperCase().split('').join(' ')}</Text>
       <Text>
         <Text color={s.color}>{s.glyph}</Text>
         <Text dimColor>{` ${s.text}  `}</Text>
         <Text color="red">{`♥ ${v.pets}`}</Text>
       </Text>
-      <Text dimColor>{`${st.comments + st.answers} replies`}</Text>
-      <Text dimColor>{`${st.taken} of ${st.suggestions} ideas used`}</Text>
-      <Text dimColor>{st.avgMs === null ? v.engine : `${seconds(st.avgMs)} · ${short(st.tokens)} tokens`}</Text>
     </Box>
   );
-  const askW = Math.min(64, Math.max(30, Math.floor(innerW * 0.4)));
   return (
     <Box key="frame" flexDirection="column" width={W} borderStyle="round" borderColor={v.color} paddingX={1}>
       <Box flexDirection="row" gap={1}>
@@ -317,7 +339,7 @@ export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
           <Box key="tabs" flexDirection="row" gap={2}>
             <Text key="tab-talk" bold={talking} inverse={talking} dimColor={!talking}>{' talk '}</Text>
             <Text key="tab-personality" bold={!talking} inverse={!talking} dimColor={talking}>{' personality '}</Text>
-            <Text dimColor wrap="truncate-end">{talking ? `everything ${v.name} remembers: your last ${v.turnsRemembered} turns with Claude` : `who sits above your prompt`}</Text>
+            <Text dimColor wrap="truncate-end">{`${talking ? `${v.name} remembers your last ${v.turnsRemembered} turns with Claude` : 'who sits above your prompt'} · ${st.comments + st.answers} replies · ${st.taken} of ${st.suggestions} ideas used · ${st.avgMs === null ? v.engine : `${seconds(st.avgMs)} · ${short(st.tokens)} tokens`}`}</Text>
           </Box>
           {guide(E, v, act)}
         </Box>

@@ -34,7 +34,7 @@ The personality tab's list comes from a `Menu` that `buildMenu` makes as plain d
 
 ## The shortcuts: ctrl+x chords
 
-The drawer has nothing to press or step through. Every act is a ctrl+x chord pressed from the prompt, and their guide (`guide`) sits at the drawer's bottom-left, one ctrl+x for all: `ctrl+x  tab ask · t talk/personality · u use the idea · n next character · b previous character · p pet · x close` (`DRAWER_KEYS` in `src/command.ts` says them in full in `/buddy help` and the reply to `/buddy`).
+The drawer has nothing to press or step through. Every act is a ctrl+x chord pressed from the prompt, and their guide (`guide`) sits at the drawer's bottom-left, each chord spelled whole and bright: `ctrl+x tab` ask · `ctrl+x t` talk/personality · `ctrl+x u` use the idea · `ctrl+x n` next character · `ctrl+x b` previous character · `ctrl+x p` pet · `ctrl+x x` close (`DRAWER_KEYS` in `src/command.ts` says them in full in `/buddy help` and the reply to `/buddy`).
 
 A plugin hears a chord only through a `Button` naming a Claude Code keybinding action that no engine handler holds at the prompt: the engine runs the Button's `onPress` when the action's chord is pressed.
 So each chord is a plain `Button` in the guide (`SHORTCUTS`), drawn as its dim label, its `action` borrowed:

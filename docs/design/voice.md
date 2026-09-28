@@ -6,6 +6,7 @@ Everything else it says is a canned line ([Characters](./characters.md)), and ev
 ## Questions
 
 `/buddy` followed by anything that is not a command is a question.
+Asked for a prompt ("put it in a prompt for me"), the answer adds a line `SUGGEST_NEXT_PROMPT: {prompt}` (`ASKED_PROMPT_RULE`); `parseAskReply` takes it off the answer, and `putAskedPrompt` puts it in the prompt box and in the drawer as the idea ctrl+x u uses. A turn running then leaves it in the drawer alone; one past `ASKED_PROMPT_MAX_CHARS` (600) is said in the bubble and the drawer, never put.
 A command word counts only when it stands alone, so `/buddy reload the page` is a question, not `/buddy reload` (`parseCommand`).
 `/buddy list` alone, or `/buddy use` with one word after it, is no question either: switching moved to the drawer's personality tab, and the reply is `Switching characters moved to the drawer's personality tab: /buddy opens it.`, with no model call. `/buddy` alone opens the drawer, no question either.
 

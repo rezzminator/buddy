@@ -1,11 +1,19 @@
 import { describe, expect, test } from 'vitest';
 import {
-  CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, lostThread, memoryRule, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
+  ASKED_PROMPT_MAX_CHARS, ASKED_PROMPT_RULE, CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, lostThread, memoryRule, oneLine, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
+  test('a question asking for a prompt: the answer its untagged line, the prompt its SUGGEST_NEXT_PROMPT line, one too long said so', () => {
+    expect(parseAskReply('Quote the turn verbatim.\nSUGGEST_NEXT_PROMPT: "design the ledger extractive"')).toEqual({ answer: 'Quote the turn verbatim.', prompt: 'design the ledger extractive', tooLong: false });
+    expect(parseAskReply('SUGGEST_NEXT_PROMPT: run it\nFine.')).toEqual({ answer: 'Fine.', prompt: 'run it', tooLong: false });
+    expect(parseAskReply('Just an answer.')).toEqual({ answer: 'Just an answer.', prompt: null, tooLong: false });
+    expect(parseAskReply('Nope.\nSUGGEST_NEXT_PROMPT: NONE')).toEqual({ answer: 'Nope.', prompt: null, tooLong: false });
+    const long = 'x '.repeat(ASKED_PROMPT_MAX_CHARS).trim();
+    expect(parseAskReply(`Here.\nSUGGEST_NEXT_PROMPT: ${long}`)).toEqual({ answer: 'Here.', prompt: null, tooLong: true });
+  });
   test('the completion system and prompt', () => {
-    expect(oneLineSystem('You are X.', 4)).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${memoryRule(4)}\n\n${ONE_LINE_RULE}`);
+    expect(oneLineSystem('You are X.', 4)).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${memoryRule(4)}\n\n${ONE_LINE_RULE} ${ASKED_PROMPT_RULE}`);
     expect(questionPrompt('hi')).toBe('The user asks you directly: hi');
   });
   test('the turn prompt counts tools and caps the command', () => {

@@ -61,7 +61,7 @@ send "/buddy"
 sleep 4
 $T capture-pane -e -p -t drawer > "$RUN/drawer.ansi"
 $T capture-pane -p -t drawer > "$RUN/drawer.txt"
-check "/buddy drew the drawer above the prompt, its shortcuts' guide" "grep -q -F 'ctrl+x  tab ask' '$RUN/drawer.txt' && grep -q -F 'what do you make of this project' '$RUN/drawer.txt'"
+check "/buddy drew the drawer above the prompt, its shortcuts' guide" "grep -q -F 'ctrl+x b previous character' '$RUN/drawer.txt' && grep -q -F 'what do you make of this project' '$RUN/drawer.txt'"
 check "the talk tab names the memory and holds both turns" "grep -q -F 'remembers: your last 4 turns with Claude' '$RUN/drawer.txt' && grep -q -F 'you → Claude: Run this Bash command' '$RUN/drawer.txt' && grep -q -F 'you → Claude: Now run: npm test' '$RUN/drawer.txt'"
 # Every act is a ctrl+x chord pressed from the prompt: ctrl+x t opens the personality tab, and again goes back to talk.
 $T send-keys -t drawer C-x t; sleep 3
@@ -76,6 +76,6 @@ $T send-keys -t drawer Escape; sleep 1
 # ctrl+x x from the prompt folds it back (pane:close, while no pane is open).
 $T send-keys -t drawer C-x x
 sleep 3
-check "ctrl+x x from the prompt folded it back" "! pane | grep -q -F 'ctrl+x  tab ask'"
+check "ctrl+x x from the prompt folded it back" "! pane | grep -q -F 'ctrl+x b previous character'"
 echo "screen: $RUN/drawer.txt (and .ansi with colors)"
 exit "$FAILS"

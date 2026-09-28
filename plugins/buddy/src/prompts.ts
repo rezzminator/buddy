@@ -5,6 +5,10 @@
 import type { Action } from './did.ts';
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
+/** A question asking for a prompt gets one, on a line of its own the plugin puts in the prompt box. */
+export const ASKED_PROMPT_RULE =
+  'When the user asks you to write, suggest or put a prompt in their prompt box, add a second line: ' +
+  'SUGGEST_NEXT_PROMPT: that prompt, in the user\'s own words as they would type it to the assistant. Never write that line otherwise.';
 /** A question's output cap. The model's thinking counts against it, so it is far above the one line the rules ask for: a cap that cut the thinking would cut the answer, or leave none. */
 export const QUESTION_MAX_TOKENS = 2048;
 /** The end-of-turn call's output cap, a COMMENT_AFTER_EACH_TURN and a SUGGEST_NEXT_PROMPT, as high as a question's for the same reason. */
@@ -59,9 +63,9 @@ export const CHARACTER_RULE =
   'The character decides HOW it is said, never WHAT is true. ' +
   'Never repeat what the chat already said.';
 
-/** The system prompt of a /buddy question's completion: persona, the character rule, the memory rule for `turns` remembered, and the one-line rule. */
+/** The system prompt of a /buddy question's completion: persona, the character rule, the memory rule for `turns` remembered, the one-line rule and the asked-prompt rule. */
 export function oneLineSystem(persona: string, turns: number): string {
-  return `${persona}\n\n${CHARACTER_RULE}\n\n${memoryRule(turns)}\n\n${ONE_LINE_RULE}`;
+  return `${persona}\n\n${CHARACTER_RULE}\n\n${memoryRule(turns)}\n\n${ONE_LINE_RULE} ${ASKED_PROMPT_RULE}`;
 }
 
 /** A completion's question, after what the buddy remembers (its chatTurnsToRead, rendered), when it remembers anything. */
@@ -233,6 +237,22 @@ export function parseTurnReply(reply: string): { commentAfterEachTurn: string | 
   };
 }
 
+/** The longest prompt a question's answer puts in the prompt box: asked for, it may be longer than a guessed one. */
+export const ASKED_PROMPT_MAX_CHARS = 600;
+
+/** A question's reply as its answer and the prompt it was asked for: the untagged text the answer, one line; a SUGGEST_NEXT_PROMPT line the prompt, null when there is none and `tooLong` when it passed ASKED_PROMPT_MAX_CHARS. */
+export function parseAskReply(reply: string): { answer: string; prompt: string | null; tooLong: boolean } {
+  const rest: string[] = [];
+  let tagged: string | undefined;
+  for (const raw of reply.split('\n')) {
+    const m = TAGGED.exec(raw);
+    if (m && m[1]!.toLowerCase() === 'suggest_next_prompt') tagged ??= m[2]!;
+    else rest.push(raw);
+  }
+  const prompt = tagged === undefined ? null : suggestNextPromptText(tagged, ASKED_PROMPT_MAX_CHARS);
+  return { answer: oneLine(rest.join('\n')), prompt, tooLong: tagged !== undefined && prompt === null && suggestNextPromptText(tagged, Infinity) !== null };
+}
+
 /** A reply as one bubble line: the first non-empty line, unquoted, whole: what the buddy says is never cut. */
 export function oneLine(reply: string): string {
   const line = reply.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
@@ -242,11 +262,11 @@ export function oneLine(reply: string): string {
 /** The longest suggestNextPrompt kept: past it, the reply is not a prompt someone would type. */
 export const SUGGEST_NEXT_PROMPT_MAX_CHARS = 160;
 
-/** A suggestNextPrompt reply as the prompt it proposes: its first non-empty line, unquoted, one-spaced; null for none, NONE, or past the cap. */
-export function suggestNextPromptText(reply: string): string | null {
+/** A suggestNextPrompt reply as the prompt it proposes: its first non-empty line, unquoted, one-spaced; null for none, NONE, or past `max`. */
+export function suggestNextPromptText(reply: string, max = SUGGEST_NEXT_PROMPT_MAX_CHARS): string | null {
   const line = reply.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
   const text = line.replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' ').trim();
-  if (text === '' || /^none[.!]*$/i.test(text) || text.length > SUGGEST_NEXT_PROMPT_MAX_CHARS) return null;
+  if (text === '' || /^none[.!]*$/i.test(text) || text.length > max) return null;
   return text;
 }
 

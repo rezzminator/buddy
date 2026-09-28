@@ -22,7 +22,7 @@ import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
+  ASKED_PROMPT_MAX_CHARS, NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
@@ -1565,6 +1565,8 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
   let cleared = false;
   let said = '';
   let reason = '';
+  // The prompt the question asked for, put in the prompt box after the answer.
+  let asked: { prompt: string | null; tooLong: boolean } = { prompt: null, tooLong: false };
   // What the calls sent so far cost, the first's kept whatever the retry does: a timeout or a throw still logs it.
   let paid: unknown;
   // The answer belongs to the one asked: a character switched in meanwhile never says it.
@@ -1599,7 +1601,10 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
     );
     late = r === 'timeout';
     lg($, 'debug', 'ask.result', shape(r));
-    const text = r !== 'timeout' && r.isAnswered ? oneLine(r.text) : '';
+    const reply = r !== 'timeout' && r.isAnswered ? parseAskReply(r.text) : null;
+    if (reply) asked = { prompt: reply.prompt, tooLong: reply.tooLong };
+    // A reply that is the prompt alone still answers.
+    const text = reply ? reply.answer || (reply.prompt ? 'In your prompt box.' : '') : '';
     if (conversation !== st.conversation) {
       // Asked about a conversation /clear or a resume ended: never shown as an answer about this one, never remembered in it.
       cleared = true;
@@ -1645,9 +1650,34 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
   const tokens = tokensOf(usage);
   if (said && shown) feedAdd(st, $, { at: Date.now(), kind: 'answer', text: said, ...voice(c), ms: Date.now() - started, ...(tokens ? { tokens } : {}) });
   else if (reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: reason, ...voice(c), ms: Date.now() - started });
+  if (said && shown) await putAskedPrompt(st, $, c, asked);
   // One exchange: the question with its answer as shown, or the question alone.
   rememberExchange(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question }, after);
   refresh(st, $);
+}
+
+/** The prompt a /buddy question asked for, into the prompt box and the drawer as an idea ctrl+x u uses; one too long to take is said, never dropped quietly. Never throws. */
+async function putAskedPrompt(st: State, $: EngineInterface, c: Character, asked: { prompt: string | null; tooLong: boolean }): Promise<void> {
+  try {
+    if (asked.tooLong) {
+      say($, `${c.name}'s prompt was longer than ${ASKED_PROMPT_MAX_CHARS} characters, so it was not put in your prompt box`);
+      feedAdd(st, $, { at: Date.now(), kind: 'failed', text: `its prompt passed ${ASKED_PROMPT_MAX_CHARS} characters`, ...voice(c) });
+      lg($, 'info', 'ask.prompt.outcome', { outcome: 'too-long' });
+      return;
+    }
+    if (asked.prompt === null) return;
+    feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: asked.prompt, ...voice(c) });
+    // A turn running now owns the prompt box: the idea waits in the drawer for ctrl+x u.
+    if (st.mainTurn !== undefined) {
+      lg($, 'info', 'ask.prompt.outcome', { outcome: 'turn-running', length: asked.prompt.length });
+      return;
+    }
+    const { isShown } = await $.prompt.suggest({ text: asked.prompt });
+    roundEvent(st, $, eventLine(Date.now(), `OUT · prompt-box suggestion (asked of the buddy)${isShown ? '' : ' (not shown)'}: ${JSON.stringify(asked.prompt)}`));
+    lg($, 'info', 'ask.prompt.outcome', { outcome: isShown ? 'shown' : 'not-shown', length: asked.prompt.length });
+  } catch (error) {
+    log($, "putting a /buddy answer's prompt in the prompt box", error);
+  }
 }
 
 /** /buddy with `args`; `asQuestion` (the drawer's ask box) takes them as a question whatever they say, `off` or `help` too. */

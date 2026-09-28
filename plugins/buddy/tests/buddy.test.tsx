@@ -1,5 +1,6 @@
 import type { On } from 'claude-code';
 import { describe, expect, mock, test } from 'claude-code/testing';
+import { guideRows } from '../hooks/drawer.tsx';
 import { roll } from '../src/hatch.ts';
 import { CHARACTER_RULE, memoryRule } from '../src/prompts.ts';
 
@@ -469,6 +470,20 @@ describe('/buddy', () => {
     expect((await $.command.run(run('use cat'))).text).toBe("Switching characters moved to the drawer's personality tab: /buddy opens it.");
     await w.clock.settle();
     expect(w.completes).toEqual([]);
+  });
+
+  test('a question asking for a prompt: the answer in the bubble, the prompt in the prompt box and the drawer as the idea ctrl+x u uses', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'Quote every evicted turn verbatim.\nSUGGEST_NEXT_PROMPT: design the memory ledger extractive, quotes checked as substrings' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('how should your memory work? put it in a prompt for me'));
+    await w.clock.settle();
+    expect(await shows(ui, /^Quote every evicted turn verbatim\.$/)).toBe(true);
+    expect(w.suggested).toEqual(['design the memory ledger extractive, quotes checked as substrings']);
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(await shows(ui, /^ctrl\+x u uses it$/)).toBe(true);
+    await ui.unmount();
   });
 
   test('a failed completion says so in the bubble with its reason and status', async ($, on) => {
@@ -1925,19 +1940,20 @@ describe('the drawer', () => {
     await w.clock.settle();
     const buttons = (await ui.findAll({ type: 'Button' })) as { key: string; props: { label: string; action?: string } }[];
     expect(buttons.map((b) => [b.key, b.props.label, b.props.action])).toEqual([
-      ['key-tab', 't talk/personality', 'pane:next'],
-      ['key-use', 'u use the idea', 'pane:previous'],
-      ['key-next', 'n next character', 'diff:back'],
-      ['key-back', 'b previous character', 'app:cycleDiffBase'],
-      ['key-pet', 'p pet', 'permission:toggleDebug'],
-      ['close', 'x close', 'pane:close'],
+      ['key-tab', 'talk/personality', 'pane:next'],
+      ['key-use', 'use the idea', 'pane:previous'],
+      ['key-next', 'next character', 'diff:back'],
+      ['key-back', 'previous character', 'app:cycleDiffBase'],
+      ['key-pet', 'pet', 'permission:toggleDebug'],
+      ['close', 'close', 'pane:close'],
     ]);
     // The bar under the body: the tabs and the guide at its left, the ask box last, at its right.
     const drawn = JSON.stringify(await ui.drawn());
     expect(drawn.indexOf('"bar"')).toBeGreaterThan(drawn.indexOf('"body"'));
     expect(drawn.indexOf('"guide"')).toBeGreaterThan(drawn.indexOf('"bar"'));
     expect(drawn.indexOf('ask-input')).toBeGreaterThan(drawn.lastIndexOf('"close"'));
-    expect((await ui.find({ key: 'guide' }))?.text).toMatch(/^ctrl\+x {2}tab ask · t talk\/personality · u use the idea/);
+    // Each shortcut its whole chord: none leans on a ctrl+x said once.
+    expect((await ui.find({ key: 'guide' }))?.text).toMatch(/^ctrl\+x tab ask\s*ctrl\+x t talk\/personality\s*ctrl\+x u use the idea\s*ctrl\+x n next character/);
     expect(await shows(ui, /←|↑↓|Enter presses/)).toBe(false);
     await ui.unmount();
   });
@@ -1993,6 +2009,8 @@ describe('the drawer', () => {
     expect(drawn).toContain('do lima');
     expect(drawn).not.toContain('do alpha');
     expect(await shows(ui, /^↑ \d+ older messages$/)).toBe(true);
+    // The guide wraps its shortcuts whole: one row wide, three narrow; the body gives up what it takes.
+    expect([guideRows(160, true), guideRows(130, true), guideRows(60, true)]).toEqual([1, 2, 3]);
     await personality($, w, ui);
     // The list is taller than the body: a window round the lit row, the rest counted.
     expect(JSON.stringify((await ui.find({ key: 'use:fixy' }))?.children ?? null)).toContain('"inverse":true');
