@@ -34,15 +34,18 @@ Useful when judging impact:
 - It makes model calls only through Claude Code itself: a `/buddy` question,
   and one short call at the end of each answered turn for `commentAfterEachTurn`
   and `suggestNextPrompt`, on `model` (default `opus`) at `effort`
-  (default `low`) and sent its `rememberedExchanges` and the chat's last `chatTurnsToRead` turns (default 3) (`commentAfterEachTurn` and `suggestNextPrompt`, on by default; turn
+  (default `low`) and sent its `chatTurnsToRead` (the chat's last turns, default 4, with what it said after each) (`commentAfterEachTurn` and `suggestNextPrompt`, on by default; turn
   both off for none). There is no buddy server.
 
-It writes two things, and nothing else:
+It writes three things, and nothing else:
 
-- **Its own Claude Code plugin store:** the `rememberedExchanges` of the last 20 sessions
-  (per character, its recent exchanges: a `/buddy` question with its
-  answer, or the question alone if it got none, or one line it said;
-  nothing when `rememberedExchanges` is 0), the picked character, the picked
+- **Its own Claude Code plugin store:** the `chatTurnsToRead` of the last 20 sessions
+  with a person at the prompt (the chat's last `chatTurnsToRead` answered turns, each prompt
+  without its markup, what Claude did as one line per step (a shell command's
+  description and the names of the files it read or edited, never a tool's
+  output), and the start and end of each answer, and per character what it
+  exchanged with you after each: a `/buddy` question with its answer, a line
+  it said, the `commentAfterEachTurn` and `suggestNextPrompt` it showed), the picked character, the picked
   original companion's soul (its name and personality) and which install's
   roll you chose, the pet count, and whether it is hidden.
 - **The log file**, unless `logFile` is empty: by default
@@ -55,3 +58,8 @@ It writes two things, and nothing else:
   `debug` also the question text, the first 80 characters of each model
   answer, and band decisions. It never holds your account identity or any
   content of `~/.claude.json`.
+- **The round files**, only when you set `roundsDir` (empty by default): one
+  text file per main-chat turn in `{roundsDir}`, at most 150, the least recently
+  written overwritten once all are used, holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim. They are for debugging and hold your conversation's text and
+  tool output; they never hold your account identity or any content of
+  `~/.claude.json`.

@@ -11,7 +11,7 @@ One JSON object per file, `{id}.json`, the file name equal to `id`.
 | Field | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in the shipped ones |
-| `id` | `^[a-z0-9][a-z0-9-]{0,31}$` | yes | the name `/buddy-personality` stores; equals the file name |
+| `id` | `^[a-z0-9][a-z0-9-]{0,31}$` | yes | the name the drawer's personality tab stores; equals the file name |
 | `name` | string, 1 to 40 | yes | display name |
 | `description` | string, 1 to 100 | yes | one line for the menu's preview and the hover card |
 | `author` | string, up to 60 | no | credit |
@@ -59,12 +59,12 @@ flowchart LR
 
 A file is a candidate when it is a visible `.json` entry that is not a folder (`isCharacterFile`).
 The roster keeps every candidate, valid or not, sorted by id; an id in both `characters/` and `customCharactersDir` is taken from `customCharactersDir`.
-An invalid file stays in the roster with its first error, so `/buddy-personality` lists it as `{id} (invalid)`, its preview naming the error, rather than hiding it.
+An invalid file stays in the roster with its first error, so the drawer's personality tab lists it as `{id} (invalid)`, its preview naming the error, rather than hiding it.
 A folder that cannot be listed is logged, named in the menu's group, and said in the bubble at each session start and `/buddy reload` (`startWarning`).
 The roster loads at session start and again on `/buddy reload`.
 
-The character drawn is chosen in order (`choose`): the stored choice (Enter in `/buddy-personality`), then the `character` option, then `duck` (`DEFAULT_ID`).
-A missing or invalid choice draws the duck with a bubble `Couldn't load {id}: {why}; /buddy-personality picks another` for 10 seconds, and the log says it too.
+The character drawn is chosen in order (`choose`): the stored choice (Enter in the drawer's personality tab), then the `character` option, then `duck` (`DEFAULT_ID`).
+A missing or invalid choice draws the duck with a bubble `Couldn't load {id}: {why}; the personality tab in /buddy picks another` for 10 seconds, and the log says it too.
 If `duck.json` itself fails, a minimal stand-in duck compiled into the engine (`STANDIN_DEFAULT`) draws, so an error always has a buddy to say it.
 
 ## Line events
@@ -82,7 +82,7 @@ A line is never the one said last from the same pool (`pickLine`).
 | `thinking` | a `/buddy` question starts | always | until the answer, the failure or the question's deadline (90 s) |
 | `rest` | the tick a walking rest begins | 1 in 4 | 6 s |
 | `working` | `isWorking` turns true while no bubble shows | 1 in 4 | 6 s |
-| `wake` | the first event after sleep: a tool call, `/buddy` (a pet or a question), a turn ending, work starting | always | 6 s, unless the waking event says its own line at once (a pet, a question, a tool reaction), which replaces it |
+| `wake` | the first event after sleep: a tool call, a pet or a `/buddy` question, a turn ending, work starting | always | 6 s, unless the waking event says its own line at once (a pet, a question, a tool reaction), which replaces it |
 | `farewell` | `/buddy off` | always | never in a bubble: it is the command's reply, since the band hides at once |
 
 An original companion's pools come from its species template, with `{name}` filled in.
@@ -90,7 +90,7 @@ An original companion's pools come from its species template, with `{name}` fill
 ## How a contributor adds one
 
 1. Write `{id}.json` in a folder of your own; [`CONTRIBUTING.md`](../../CONTRIBUTING.md) has a working example.
-2. Point `customCharactersDir` at the folder and start a session. `/buddy-personality` lists it under `customCharactersDir`, or as `{id} (invalid)` with the first error in its preview.
+2. Point `customCharactersDir` at the folder and start a session. The drawer's personality tab (`/buddy`) lists it under `customCharactersDir`, or as `{id} (invalid)` with the first error in its preview.
 3. Enter on it in the menu draws it. Edit, save, `/buddy reload`. Try a narrow window too.
 4. To ship it: add it to `plugins/buddy/characters/` with the relative `$schema`, add a row to the README's Characters table, run the checks, and open a pull request against `develop`.
 
@@ -123,6 +123,6 @@ A shipped character is original work (no copied character, trademark or real per
 ## How it's tested
 
 - Unit: [`tests/character.test.ts`](../../tests/character.test.ts) (defaults, padding, first error by path, pose fallback), [`tests/roster.test.ts`](../../tests/roster.test.ts) (candidates, invalid entries, your file wins, choice order, the stand-in), [`tests/lines.test.ts`](../../tests/lines.test.ts). They use inline fixtures ([`tests/fixtures.ts`](../../tests/fixtures.ts)), never the shipped files.
-- Hooks: the band draws the stored character, defaults to the duck, and says why for an invalid or unknown choice, pointing at `/buddy-personality`.
+- Hooks: the band draws the stored character, defaults to the duck, and says why for an invalid or unknown choice, pointing at the drawer's personality tab.
 - Live: rows (a), (c), (g) and (i) load shipped files for real: the duck, the first other character by id (`cat` today, also the menu's pick), and the one listed after the duck.
 - Shipped files: `tests/character.test.ts` names the seven shipped characters and runs each through `validateCharacter`, as `tests/species.test.ts` does for the species templates, so a broken shipped file fails the suite before it can show as `(invalid)` in the menu.

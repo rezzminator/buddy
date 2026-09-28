@@ -4,6 +4,7 @@ import { initialMotion, maxX, periodMs, tickMotion, type MotionState } from './m
 import { CONFETTI_MS, CONFETTI_TICK_MS } from './particles.ts';
 import { type AmbiguousCharacterWidth } from './width.ts';
 import { lostThread, stillThinking, type TurnSummary } from './prompts.ts';
+import type { Action } from './did.ts';
 import { REACTIONS, classifyToolCall, type Outcome, type ToolCall } from './reactions.ts';
 import { buildScene, type Scene } from './scene.ts';
 
@@ -49,7 +50,7 @@ export type Brain = {
   lastPose: Pose | null;
   /** The latest line nobody asked for that came while an answer held the bubble: said once it ends. */
   after: { event: LineEvent; pose: Pose | null; ms: number } | null;
-  /** Canned lines said since the adapter last took them, with who said them: its rememberedExchanges records the shown ones. The thinking filler is never among them. */
+  /** Canned lines said since the adapter last took them, with who said them: its chatTurnsToRead records the shown ones. The thinking filler is never among them. */
   said: { id: string; text: string }[];
   /** East Asian ambiguous-width characters take two columns (the ambiguousCharacterWidth option). */
   ambiguousCharacterWidth: AmbiguousCharacterWidth;
@@ -73,7 +74,7 @@ export function createBrain(character: Character, walkOverPromptBar: boolean, am
     pets: 0,
     questions: 0,
     lastLines: {},
-    turn: { tools: [], failures: 0, lastBash: '' },
+    turn: { tools: [], failures: 0, lastBash: '', actions: [] },
     lastCommentAfterEachTurnAt: null,
     lastPose: null,
     said: [],
@@ -182,13 +183,14 @@ export function currentPose(b: Brain): Pose {
   return 'idle';
 }
 
-/** A finished tool call: counted for the turn, and reacted to per REACTIONS. */
-export function react(b: Brain, call: ToolCall & { command: string }, rand: () => number): Outcome | null {
+/** A finished tool call: counted for the turn, its step (`action`, actionOf) kept, and reacted to per REACTIONS. */
+export function react(b: Brain, call: ToolCall & { command: string; action?: Action | null }, rand: () => number): Outcome | null {
   const outcome = classifyToolCall(call);
   wake(b, rand, { silent: outcome !== null });
   b.turn.tools.push(call.tool);
   if (call.isError || call.denied) b.turn.failures++;
   if (call.tool === 'Bash' && call.command) b.turn.lastBash = call.command.slice(0, 120);
+  if (call.action) b.turn.actions.push(call.action);
   if (!outcome) return null;
   const r = REACTIONS[outcome];
   sayLine(b, r.line, r.pose, BUBBLE_MS, rand);
@@ -294,7 +296,7 @@ export function isMainLoop(agentId: string | undefined): boolean {
  */
 export function endTurn(b: Brain, commentAfterEachTurn: boolean, secondsBetweenComments: number): { turn: TurnSummary; commentAfterEachTurnDue: boolean } {
   const turn = b.turn;
-  b.turn = { tools: [], failures: 0, lastBash: '' };
+  b.turn = { tools: [], failures: 0, lastBash: '', actions: [] };
   const commentAfterEachTurnDue = commentAfterEachTurn && (b.lastCommentAfterEachTurnAt === null || b.now - b.lastCommentAfterEachTurnAt >= secondsBetweenComments * 1000);
   if (commentAfterEachTurnDue) b.lastCommentAfterEachTurnAt = b.now;
   return { turn, commentAfterEachTurnDue };

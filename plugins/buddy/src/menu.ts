@@ -5,17 +5,9 @@ import { ORIGINAL_ID, SHOWN_CONFIG, originalLabel, type Soul } from './original.
 import type { Entry, Roster } from './roster.ts';
 import { spriteColor } from './scene.ts';
 
-// `/buddy-personality`: the menu as plain data. Three titled groups of
+// The drawer's personality tab as plain data. Three titled groups of
 // entries, one focusable row each, and the preview of the one the focus is
-// on. The adapter draws it one to one; an error is a line in its group.
-
-export const MENU_COMMAND = 'buddy-personality';
-export const MENU_PANE = 'buddy-personality';
-export const MENU_TITLE = 'Pick a personality';
-/** How often the preview's idle frames turn. */
-export const PREVIEW_MS = 500;
-export const MENU_MAX_ROWS = 30;
-export const PREVIEW_ROWS = 14;
+// on. The drawer draws it one to one; an error is a line in its group.
 
 export type Pick = { kind: 'use'; id: string } | { kind: 'original'; variant: Variant };
 /** `about`: the line the preview says of it, its description, or an original's personality. */
@@ -122,14 +114,6 @@ export function listWidth(m: Menu): number {
     for (const item of s.items) w = Math.max(w, `* ${item.label}`.length);
   }
   return w;
-}
-
-/** The rows the pane wants: every title, line (as wrapped in the list) and entry, a gap between groups. */
-export function menuRows(m: Menu): number {
-  const w = listWidth(m);
-  const lineRows = (line: string) => Math.max(1, Math.ceil(line.length / w));
-  const left = m.sections.reduce((n, s) => n + 1 + s.lines.reduce((k, l) => k + lineRows(l), 0) + s.items.length, 0) + m.sections.length - 1;
-  return Math.min(MENU_MAX_ROWS, Math.max(left, PREVIEW_ROWS));
 }
 
 export type Preview =

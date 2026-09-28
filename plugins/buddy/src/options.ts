@@ -4,8 +4,7 @@
 import { isMainLoop } from './brain.ts';
 import { configDir, type ConfigEnv } from './config-source.ts';
 import { LOG_LEVELS, type LogLevel } from './log.ts';
-import { REMEMBERED_EXCHANGES_DEFAULT, REMEMBERED_EXCHANGES_MAX } from './rememberedExchanges.ts';
-import { CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX } from './prompts.ts';
+import { CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX } from './chatTurnsToRead.ts';
 import { AMBIGUOUS_CHARACTER_WIDTHS, type AmbiguousCharacterWidth } from './width.ts';
 
 /** How hard the buddy's model thinks: the engine's ModelEffort values. */
@@ -30,14 +29,14 @@ export type Options = {
   secondsBetweenComments: number;
   /** The end-of-turn call writes suggestNextPrompt, and the harness's own suggestion is held back, shown only when the buddy has none. */
   suggestNextPrompt: boolean;
-  /** How many recent exchanges the buddy remembers per session and character; 0 = off. */
-  rememberedExchanges: number;
-  /** How many of the main chat's latest answered turns a completion reads, 1 to CHAT_TURNS_TO_READ_MAX: questions and the end-of-turn call. */
+  /** The buddy's memory: how many of the main chat's latest answered turns it remembers, with what it and the user said around them, 1 to CHAT_TURNS_TO_READ_MAX; every question and end-of-turn call reads it. */
   chatTurnsToRead: number;
   /** The plugin log's level: error, info or debug. */
   logLevel: LogLevel;
   /** The plugin log's file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = no log file (errors still go to the debug log). */
   logFile: string;
+  /** Where each round (one main-chat turn, and every model call the buddy made after it, verbatim) is written as its own file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = none. */
+  roundsDir: string;
   /** How many columns an East Asian ambiguous-width character takes: narrow 1, wide 2. */
   ambiguousCharacterWidth: AmbiguousCharacterWidth;
   errors: string[];
@@ -52,10 +51,10 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   effort: 'low',
   secondsBetweenComments: 0,
   suggestNextPrompt: true,
-  rememberedExchanges: REMEMBERED_EXCHANGES_DEFAULT,
   chatTurnsToRead: CHAT_TURNS_TO_READ_DEFAULT,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
+  roundsDir: '',
   ambiguousCharacterWidth: 'narrow',
 };
 
@@ -69,7 +68,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, rememberedExchanges, chatTurnsToRead, logLevel, logFile, ambiguousCharacterWidth } = raw;
+  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, chatTurnsToRead, logLevel, logFile, roundsDir, ambiguousCharacterWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -108,14 +107,6 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     if (Number.isFinite(n) && n >= 0) o.secondsBetweenComments = n;
     else bad('secondsBetweenComments', `${JSON.stringify(secondsBetweenComments)} is not a number of seconds`);
   }
-  if (rememberedExchanges !== undefined && rememberedExchanges !== '') {
-    const n = typeof rememberedExchanges === 'number' ? rememberedExchanges : typeof rememberedExchanges === 'string' ? Number(rememberedExchanges) : NaN;
-    if (!Number.isInteger(n) || n < 0) bad('rememberedExchanges', `${JSON.stringify(rememberedExchanges)} is not a whole number of exchanges; remembering ${REMEMBERED_EXCHANGES_DEFAULT}`);
-    else if (n > REMEMBERED_EXCHANGES_MAX) {
-      o.rememberedExchanges = REMEMBERED_EXCHANGES_MAX;
-      o.errors.push(`option rememberedExchanges capped: ${n} is above ${REMEMBERED_EXCHANGES_MAX}; remembering ${REMEMBERED_EXCHANGES_MAX}`);
-    } else o.rememberedExchanges = n;
-  }
   if (chatTurnsToRead !== undefined && chatTurnsToRead !== '') {
     const n = typeof chatTurnsToRead === 'number' ? chatTurnsToRead : typeof chatTurnsToRead === 'string' ? Number(chatTurnsToRead) : NaN;
     if (Number.isInteger(n) && n >= 1 && n <= CHAT_TURNS_TO_READ_MAX) o.chatTurnsToRead = n;
@@ -135,6 +126,10 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
   if (logFile !== undefined) {
     if (typeof logFile === 'string') o.logFile = logFile.trim();
     else bad('logFile', 'not a string');
+  }
+  if (roundsDir !== undefined) {
+    if (typeof roundsDir === 'string') o.roundsDir = roundsDir.trim();
+    else bad('roundsDir', 'not a string');
   }
   return o;
 }

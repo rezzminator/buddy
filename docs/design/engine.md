@@ -29,7 +29,7 @@ One timer drives everything: `$.clock.every(period, onTick)`.
 The period is the character's `motion.stepMs` when it walks, else `STILL_PERIOD_MS` (300 ms); a switch to a character with another period restarts the timer.
 `/buddy off` stops it and `/buddy on` starts it again, so a hidden buddy costs nothing.
 Two sessions share one store, which raises no change event, so each reads `hidden` back (`syncHidden`): every 15 ticks (`SHARED_TICKS`) while drawn, and on a band draw at most every 3 s (`SHARED_MS`) while hidden; another session's `/buddy off` or `/buddy on` reaches this one that way.
-`/buddy` likewise counts on from the stored pet count.
+A pet likewise counts on from the stored pet count.
 
 Each tick advances the brain's own clock, `b.now`, by exactly one period, then expires the bubble and the confetti, checks for sleep, and moves the character.
 Brain time is the tick count times the period, never the wall clock, so a test that advances the clock by N ms sees exactly N ms of behaviour.
@@ -76,7 +76,8 @@ Hidden is the adapter's state, not the brain's: the band yields and the clock st
 | `/buddy on` | `wake`, `greet` | the greeting |
 | a finished tool call | `react` | wakes, adds the call to the turn's tally, reacts per the table below |
 | a turn ends | `wake`, `endTurn` | the tally resets; a `commentAfterEachTurn` is due or not ([Voice](./voice.md)) |
-| `/buddy` | `pet` | `petted` pose and line, one more pet |
+| the drawer's `♥ pet` | `pet` | `petted` pose and line, one more pet |
+| `/buddy` alone | | opens or folds the drawer ([Drawer](./drawer.md)) |
 | `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's deadline (90 s), then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
 | the band draws | `observeBand` | width, height, and work starting or stopping |
 | a tick | `tick` | brain time, expiries, sleep, motion |

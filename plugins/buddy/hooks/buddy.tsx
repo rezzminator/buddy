@@ -1,22 +1,27 @@
-import type { EngineInterface, ModelCompleteResult, On, PluginOptions, PromptSubmitInput, PromptSubmitResult, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStartInput, TurnStepInput } from 'claude-code';
+import { atom, read, update } from 'claude-code';
+import type { RenderElement, EngineInterface, ModelCompleteResult, On, PluginOptions, PromptSubmitInput, PromptSubmitResult, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStartInput, TurnStepInput } from 'claude-code';
 import {
   COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, isMainLoop, observeBand, period, pet,
-  react, sceneOf, setCharacter, speak, tick, wake,
+  currentPose, react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
-import type { Character } from '../src/character.ts';
-import { USAGE, parseCommand } from '../src/command.ts';
+import { frameAt, type Character } from '../src/character.ts';
+import { USAGE, parseCommand, type Action } from '../src/command.ts';
+import { allItems, buildMenu, currentKeyOf, findItem, type Item, type Originals } from '../src/menu.ts';
 import {
-  MENU_COMMAND, MENU_PANE, MENU_TITLE, PREVIEW_MS, allItems, buildMenu, listWidth, currentKeyOf, findItem, menuRows, previewOf, rowLabel,
-  type Item, type Menu, type Originals,
-} from '../src/menu.ts';
-import { REMEMBERED_EXCHANGES_KEY_PREFIX, REMEMBERED_EXCHANGES_SESSIONS, REMEMBERED_EXCHANGES_WRITE_DEADLINE_MS, rememberedExchangesOf, characterRememberedExchanges, addRememberedExchange, render, staleKeys, storeKey, type RememberedExchanges, type Exchange, type Stored } from '../src/rememberedExchanges.ts';
+  CHAT_TURNS_TO_READ_KEY_PREFIX, CHAT_TURNS_TO_READ_SESSIONS, CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, staleKeys, storeKey,
+  type Block, type Exchange, type Stored,
+} from '../src/chatTurnsToRead.ts';
+import { actionOf, didOf } from '../src/did.ts';
+import { answerSuggestions, feedOfMemory, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
+import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
+import { callSection, capValue, eventLine, freeRoundSlot, oldestRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, pushTurn, questionPrompt, chatTurnsToReadText, requestTimeoutMs, retriesEmpty,
+  NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLine, oneLineSystem, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnSummary, type TurnWants,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
@@ -31,7 +36,7 @@ import {
   choose, isCharacterFile, loadEntries, mergeRoster, startWarning, withEntry,
   type Entry, type LoadedFile, type Roster, type Source,
 } from '../src/roster.ts';
-import type { Scene } from '../src/scene.ts';
+import { spriteColor, type Scene } from '../src/scene.ts';
 import { validateHats, validateSpecies, type HatArt, type SpeciesTemplate } from '../src/species.ts';
 
 // The adapter: the only file touching `$`. Every decision lives in ../src/;
@@ -42,8 +47,17 @@ const COMMAND = 'buddy';
 const SHARED_TICKS = 15;
 /** How often a hidden session, drawn, reads `hidden` back. */
 const SHARED_MS = 3000;
-/** Preview frames the menu pane may go undrawn before its clock stops: the pane is gone. */
-const MENU_UNDRAWN_TICKS = 10;
+
+/** How often the open drawer is drawn again: its sprite, its spinner, its rule of light. */
+const DRAWER_MS = 500;
+/** The feed the drawer draws (src/feed.ts): the host's for the session, so a reload keeps it. */
+const FEED = atom({ plugin: 'buddy', key: 'feed' } as const, [] as FeedEntry[]);
+
+/** One round file: when it opened, its turn's start (null before any turn this buddy saw), its timeline so far, its calls; its slot and session once first written; `dirty` when text is not on disk yet, `queued` while a write waits. */
+type Round = { at: number; start: { turnId: string; prompt: string } | null; body: string; calls: number; path: string; session: string; dirty: boolean; queued: boolean };
+
+/** The state whose round the log's tap writes into: set by register, so every record reaches the round timeline. */
+let tapped: State | null = null;
 
 type State = {
   options: Options;
@@ -57,6 +71,7 @@ type State = {
   /** Why characters/ or the customCharactersDir could not be listed: the menu says it in the group. */
   shippedError: string | undefined;
   customCharactersDirError: string | undefined;
+  /** The drawer's personality tab, while it is built: the characters to pick from and the one the preview shows. */
   menu: MenuState | null;
   hidden: boolean;
   pets: number;
@@ -64,16 +79,16 @@ type State = {
   clockPeriod: number;
   lastKey: string;
   lastTickError: string;
-  /** This session's rememberedExchanges as last loaded or written; loaded again when the session id changes (a start, a /clear, a reload). */
-  rememberedExchanges: { sessionId: string; rememberedExchanges: RememberedExchanges } | null;
-  /** Every rememberedExchanges read and write, one after another, in the order made. */
-  rememberedExchangesChain: Chain;
-  /** The store writes of the rememberedExchanges: one in flight per session, so a late one never lands over a newer one. */
-  rememberedExchangesWrites: LatestWrites<Stored>;
-  /** The last rememberedExchanges failure, said in the next /buddy question's reply; '' when none since. */
-  rememberedExchangesError: string;
-  /** A rememberedExchanges read or write was abandoned at its deadline and that was said: said again only after one lands. */
-  rememberedExchangesHangSaid: boolean;
+  /** This session's chatTurnsToRead timeline as last loaded or written; loaded again when the session id changes (a start, a /clear, a resume, a reload). */
+  chatTurnsToRead: { sessionId: string; blocks: Block[] } | null;
+  /** Every chatTurnsToRead read and write, one after another, in the order made. */
+  chatTurnsToReadChain: Chain;
+  /** The store writes of the chatTurnsToRead: one in flight per session, so a late one never lands over a newer one. */
+  chatTurnsToReadWrites: LatestWrites<Stored>;
+  /** The last chatTurnsToRead failure, said in the next /buddy question's reply; '' when none since. */
+  chatTurnsToReadError: string;
+  /** A chatTurnsToRead read or write was abandoned at its deadline and that was said: said again only after one lands. */
+  chatTurnsToReadHangSaid: boolean;
   /** The /buddy question waiting for its answer, one at a time; null when none. */
   asking: { since: number } | null;
   /** A person is at the prompt (session.start's isInteractive): a -p run or the SDK makes no end-of-turn call, nobody sees it. */
@@ -101,16 +116,33 @@ type State = {
   prompts: PromptLedger;
   /** The running main turn's id, from its turn.start to its turn.complete; undefined while none runs. */
   mainTurn: string | undefined;
+  /** Bumped by every main turn's start: a memory write that failed is tried again only while it stays the same. */
+  turnStarts: number;
   /** Bumped only by /clear or a resume: a /buddy question asked in an earlier conversation is dropped, never shown or remembered in this one. */
   conversation: number;
-  /** The main chat's last chatTurnsToRead answered turns, oldest first, read by the end-of-turn call and a question's completion. */
-  turns: Turn[];
+  /** The id of the latest answered main turn filed into the chatTurnsToRead: an exchange beginning now is filed under it. undefined before the first in this process, or after /clear or a resume: filed under the newest remembered. */
+  lastTurnId: string | undefined;
   /** The options' warnings were said: once, in the first greeting's bubble. */
   warned: boolean;
+  /** The roundsDir, expanded (logPath); '' = no round files. */
+  roundsDir: string;
+  /** The round being written, from its turn's start to the next turn's start (Round); null before the first event, or after /clear or a resume. */
+  round: Round | null;
+  /** The bubble's text as the round timeline last said it: a new one is said once. */
+  roundBubble: string | null;
+  /** Every round write, in order: a call's section never lands before its round's head. */
+  roundsChain: Promise<void>;
+  /** A round file failed to write: said once, logged every time after. */
+  roundsFailed: boolean;
+  /** End-of-turn calls in flight: the drawer says the buddy is thinking. */
+  calls: number;
+  /** Every write of the drawer's feed, one after another, in the order made. */
+  feedChain: Promise<void>;
+  drawer: Drawer;
 };
 
-/** The open menu: its rows, the one drawn now, where the focus started and is, the preview's frame. */
-type MenuState = { model: Menu; current: string; start: string; focused: string; frame: number; timer: Timer | null; soul: Soul | null; undrawn: number };
+/** The drawer: open or not, its tab, its clock, the animation's tick, the ask box's unsent text, the band's id once drawn (to scroll it). */
+type Drawer = { open: boolean; tab: 'talk' | 'personality'; timer: Timer | null; frame: number; draft: string; bandId: string };
 
 type BandProps = { hasSurvey: boolean; isWorking: boolean; maxRows: number; bodyColumns: number };
 
@@ -149,12 +181,14 @@ function logIO($: EngineInterface): LogIO {
 function lg($: EngineInterface, level: LogLevel, event: string, fields: LogFields = {}): void {
   L.log(level, event, fields);
   L.flush(logIO($)).catch(() => undefined);
+  flushRound($);
 }
 
 /** A debug record at most once a second per event. */
 function lgT($: EngineInterface, event: string, fields: LogFields = {}): void {
   L.throttled(event, fields);
   L.flush(logIO($)).catch(() => undefined);
+  flushRound($);
 }
 
 /** Every failure: a transcript notice, and an error record with its context and stack. */
@@ -162,6 +196,7 @@ function log($: EngineInterface, what: string, error: unknown, fields: LogFields
   say($, `${what} failed: ${message(error)}`);
   L.error(what, error, fields);
   L.flush(logIO($)).catch(() => undefined);
+  flushRound($);
 }
 
 /** A problem said in the transcript and the plugin log alike. */
@@ -229,60 +264,61 @@ function applyChoice(st: State, $: EngineInterface): void {
   lg($, 'info', 'character.switch', { id: choice.character.id, via: 'start' });
 }
 
-// ---- rememberedExchanges --------------------------------------------------
+// ---- chatTurnsToRead ------------------------------------------------------
 
-function rememberedExchangesFailed(st: State, $: EngineInterface, what: string, error: unknown): void {
-  log($, what, error, { area: 'rememberedExchanges' });
-  st.rememberedExchangesError = `${what} failed: ${message(error)}`;
+function chatTurnsToReadFailed(st: State, $: EngineInterface, what: string, error: unknown): void {
+  log($, what, error, { area: 'chatTurnsToRead' });
+  st.chatTurnsToReadError = `${what} failed: ${message(error)}`;
 }
 
-/** The newest REMEMBERED_EXCHANGES_SESSIONS sessions' rememberedExchanges stay in the store, `current` among them; the rest is deleted. */
-async function pruneRememberedExchanges($: EngineInterface, current: string): Promise<void> {
+/** The newest CHAT_TURNS_TO_READ_SESSIONS sessions' chatTurnsToRead stay in the store, `current` among them; the rest is deleted. */
+async function pruneChatTurnsToRead($: EngineInterface, current: string): Promise<void> {
   const sessions: { key: string; at: number }[] = [];
   for (const key of await $.store.keys()) {
-    if (!key.startsWith(REMEMBERED_EXCHANGES_KEY_PREFIX) || key === storeKey(current)) continue;
+    if (!key.startsWith(CHAT_TURNS_TO_READ_KEY_PREFIX) || key === storeKey(current)) continue;
     const v = await $.store.get(key);
     sessions.push({ key, at: typeof v === 'object' && v !== null && typeof (v as Stored).at === 'number' ? (v as Stored).at : 0 });
   }
-  for (const key of staleKeys(sessions, REMEMBERED_EXCHANGES_SESSIONS - 1)) await $.store.delete(key);
+  for (const key of staleKeys(sessions, CHAT_TURNS_TO_READ_SESSIONS - 1)) await $.store.delete(key);
 }
 
 /**
- * The session's rememberedExchanges, by `$.session.id()` (the transcript's
+ * The session's chatTurnsToRead, by `$.session.id()` (the transcript's
  * name): a new id loads its own from the store. null when the link asking,
  * `live` false, was abandoned while the store answered: a later link may have
  * loaded and written since, and this stale read never replaces that.
  */
-async function rememberedExchangesFor(st: State, $: EngineInterface, live: () => boolean): Promise<{ sessionId: string; rememberedExchanges: RememberedExchanges } | null> {
+async function chatTurnsToReadFor(st: State, $: EngineInterface, live: () => boolean): Promise<{ sessionId: string; blocks: Block[] } | null> {
   const sessionId = await $.session.id();
-  if (st.rememberedExchanges?.sessionId === sessionId) return st.rememberedExchanges;
+  if (st.chatTurnsToRead?.sessionId === sessionId) return st.chatTurnsToRead;
   const value = await $.store.get(storeKey(sessionId));
   if (!live()) return null;
-  const loaded = rememberedExchangesOf(value);
-  if (loaded.error) rememberedExchangesFailed(st, $, 'reading the rememberedExchanges', new Error(loaded.error));
-  st.rememberedExchanges = { sessionId, rememberedExchanges: loaded.rememberedExchanges };
-  // Old sessions' rememberedExchanges are pruned beside this read, never on its path: it touches only other sessions' keys.
-  pruneRememberedExchanges($, sessionId).catch((error) => rememberedExchangesFailed(st, $, "deleting old sessions' rememberedExchanges", error));
-  return st.rememberedExchanges;
+  const loaded = chatTurnsToReadOf(value);
+  if (loaded.error) chatTurnsToReadFailed(st, $, 'reading the chatTurnsToRead', new Error(loaded.error));
+  st.chatTurnsToRead = { sessionId, blocks: loaded.blocks };
+  seedFeed(st, $, loaded.blocks);
+  // Old sessions' chatTurnsToRead are pruned beside this read, never on its path: it touches only other sessions' keys.
+  pruneChatTurnsToRead($, sessionId).catch((error) => chatTurnsToReadFailed(st, $, "deleting old sessions' chatTurnsToRead", error));
+  return st.chatTurnsToRead;
 }
 
 /**
- * `link` run on the rememberedExchanges chain (chained), abandoned `ms` after it
+ * `link` run on the chatTurnsToRead chain (chained), abandoned `ms` after it
  * starts; `waitMs`, a reader's patience, drops it unrun if it is still queued
  * then. An abandonment is said once, the next only after a link lands; a link
  * dropped unrun is logged, never said failed. A link failing after it was
  * abandoned is logged, never said twice. Resolves true when the link landed.
  */
-async function chainRememberedExchanges(st: State, $: EngineInterface, what: string, ms: number, link: (live: () => boolean) => Promise<void>, waitMs?: number): Promise<boolean> {
+async function chainChatTurnsToRead(st: State, $: EngineInterface, what: string, ms: number, link: (live: () => boolean) => Promise<void>, waitMs?: number): Promise<boolean> {
   const o = await chained(
     sleeper($),
-    st.rememberedExchangesChain,
+    st.chatTurnsToReadChain,
     async (live) => {
       try {
         await link(live);
       } catch (error) {
         if (live()) throw error;
-        L.error(`${what} (abandoned)`, error, { area: 'rememberedExchanges' });
+        L.error(`${what} (abandoned)`, error, { area: 'chatTurnsToRead' });
         L.flush(logIO($)).catch(() => undefined);
       }
     },
@@ -291,55 +327,159 @@ async function chainRememberedExchanges(st: State, $: EngineInterface, what: str
   );
   switch (o.kind) {
     case 'landed':
-      st.rememberedExchangesHangSaid = false;
+      st.chatTurnsToReadHangSaid = false;
       return true;
     case 'failed':
-      rememberedExchangesFailed(st, $, what, o.error);
+      chatTurnsToReadFailed(st, $, what, o.error);
       return false;
     case 'abandoned':
       // In whole seconds: a question's deadline is what is left of its 90 s, a few ms short.
-      if (!st.rememberedExchangesHangSaid) rememberedExchangesFailed(st, $, what, new Error(deadlineReason(Math.round(ms / 1000) * 1000)));
-      st.rememberedExchangesHangSaid = true;
+      if (!st.chatTurnsToReadHangSaid) chatTurnsToReadFailed(st, $, what, new Error(deadlineReason(Math.round(ms / 1000) * 1000)));
+      st.chatTurnsToReadHangSaid = true;
       return false;
     case 'dropped':
-      lg($, 'info', 'rememberedExchanges.dropped', { what });
+      lg($, 'info', 'chatTurnsToRead.dropped', { what });
       return false;
   }
 }
 
-/** Appends the exchange `x` to the ring of `characterId` and saves the session's rememberedExchanges; the rememberedExchanges option 0 keeps nothing. */
-function rememberExchange(st: State, $: EngineInterface, characterId: string, x: Exchange): void {
-  const n = st.options.rememberedExchanges;
-  if (n === 0) return;
-  const what = `remembering the ${x.kind}`;
-  chainRememberedExchanges(st, $, what, REMEMBERED_EXCHANGES_WRITE_DEADLINE_MS, async (live) => {
-    const m = await rememberedExchangesFor(st, $, live);
-    // Abandoned meanwhile: a later link may have written, and this one writes nothing.
-    if (!m || !live()) return;
-    m.rememberedExchanges = addRememberedExchange(m.rememberedExchanges, characterId, x, n);
-    const stored: Stored = { at: Date.now(), characters: m.rememberedExchanges };
-    await st.rememberedExchangesWrites(storeKey(m.sessionId), stored, (key, value) => $.store.set(key, value));
-  }).catch((error) => log($, what, error));
+/**
+ * `change` applied to the session's chatTurnsToRead, which is then saved;
+ * `what` names it in a failure. One that failed or was abandoned is made
+ * again CHAT_TURNS_TO_READ_RETRY_MS later, up to CHAT_TURNS_TO_READ_WRITE_TRIES
+ * in all, while no main turn has started since and the conversation is the same; the change itself is
+ * applied once, a later try only saving it.
+ */
+function changeChatTurnsToRead(st: State, $: EngineInterface, what: string, change: (blocks: Block[]) => Block[]): void {
+  const turnStarts = st.turnStarts;
+  const conversation = st.conversation;
+  let applied = '';
+  const attempt = (n: number): void => {
+    chainChatTurnsToRead(st, $, what, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, async (live) => {
+      const m = await chatTurnsToReadFor(st, $, live);
+      // Abandoned meanwhile: a later link may have written, and this one writes nothing.
+      if (!m || !live()) return;
+      if (applied !== m.sessionId) {
+        m.blocks = change(m.blocks);
+        applied = m.sessionId;
+      }
+      const stored: Stored = { at: Date.now(), blocks: m.blocks };
+      await st.chatTurnsToReadWrites(storeKey(m.sessionId), stored, (key, value) => $.store.set(key, value));
+    })
+      .then((landed) => {
+        if (landed) {
+          if (n > 1) {
+            lg($, 'info', 'chatTurnsToRead.retry', { what, try: n, outcome: 'landed' });
+            // The failure said for an earlier try is healed: the next /buddy reply no longer says it.
+            if (st.chatTurnsToReadError.startsWith(what)) st.chatTurnsToReadError = '';
+          }
+          return;
+        }
+        if (n >= CHAT_TURNS_TO_READ_WRITE_TRIES) return;
+        $.clock.after(CHAT_TURNS_TO_READ_RETRY_MS, () => {
+          if (st.turnStarts !== turnStarts || st.conversation !== conversation) {
+            lg($, 'info', 'chatTurnsToRead.retry', { what, try: n + 1, outcome: 'skipped', reason: st.conversation !== conversation ? 'the conversation ended' : 'the next turn started' });
+            return;
+          }
+          lg($, 'info', 'chatTurnsToRead.retry', { what, try: n + 1, outcome: 'trying' });
+          attempt(n + 1);
+        });
+      })
+      .catch((error) => log($, what, error));
+  };
+  attempt(1);
 }
 
-/** What `c` remembers of this session, rendered for a prompt, after every write made before; '' when nothing, off, or not read within the caller's `ms`. */
-async function readRememberedExchanges(st: State, $: EngineInterface, c: Character, ms: number): Promise<string> {
-  const n = st.options.rememberedExchanges;
-  if (n === 0) return '';
+/** The answered main turn `turnId` filed last into the chatTurnsToRead, the oldest dropped past the option's count of turns. */
+function rememberTurn(st: State, $: EngineInterface, turnId: string, turn: Turn): void {
+  const n = st.options.chatTurnsToRead;
+  st.lastTurnId = turnId;
+  changeChatTurnsToRead(st, $, 'remembering the turn', (blocks) => addTurn(blocks, turnId, turn, n, Date.now()));
+}
+
+/** The main chat compacted: its summary filed as a turn of its own, and into the drawer; the drawer's older turns go with the memory's. */
+function rememberCompaction(st: State, $: EngineInterface, summary: string): void {
+  const n = st.options.chatTurnsToRead;
+  const id = `compaction:${Date.now()}`;
+  st.lastTurnId = id;
+  lg($, 'info', 'compaction.remembered', { length: summary.length });
+  changeChatTurnsToRead(st, $, 'remembering the compaction', (blocks) => addCompaction(blocks, id, summary, n, Date.now()));
+  feedAdd(st, $, { at: Date.now(), kind: 'compact', text: summary, turnId: id, read: true });
+}
+
+/** The exchange `x` of `characterId` filed under the turn `after` (default: the latest answered one), and saved; one whose turn is no longer remembered is dropped. */
+function rememberExchange(st: State, $: EngineInterface, characterId: string, x: Exchange, after = st.lastTurnId): void {
+  changeChatTurnsToRead(st, $, `remembering the ${x.kind}`, (blocks) => addExchange(blocks, characterId, x, after));
+}
+
+// ---- the feed: what the drawer draws -------------------------------------
+
+/** `change` applied to the feed, after every change made before, so two never race and land in the order made; a failure is logged, never thrown. */
+function changeFeed(st: State, $: EngineInterface, what: string, change: (feed: FeedEntry[]) => FeedEntry[]): void {
+  st.feedChain = st.feedChain
+    .then(async () => {
+      // The drawer spans what the buddy remembers: turns it has forgotten leave the feed with it.
+      await update($, FEED, (feed) => pruneToMemory(change([...(feed ?? [])]), st.options.chatTurnsToRead));
+      if (st.drawer.open) scrollDrawerToEnd(st, $);
+    })
+    .catch((error: unknown) => log($, `the drawer's feed: ${what}`, error));
+}
+
+/**
+ * The feed drawn back from the memory just loaded, where it holds no turn of
+ * it yet (a resume, a restart): what the buddy remembers is what the drawer shows.
+ */
+function seedFeed(st: State, $: EngineInterface, blocks: readonly Block[]): void {
+  const c = st.b?.character;
+  if (!c || blocks.length === 0) return;
+  changeFeed(st, $, 'drawing the memory back', (f) => {
+    const since = f.slice(f.findLastIndex((e) => e.kind === 'clear') + 1);
+    if (since.some((e) => e.kind !== 'line')) return f;
+    const seeded = feedOfMemory(blocks, c.id, voice(c), Date.now());
+    lg($, 'info', 'feed.seeded', { entries: seeded.length });
+    return seeded.reduce((acc, e) => pushEntry(acc, e), f);
+  });
+}
+
+/** One entry joins the feed. */
+function feedAdd(st: State, $: EngineInterface, entry: NewEntry): void {
+  changeFeed(st, $, entry.kind, (f) => pushEntry(f, entry));
+}
+
+/** A model call's tokens, all four counts together (usageFields); undefined when it reported none. */
+function tokensOf(usage: Record<string, number>): number | undefined {
+  const n = (usage.inTok ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0) + (usage.outTok ?? 0);
+  return n > 0 ? n : undefined;
+}
+
+/** `c`'s name and ink on a feed entry. */
+function voice(c: Character): { who: string; color: string } {
+  return { who: c.name, color: c.color };
+}
+
+/** What `c` remembers of this session, rendered for a prompt, after every write made before; '' when nothing, or not read within the caller's `ms`. */
+async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, ms: number): Promise<{ text: string; memory: MemoryStats }> {
   let text = '';
-  const landed = await chainRememberedExchanges(
+  let memory: MemoryStats = { turns: 0, kept: 0, full: 0 };
+  const landed = await chainChatTurnsToRead(
     st,
     $,
-    'reading the rememberedExchanges',
+    'reading the chatTurnsToRead',
     ms,
     async (live) => {
-      const m = await rememberedExchangesFor(st, $, live);
-      if (m && live()) text = render(characterRememberedExchanges(m.rememberedExchanges, c.id, n), c.name);
+      const m = await chatTurnsToReadFor(st, $, live);
+      if (m && live()) {
+        text = render(m.blocks, c.id, st.options.chatTurnsToRead);
+        memory = memoryStats(m.blocks, st.options.chatTurnsToRead);
+      }
     },
     ms,
   );
-  return landed ? text : '';
+  return landed ? { text, memory } : { text: '', memory: { turns: 0, kept: 0, full: 0 } };
 }
+
+/** What a call's memory handed the model of the main chat's turns (memoryStats), for the audit. */
+type MemoryStats = { turns: number; kept: number; full: number };
 
 /** The canned lines the brain said since last taken: kept when the band shows them, dropped while hidden. */
 function heard(st: State, $: EngineInterface): void {
@@ -352,13 +492,25 @@ function heard(st: State, $: EngineInterface): void {
   }
   const said = b.said.splice(0);
   if (st.hidden) return;
-  for (const s of said) rememberExchange(st, $, s.id, { kind: 'line', text: s.text });
+  for (const s of said) {
+    rememberExchange(st, $, s.id, { kind: 'line', text: s.text });
+    const c = st.roster.entries.find((e) => e.id === s.id)?.character ?? (b.character.id === s.id ? b.character : null);
+    // Heard while the band draws, where state is never written: joined to the feed once the drawing is done.
+    const entry: NewEntry = { at: Date.now(), kind: 'line', text: s.text, ...(c ? voice(c) : { who: s.id }) };
+    $.clock.after(0, () => feedAdd(st, $, entry));
+  }
 }
 
 // ---- clock and redraw ---------------------------------------------------
 
 function refresh(st: State, $: EngineInterface): void {
   heard(st, $);
+  // Each new bubble text joins the round once, marked when /buddy off keeps it from being drawn.
+  const bubble = st.b?.talk?.text ?? null;
+  if (bubble !== st.roundBubble) {
+    st.roundBubble = bubble;
+    if (bubble !== null) roundEvent(st, $, eventLine(Date.now(), `OUT · bubble${st.hidden ? ' (hidden, not drawn)' : ''}: ${JSON.stringify(bubble)}`));
+  }
   if (!st.b || st.hidden) return;
   const key = JSON.stringify(sceneOf(st.b));
   if (key === st.lastKey) return;
@@ -449,15 +601,11 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
   if ((st.storeChoice ?? st.options.character) === ORIGINAL_ID) await restoreOriginal(st, $);
   applyChoice(st, $);
   try {
-    await $.command.register({ name: COMMAND, description: 'Pet your buddy, ask it something, or: off, on, reload, log, help; /buddy-personality switches character', argumentHint: '[question] | off | on | reload | log | help', immediate: true });
+    await $.command.register({ name: COMMAND, description: 'Open or fold the drawer: your buddy, its thread with you and its personalities; with words, ask it; or: off, on, reload, log, help', argumentHint: '[question] | off | on | reload | log | help', immediate: true });
   } catch (error) {
     log($, `registering /${COMMAND}`, error);
   }
-  try {
-    await $.command.register({ name: MENU_COMMAND, description: 'Pick your buddy from a menu with a live preview: the shipped characters, your original companion, your customCharactersDir', immediate: true });
-  } catch (error) {
-    log($, `registering /${MENU_COMMAND}`, error);
-  }
+
   startClock(st, $);
   st.lastKey = '';
   $.ui.invalidate('ui.render');
@@ -487,7 +635,17 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     lg($, 'debug', 'session.build-unread', { error: message(error) });
   }
-  lg($, 'info', 'session.start', { build, model: st.options.model, effort: st.options.effort, level: L.level, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt, rememberedExchanges: st.options.rememberedExchanges });
+  st.roundsDir = '';
+  if (st.options.roundsDir) {
+    try {
+      const where = logPath(st.options.roundsDir, { HOME: await $.env.get('HOME'), CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') });
+      if ('error' in where) throw new Error(where.error);
+      st.roundsDir = where.path.replace(/\/+$/, '');
+    } catch (error) {
+      log($, 'opening the roundsDir', error, { roundsDir: st.options.roundsDir });
+    }
+  }
+  lg($, 'info', 'session.start', { build, rounds: st.roundsDir !== '', model: st.options.model, effort: st.options.effort, level: L.level, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt, chatTurnsToRead: st.options.chatTurnsToRead });
 }
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
@@ -542,11 +700,20 @@ function drawBand(Box: Component, Text: Component, s: Scene) {
 
 function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCallResult): void {
   try {
-    // A subagent's call is not the main turn's work.
-    if (!st.b || !isMainLoop(e.agentId)) return;
-    const call = e as unknown as { tool: string; command?: unknown; input?: unknown };
+    const call = e as unknown as { tool: string; command?: unknown; input?: unknown; [argument: string]: unknown };
     const res = r as unknown as { deny?: unknown; isError?: unknown; text?: unknown; result?: unknown };
-    react(st.b, { tool: call.tool, isError: res.isError === true, denied: typeof res.deny === 'string', output: toolOutput(res), command: call.tool === 'Bash' ? bashCommand(call) : '' }, Math.random);
+    const isError = res.isError === true;
+    const denied = typeof res.deny === 'string';
+    const output = toolOutput(res);
+    // A subagent's call is not the main turn's work: the round says it was heard, nothing more.
+    if (!isMainLoop(e.agentId)) {
+      roundEvent(st, $, toolLines(Date.now(), { tool: call.tool, args: call, output, failed: isError || denied, step: null, reaction: null, agentId: e.agentId }));
+      return;
+    }
+    if (!st.b) return;
+    const action = actionOf(call, isError || denied);
+    const reaction = react(st.b, { tool: call.tool, isError, denied, output, command: call.tool === 'Bash' ? bashCommand(call) : '', action }, Math.random);
+    roundEvent(st, $, toolLines(Date.now(), { tool: call.tool, args: call, output, failed: isError || denied, step: action ? (didOf([action])[0] ?? null) : null, reaction }));
     refresh(st, $);
   } catch (error) {
     log($, 'reacting to a tool call', error);
@@ -577,7 +744,11 @@ function onPromptSubmit(st: State, $: EngineInterface, e: PromptSubmitInput, r: 
 function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
   try {
     st.mainTurn = e.turnId;
+    st.turnStarts++;
     st.prompts = startPromptTurn(st.prompts, e.turnId, e.text);
+    openRound(st, $, e.turnId, e.text);
+    const prompt = cleanPrompt(e.text);
+    changeFeed(st, $, 'the prompt', (f) => (prompt ? pushEntry(answerSuggestions(f, prompt), { at: Date.now(), kind: 'you', text: prompt, turnId: e.turnId }) : f));
     if (st.harnessSuggestion !== null) {
       st.harnessSuggestion = null;
       lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-stale' });
@@ -614,9 +785,14 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     wake(st.b, Math.random);
     // A turn ended, however: an earlier turn's call still running is stale, its commentAfterEachTurn and suggestNextPrompt never shown.
     const gen = ++st.turnGen;
-    // Only an answered turn files its prompt into the chatTurnsToRead turns, and a prompt not the user's under its origin.
+    // Only an answered turn is filed into the chatTurnsToRead, a prompt not the user's under its origin; a headless session (nobody at the prompt) files none, never pushing an interactive session's memory out of the store.
     const answered = e.reason === 'answer' && !e.isAborted;
-    if (answered) st.turns = pushTurn(st.turns, { prompt: ended.prompt, answer: e.answer, ...(ended.from === undefined ? {} : { from: ended.from }) }, st.options.chatTurnsToRead);
+    const did = didOf(st.b.turn.actions);
+    const from = ended.from === undefined ? {} : { from: ended.from };
+    if (answered && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from });
+    // The drawer says whether the buddy read the turn: one interrupted never reaches its memory.
+    changeFeed(st, $, 'the turn read', (f) => markRead(f, e.turnId, answered && st.interactive));
+    roundEvent(st, $, turnEndSection(Date.now(), { turnId: e.turnId, reason: e.isAborted ? 'aborted' : e.reason, prompt: ended.prompt, answer: typeof e.answer === 'string' ? e.answer : '', did, ...from }));
     const gate: TurnGate = { answered, hidden: st.hidden, interactive: st.interactive, bandSeen: st.bandSeen, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt };
     const may = turnMay(gate);
     const { turn, commentAfterEachTurnDue } = endTurn(st.b, may.commentAfterEachTurn, st.options.secondsBetweenComments);
@@ -627,7 +803,12 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     if (wants.commentAfterEachTurn || wants.suggestNextPrompt) {
       lg($, 'info', 'turn.call', { commentAfterEachTurn: wants.commentAfterEachTurn, suggestNextPrompt: wants.suggestNextPrompt, tools: turn.tools.length });
       // The character drawn as the turn ended: a commentAfterEachTurn arriving after a switch is never said by another.
-      turnCall(st, $, st.b.character, turn, gen, wants, Date.now()).catch((error) => log($, 'the end-of-turn call', error));
+      st.calls++;
+      turnCall(st, $, st.b.character, turn, e.turnId, gen, wants, Date.now())
+        .catch((error) => log($, 'the end-of-turn call', error))
+        .finally(() => {
+          st.calls--;
+        });
     } else {
       lg($, 'info', 'turn.skipped', { why: skipReason(gate) });
     }
@@ -637,9 +818,13 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
   }
 }
 
-/** A /clear or a resume: the chat the buddy read is gone, so its chatTurnsToRead turns, its prompts, the turn's tally and any call in flight are dropped. */
+/** A /clear or a resume: the chat the buddy read is gone (the session id moves, and with it the chatTurnsToRead read), so its prompts, the turn's tally and any call in flight are dropped. */
 function forgetConversation(st: State, $: EngineInterface, reason: string): void {
-  st.turns = [];
+  st.lastTurnId = undefined;
+  // A new conversation's events never land in the ended one's round file.
+  writeRound(st, $, st.round);
+  st.round = null;
+  st.roundBubble = null;
   st.prompts = NO_PROMPTS;
   st.mainTurn = undefined;
   st.conversation++;
@@ -648,7 +833,111 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
   st.harnessSuggestion = null;
   st.suggestNextPromptGaveUp = true;
   if (st.b) endTurn(st.b, false, 0);
+  feedAdd(st, $, { at: Date.now(), kind: 'clear', text: reason });
   lg($, 'info', 'session.forget', { reason });
+}
+
+/** One change to the round files, after every change made before; a failure is said once, then logged. Never throws. */
+function changeRounds(st: State, $: EngineInterface, what: string, change: () => Promise<void>): void {
+  if (!st.roundsDir) return;
+  st.roundsChain = st.roundsChain.then(change).catch((error) => {
+    if (st.roundsFailed) L.error(what, error);
+    else log($, what, error);
+    st.roundsFailed = true;
+  });
+}
+
+/** A round opening now, with its turn's start, or none. */
+function newRound(start: Round['start']): Round {
+  return { at: Date.now(), start, body: '', calls: 0, path: '', session: '', dirty: true, queued: false };
+}
+
+/** `text` added to the round being written (one opened, before any turn, when none is); null with no roundsDir. Writes nothing: writeRound does. */
+function roundAppend(st: State, text: string): Round | null {
+  if (!st.roundsDir) return null;
+  st.round ??= newRound(null);
+  st.round.body += text;
+  st.round.dirty = true;
+  return st.round;
+}
+
+/** `round` on disk, whole, after every write before; its slot and session taken at its first write. At most one write waits per round: it writes the text as it stands when it runs. */
+function writeRound(st: State, $: EngineInterface, round: Round | null): void {
+  if (!round || !st.roundsDir || round.queued || !round.dirty) return;
+  round.queued = true;
+  changeRounds(st, $, 'writing a round file', async () => {
+    round.queued = false;
+    if (!round.path) {
+      round.session = await $.session.id();
+      round.path = `${st.roundsDir}/${await nextRoundSlot(st, $)}`;
+    }
+    round.dirty = false;
+    await $.fs.write(round.path, roundHead(round.at, round.session, round.start) + round.body);
+  });
+}
+
+/** The records the log's tap added to the round, written: every lg, lgT and log call ends here. */
+function flushRound($: EngineInterface): void {
+  if (tapped) writeRound(tapped, $, tapped.round);
+}
+
+/** The slot a new round takes: a free one, else the one written least recently, so the folder never holds more than ROUNDS_MAX. */
+async function nextRoundSlot(st: State, $: EngineInterface): Promise<string> {
+  const names = (await $.fs.exists(st.roundsDir)) ? (await $.fs.list(st.roundsDir)).filter((f) => f.kind === 'file').map((f) => f.name) : [];
+  const free = freeRoundSlot(names);
+  if (free) return free;
+  const slots = await Promise.all(names.filter((n) => /^round-\d{3}\.txt$/.test(n)).map(async (name) => {
+    try {
+      return { name, mtimeMs: (await $.fs.stat(`${st.roundsDir}/${name}`)).mtimeMs };
+    } catch (error) {
+      L.error('reading a round slot\'s time', error, { name });
+      return { name, mtimeMs: Number.NaN };
+    }
+  }));
+  return oldestRoundSlot(slots);
+}
+
+/** A main turn began: the round before it is written as it stands, and this turn's opens with the prompt it began with. */
+function openRound(st: State, $: EngineInterface, turnId: string, prompt: string): void {
+  if (!st.roundsDir) return;
+  writeRound(st, $, st.round);
+  st.round = newRound({ turnId, prompt });
+  st.roundBubble = null;
+  writeRound(st, $, st.round);
+}
+
+/** A moment of the round's timeline, written. */
+function roundEvent(st: State, $: EngineInterface, text: string): void {
+  writeRound(st, $, roundAppend(st, text));
+}
+
+/** `$.model.complete(request)`, its request and reply recorded verbatim into the round being written when it was sent, whatever it returns or throws. */
+async function completeRecorded(st: State, $: EngineInterface, kind: RoundCall['kind'], request: { model: string; effort?: Effort; system: string; prompt: string; maxTokens: number; timeoutMs: number }, memory: MemoryStats): Promise<ModelCompleteResult> {
+  const at = Date.now();
+  // The round it was sent in: a reply landing after the next turn began still goes with its request.
+  const round = st.roundsDir ? (st.round ??= newRound(null)) : null;
+  const { system, prompt, ...settings } = request;
+  const record = (call: Omit<RoundCall, 'kind' | 'at' | 'settings' | 'system' | 'prompt'>) => {
+    if (!round) return;
+    round.calls++;
+    round.body += callSection(round.calls, { kind, at, settings, system, prompt, ...call });
+    round.dirty = true;
+    writeRound(st, $, round);
+  };
+  // One line per call for the audit (scripts/audit.mjs): what it cost, and how much of the chat's turns its memory cut.
+  const cost = (outcome: string, usage: Record<string, number>) =>
+    lg($, 'info', 'call.cost', { kind, model: settings.model, outcome, ms: Date.now() - at, ...usage, memTurns: memory.turns, memKept: memory.kept, memFull: memory.full, promptChars: system.length + prompt.length });
+  try {
+    const r = await $.model.complete(request);
+    const usage = 'usage' in r ? usageFields(r.usage) : {};
+    record({ outcome: r.isAnswered ? 'answered' : `not answered: ${noAnswerReason(r)}`, reply: r.isAnswered ? r.text : '', ms: Date.now() - at, usage });
+    cost(r.isAnswered ? 'answered' : 'not answered', usage);
+    return r;
+  } catch (error) {
+    record({ outcome: `threw: ${message(error)}`, reply: '', ms: Date.now() - at, usage: {} });
+    cost('threw', {});
+    throw error;
+  }
 }
 
 /**
@@ -678,7 +967,7 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
  * One call at a turn's end writes the buddy's commentAfterEachTurn and
  * suggestNextPrompt, those wanted: a model completion on the main chat's last
  * chatTurnsToRead turns, in the voice of `c`, the character drawn as the turn ended.
- * One deadline covers the rememberedExchanges read, the settings and the completion.
+ * One deadline covers the chatTurnsToRead read, the settings and the completion.
  * A timeout, a refusal, an empty reply or a throw fails commentAfterEachTurn as
  * it fails and gives suggestNextPrompt up; a reply after a later turn ended (or
  * /clear) is stale by `gen`, its commentAfterEachTurn and suggestNextPrompt dropped.
@@ -686,9 +975,7 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
  * call's usage goes on commentAfterEachTurn's outcome, else on suggestNextPrompt's.
  * Never throws.
  */
-async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSummary, gen: number, wants: TurnWants, started: number): Promise<void> {
-  // The chatTurnsToRead turns as this turn ended, before a later turn can move it.
-  const turns = st.turns;
+async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSummary, turnId: string, gen: number, wants: TurnWants, started: number): Promise<void> {
   let reply: { commentAfterEachTurn: string | null; suggestNextPrompt: string | null } | null = null;
   let reason = '';
   let usage: Record<string, number> = {};
@@ -698,15 +985,15 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
       sleeper($),
       (async (): Promise<ModelCompleteResult | 'timeout'> => {
         const t0 = await $.clock.now();
-        // The rememberedExchanges and the settings do not wait on each other.
-        const [rememberedExchanges, settings] = await Promise.all([readRememberedExchanges(st, $, c, TURN_DEADLINE_MS), callSettings(st, $, 'turn.settings')]);
+        // The chatTurnsToRead, read after this turn was filed into it, and the settings do not wait on each other.
+        const [remembered, settings] = await Promise.all([readChatTurnsToRead(st, $, c, TURN_DEADLINE_MS), callSettings(st, $, 'turn.settings')]);
         // Past the deadline already: no completion is sent that nobody waits for.
         if (late) return 'timeout' as const;
-        const prompt = turnPrompt(t, turns, rememberedExchanges);
+        const prompt = turnPrompt(t, remembered.text);
         lg($, 'debug', 'turn.prompt', { length: prompt.length });
         // Abandoned the margin past the deadline, however late it is sent.
         const timeoutMs = requestTimeoutMs(TURN_DEADLINE_MS, (await $.clock.now()) - t0);
-        return $.model.complete({ ...settings, system: turnSystem(c.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs });
+        return completeRecorded(st, $, 'endOfTurn', { ...settings, system: turnSystem(c.persona, wants), prompt, maxTokens: TURN_MAX_TOKENS, timeoutMs }, remembered.memory);
       })(),
       TURN_DEADLINE_MS,
     );
@@ -731,14 +1018,24 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
     if (wants.suggestNextPrompt) lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'stale', ...suggestNextPromptFields });
     return;
   }
-  if (wants.commentAfterEachTurn) sayCommentAfterEachTurn(st, $, c, t, reply?.commentAfterEachTurn ?? null, reason || 'no commentAfterEachTurn in the reply', commentAfterEachTurnFields);
+  const commentAfterEachTurn = wants.commentAfterEachTurn ? sayCommentAfterEachTurn(st, $, c, t, reply?.commentAfterEachTurn ?? null, reason || 'no commentAfterEachTurn in the reply', commentAfterEachTurnFields) : null;
+  let suggestNextPrompt: string | null = null;
   if (wants.suggestNextPrompt) {
     try {
-      await showSuggestNextPrompt(st, $, gen, reply?.suggestNextPrompt ?? null, reason, c.id, suggestNextPromptFields);
+      suggestNextPrompt = await showSuggestNextPrompt(st, $, gen, reply?.suggestNextPrompt ?? null, reason, suggestNextPromptFields);
     } catch (error) {
       log($, 'a suggestNextPrompt', error);
       await giveUpSuggestNextPrompt(st, $, gen, ms).catch((e) => log($, 'showing the engine\'s own suggestion', e));
     }
+  }
+  // The drawer: what the bubble and the prompt box showed, or why the comment never came.
+  const tokens = tokensOf(usage);
+  if (commentAfterEachTurn !== null) feedAdd(st, $, { at: Date.now(), kind: 'comment', text: commentAfterEachTurn, ...voice(c), ms, ...(tokens ? { tokens } : {}) });
+  else if (wants.commentAfterEachTurn && reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: reason, ...voice(c), ms });
+  if (suggestNextPrompt !== null) feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: suggestNextPrompt, ...voice(c), ...(commentAfterEachTurn === null && tokens ? { ms, tokens } : {}) });
+  // What this turn showed, as one exchange: a suggestNextPrompt is remembered with the commentAfterEachTurn it came with.
+  if (commentAfterEachTurn !== null || suggestNextPrompt !== null) {
+    rememberExchange(st, $, c.id, { kind: 'endOfTurn', ...(commentAfterEachTurn !== null ? { commentAfterEachTurn } : {}), ...(suggestNextPrompt !== null ? { suggestNextPrompt } : {}) }, turnId);
   }
 }
 
@@ -746,17 +1043,19 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
  * The commentAfterEachTurn of `c` in the bubble, or the failure why there is none;
  * a held /buddy answer keeps the bubble, a previous turn's commentAfterEachTurn does not.
  * Never said by another character drawn meanwhile. `fields`: ms and usage, logged on the outcome.
+ * Returns the text when the bubble showed it, else null.
  */
-function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t: TurnSummary, text: string | null, reason: string, fields: Record<string, number>): void {
+function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t: TurnSummary, text: string | null, reason: string, fields: Record<string, number>): string | null {
   const b = st.b;
-  if (!b) return;
+  if (!b) return null;
+  let said: string | null = null;
   try {
     if (text) {
       // Hidden by /buddy off while the model wrote it: never shown, so never remembered.
       // A held /buddy answer keeps the bubble until it ends: the commentAfterEachTurn is never said over it, nor remembered.
       const held = !st.hidden && holdsAnswer(b);
       const shown = !st.hidden && !held && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id, true);
-      if (shown) rememberExchange(st, $, c.id, { kind: 'commentAfterEachTurn', text });
+      if (shown) said = text;
       const outcome = shown ? 'answered' : st.hidden ? 'hidden' : held ? 'held' : 'dropped';
       lg($, 'info', 'commentAfterEachTurn.outcome', { outcome, ...(outcome === 'dropped' ? { asker: c.id, drawn: b.character.id } : {}), ...fields });
     } else {
@@ -771,30 +1070,32 @@ function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t:
     log($, 'a commentAfterEachTurn', error);
   }
   refresh(st, $);
+  return said;
 }
 
-/** The suggestNextPrompt of character `characterId` into the prompt box, remembered once shown; none, or a failed call, gives this turn's up. `fields`: the turn's end to the reply (`ms`), and the usage when no commentAfterEachTurn was wanted, logged on the outcome. */
-async function showSuggestNextPrompt(st: State, $: EngineInterface, gen: number, text: string | null, reason: string, characterId: string, fields: Record<string, number>): Promise<void> {
+/** The suggestNextPrompt into the prompt box; none, or a failed call, gives this turn's up. `fields`: the turn's end to the reply (`ms`), and the usage when no commentAfterEachTurn was wanted, logged on the outcome. Returns the text when the box showed it, else null. */
+async function showSuggestNextPrompt(st: State, $: EngineInterface, gen: number, text: string | null, reason: string, fields: Record<string, number>): Promise<string | null> {
   if (text === null) {
     lg($, 'info', 'suggestNextPrompt.outcome', reason ? { outcome: 'failed', reason, ...fields } : { outcome: 'none', ...fields });
-    return giveUpSuggestNextPrompt(st, $, gen, fields.ms ?? 0);
+    await giveUpSuggestNextPrompt(st, $, gen, fields.ms ?? 0);
+    return null;
   }
   // A later turn ended or started, /clear, or /buddy off came meanwhile: this one is never proposed.
   if (gen !== st.turnGen || st.hidden || st.mainTurn !== undefined) {
     lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'stale', ...fields });
-    return;
+    return null;
   }
   const { isShown } = await $.prompt.suggest({ text });
+  roundEvent(st, $, eventLine(Date.now(), `OUT · prompt-box suggestion (the buddy's)${isShown ? '' : ' (not shown)'}: ${JSON.stringify(text)}`));
   // Not shown because a turn started while it was proposed: stale, not the engine's refusal.
   lg($, 'info', 'suggestNextPrompt.outcome', { outcome: suggestNextPromptOutcome(isShown, st.mainTurn !== undefined), length: text.length, ...fields });
-  if (!isShown) return;
+  if (!isShown) return null;
   // The engine's own suggestion, held for this turn, lost to the buddy's: released now, as what happened.
   if (st.harnessSuggestion !== null) {
     st.harnessSuggestion = null;
     lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-replaced' });
   }
-  // Shown: the buddy remembers this suggestNextPrompt, so it can say what it suggested last.
-  rememberExchange(st, $, characterId, { kind: 'suggestNextPrompt', text });
+  return text;
 }
 
 /** The buddy has no suggestNextPrompt for turn `gen`: the engine's own, held back meanwhile, is shown, and a later one passes. `ms`: the turn's end to the reply, logged on the outcome. */
@@ -811,6 +1112,7 @@ async function giveUpSuggestNextPrompt(st: State, $: EngineInterface, gen: numbe
     return;
   }
   const { isShown } = await $.prompt.suggest({ text });
+  roundEvent(st, $, eventLine(Date.now(), `OUT · prompt-box suggestion (Claude Code's own)${isShown ? '' : ' (not shown)'}: ${JSON.stringify(text)}`));
   lg($, 'info', 'suggestNextPrompt.outcome', { outcome: isShown ? 'harness-shown' : 'harness-not-shown', ms });
 }
 
@@ -928,7 +1230,7 @@ async function rollOriginal($: EngineInterface, identity: string, soul: Soul, va
 async function findOriginals($: EngineInterface): Promise<Originals> {
   const config = await readConfig($);
   if ('error' in config) {
-    say($, `/${MENU_COMMAND}: ${config.error}`);
+    say($, `Personalities: ${config.error}`);
     return { kind: 'error', error: config.error };
   }
   const notes: string[] = [];
@@ -953,7 +1255,7 @@ async function restoreOriginal(st: State, $: EngineInterface): Promise<void> {
   let error = '';
   try {
     const saved = st.saved;
-    if (!saved) error = `no original companion saved; /${MENU_COMMAND} picks one`;
+    if (!saved) error = `no original companion saved; the drawer's personality tab (/${COMMAND}) picks one`;
     else {
       const config = await readConfig($);
       if ('error' in config) error = config.error;
@@ -971,62 +1273,47 @@ async function restoreOriginal(st: State, $: EngineInterface): Promise<void> {
   if (st.original) st.roster = withEntry(st.roster, st.original);
 }
 
-// ---- /buddy-personality: the menu pane ------------------------------------
+// ---- the drawer's personality tab -----------------------------------------
 
-function stopMenu(st: State): void {
-  if (st.menu) L.log('info', 'menu.close'); // written by the next record's flush
-  st.menu?.timer?.cancel();
-  st.menu = null;
-}
-
-async function openMenu(st: State, $: EngineInterface): Promise<{ text: string }> {
+/** The personality tab: every character to pick from, the focus and the preview on the one drawn now. */
+async function openPersonality(st: State, $: EngineInterface): Promise<void> {
   const b = st.b;
-  if (!b) return { text: 'buddy is still starting; try again in a moment' };
-  lg($, 'info', 'menu.open', { current: b.character.id });
+  if (!b) return;
+  st.drawer.tab = 'personality';
+  lg($, 'info', 'personality.open', { current: b.character.id });
+  $.ui.invalidate('ui.render');
   const originals = await findOriginals($);
   const model = buildMenu({ roster: st.roster, shippedError: st.shippedError, customCharactersDir: { isSet: Boolean(st.options.customCharactersDir), error: st.customCharactersDirError }, originals });
   const current = currentKeyOf(b.character.id, st.saved?.variant);
-  const start = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
-  stopMenu(st);
-  const menu: MenuState = { model, current, start, focused: start, frame: 0, timer: null, soul: originals.kind === 'found' ? originals.soul : null, undrawn: 0 };
-  st.menu = menu;
-  menu.timer = $.clock.every(PREVIEW_MS, () => {
-    // A pane gone without ui.close is never drawn again: its preview clock stops with it.
-    if (++menu.undrawn > MENU_UNDRAWN_TICKS) {
-      lg($, 'info', 'menu.gone', { undrawnTicks: menu.undrawn });
-      if (st.menu === menu) stopMenu(st);
-      else menu.timer?.cancel();
-      return;
-    }
-    menu.frame++;
-    $.ui.invalidate('ui.render');
-  });
-  let opened;
-  try {
-    opened = await $.ui.open({ id: MENU_PANE, title: MENU_TITLE, focus: true, closeOnEscape: true, rows: menuRows(model) });
-  } catch (error) {
-    stopMenu(st);
-    log($, `opening /${MENU_COMMAND}`, error);
-    return { text: `/${MENU_COMMAND} couldn't open its pane: ${message(error)}` };
-  }
-  if (!opened.isPlaced) return { text: `The menu is open but not drawn yet: ${opened.reason}` };
-  return { text: `${MENU_TITLE}: ↑/↓ move, Enter picks, Esc closes.` };
+  const focused = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
+  // Left for the talk tab while it was built: never drawn over it.
+  if (st.drawer.tab !== 'personality') return;
+  st.menu = { model, current, focused, soul: originals.kind === 'found' ? originals.soul : null };
+  $.ui.invalidate('ui.render');
 }
 
-/** Enter on a row: switches and remembers the choice (the store's `character`), then the pane closes and the new one greets. */
+/** Back to the talk tab. */
+function showTalk(st: State, $: EngineInterface): void {
+  st.drawer.tab = 'talk';
+  st.menu = null;
+  $.ui.invalidate('ui.render');
+  scrollDrawerToEnd(st, $);
+}
+
+/** Enter on a character: switches and remembers the choice (the store's `character`); the new one greets, the tab stays open on it. */
 async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void> {
   const b = st.b;
   const menu = st.menu;
   if (!b || !menu) return;
   const c = item.character;
   if (!c) {
-    say($, `/${MENU_COMMAND}: can't pick ${item.label}: ${item.error}`);
+    say($, `Can't pick ${item.label}: ${item.error}`);
     return;
   }
   let note = '';
   if (item.pick.kind === 'original') {
     if (!menu.soul) {
-      say($, `/${MENU_COMMAND}: can't pick ${item.label}: its soul was not found`);
+      say($, `Can't pick ${item.label}: its soul was not found`);
       return;
     }
     st.original = { id: ORIGINAL_ID, source: 'original', character: c };
@@ -1041,49 +1328,127 @@ async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void
   }
   setCharacter(b, c, undefined, Math.random);
   L.context.character = c.id;
-  lg($, 'info', 'menu.pick', { id: c.id, kind: item.pick.kind, saved: !note });
+  lg($, 'info', 'personality.pick', { id: c.id, kind: item.pick.kind, saved: !note });
   if (note) speak(b, `${c.name} is here${note}`, 'oops', ERROR_MS);
+  menu.current = item.key;
   startClock(st, $);
   st.lastKey = '';
   $.ui.invalidate('ui.render');
-  stopMenu(st);
-  try {
-    await $.ui.close({ id: MENU_PANE });
-  } catch (error) {
-    log($, `closing /${MENU_COMMAND}`, error);
-  }
 }
 
-function drawMenu(Box: Component, Text: Component, Button: Component, m: MenuState, onPick: (item: Item) => void) {
-  const p = previewOf(findItem(m.model, m.focused), m.frame, Date.now());
-  const groups = m.model.sections.map((s, n) => (
-    <Box key={`group:${n}`} flexDirection="column" marginTop={n === 0 ? 0 : 1}>
-      <Text bold>{s.title}</Text>
-      {s.lines.map((line) => <Text wrap="wrap">{line}</Text>)}
-      {s.items.map((item) => <Button key={item.key} label={rowLabel(item, m.current)} plain autoFocus={item.key === m.start ? true : undefined} onPress={() => onPick(item)} />)}
-    </Box>
-  ));
-  const preview =
-    p.kind === 'error' ? (
-      <Box key="preview" flexDirection="column">
-        <Text bold>{p.label}</Text>
-        <Text wrap="wrap">{`Can't draw it: ${p.error}`}</Text>
-      </Box>
-    ) : (
-      <Box key="preview" flexDirection="column">
-        {p.rows.map((row) => <Text color={p.color}>{row}</Text>)}
-        <Text bold>{p.name}</Text>
-        <Text dimColor wrap="truncate-end">{p.about}</Text>
-        <Text italic wrap="truncate-end">{`“${p.sample}”`}</Text>
-        {p.card.map((row) => <Text wrap="truncate-end">{row}</Text>)}
-      </Box>
-    );
-  return (
-    <Box flexDirection="row" gap={3}>
-      <Box flexDirection="column" flexShrink={0} width={listWidth(m.model)}>{groups}</Box>
-      <Box flexDirection="column" flexGrow={1}>{preview}</Box>
-    </Box>
-  );
+// ---- the drawer: /buddy, the band above the prompt opened ------------------
+
+/** What the drawer draws from, now; null before the buddy is loaded. */
+function drawerView(st: State, feed: readonly FeedEntry[], cols: number, rows: number): DrawerView | null {
+  const b = st.b;
+  if (!b) return null;
+  const now = Date.now();
+  const status = st.hidden ? 'hidden' : st.asking || st.calls > 0 ? 'thinking' : currentPose(b) === 'sleep' ? 'asleep' : 'idle';
+  const pose = status === 'thinking' ? 'thinking' : status === 'asleep' ? 'sleep' : 'idle';
+  return {
+    feed,
+    now,
+    frame: st.drawer.frame,
+    name: b.character.name,
+    color: spriteColor(b.character, now),
+    sprite: frameAt(b.character, pose, st.drawer.frame),
+    status,
+    engine: `${st.options.model} · ${st.options.effort}`,
+    pets: b.pets,
+    turnsRemembered: st.options.chatTurnsToRead,
+    tab: st.drawer.tab,
+    menu: st.drawer.tab === 'personality' ? st.menu : null,
+    cols,
+    rows,
+  };
+}
+
+/** A suggestion into the prompt box, said when the box refuses it. */
+function useSuggestion($: EngineInterface, text: string): void {
+  $.prompt
+    .fill({ text })
+    .then((r) => {
+      lg($, 'info', 'drawer.use', { filled: r.isFilled });
+      if (!r.isFilled) $.ui.toast(`Couldn't put it in the prompt box${'reason' in r && r.reason ? `: ${String(r.reason)}` : ''}`);
+    })
+    .catch((error: unknown) => log($, 'putting a suggestion in the prompt box', error));
+}
+
+/** The drawer's ask box: its unsent text, and Enter asking the buddy whatever it says. */
+function askBox(st: State, $: EngineInterface): { draft: string; setDraft: (text: string) => void; ask: (text: string) => void } {
+  return {
+    draft: st.drawer.draft,
+    setDraft: (t) => {
+      st.drawer.draft = t;
+    },
+    ask: (t) => {
+      if (!t.trim()) return;
+      st.drawer.draft = '';
+      $.ui.invalidate('ui.render');
+      runCommand(st, $, t, true)
+        .then((r) => {
+          if (!r.text.startsWith('Asked ')) $.ui.toast(r.text);
+        })
+        .catch((error: unknown) => log($, 'asking from the drawer', error));
+    },
+  };
+}
+
+/** The drawer's window over its thread moved to the newest, once it is drawn. */
+function scrollDrawerToEnd(st: State, $: EngineInterface): void {
+  const id = st.drawer.bandId;
+  if (!id || st.drawer.tab !== 'talk') return;
+  $.clock.after(0, () => {
+    $.ui.scroll({ to: 'end', in: id }).catch((error: unknown) => log($, 'scrolling the drawer to its newest', error));
+  });
+}
+
+/** /buddy: the band above the prompt opens into the drawer, or folds back into the buddy; its clock runs while it is open. */
+function toggleDrawer(st: State, $: EngineInterface): { text: string } {
+  if (!st.b) return { text: 'buddy is still starting; try again in a moment' };
+  const d = st.drawer;
+  d.open = !d.open;
+  if (d.open) {
+    d.timer ??= $.clock.every(DRAWER_MS, () => {
+      d.frame++;
+      $.ui.invalidate('ui.render');
+    });
+    scrollDrawerToEnd(st, $);
+  } else {
+    d.timer?.cancel();
+    d.timer = null;
+    d.tab = 'talk';
+    st.menu = null;
+  }
+  lg($, 'info', d.open ? 'drawer.open' : 'drawer.close', {});
+  $.ui.invalidate('ui.render');
+  return { text: d.open ? 'The drawer is open above your prompt: ctrl+x tab steps in, ←→ move, ↑↓ scroll, ctrl+x x closes.' : 'The drawer folded back.' };
+}
+
+/** The drawer in the band above the prompt; a thread taller than the band scrolls in it. */
+async function drawDrawerBand(st: State, $: EngineInterface, e: { surface: string; requestId: string; props: BandProps }): Promise<RenderElement | null> {
+  const E = $.ui.resolve(e as never) as unknown as Elements;
+  const first = st.drawer.bandId === '';
+  st.drawer.bandId = e.requestId;
+  if (first) scrollDrawerToEnd(st, $);
+  const feed = await read($, FEED);
+  const v = drawerView(st, feed, e.props.bodyColumns, e.props.maxRows);
+  if (!v) return null;
+  return drawDrawer(E, v, {
+    use: (text) => useSuggestion($, text),
+    ...askBox(st, $),
+    close: () => toggleDrawer(st, $),
+    pet: () => {
+      runCommand(st, $, '', false, true).catch((error: unknown) => log($, 'petting from the drawer', error));
+    },
+    talk: () => showTalk(st, $),
+    personality: () => {
+      openPersonality(st, $).catch((error: unknown) => log($, 'opening the personality tab', error));
+    },
+    pick: (item) => {
+      pickItem(st, $, item).catch((error: unknown) => log($, `picking ${item.label}`, error));
+    },
+  });
 }
 
 // ---- command.run: /buddy ------------------------------------------------
@@ -1120,10 +1485,10 @@ function shape(r: ModelCompleteResult | 'timeout'): LogFields {
 /**
  * One /buddy question of `c` to its outcome, always visible: an answer, or
  * "{name} couldn't answer: {reason}" in the bubble. `model` answers
- * from persona, rememberedExchanges (what `c` remembered before this question), the main
- * chat's last chatTurnsToRead turns (`chatTurnsToReadText`) and question, whether or not
+ * from persona, chatTurnsToRead (what `c` remembers of the main chat's last turns and
+ * of what it and the user said around them, before this question) and question, whether or not
  * the main turn is running. One deadline, from the question's start, covers
- * the rememberedExchanges read, the settings and the completion.
+ * the chatTurnsToRead read, the settings and the completion.
  */
 async function ask(st: State, $: EngineInterface, question: string, c: Character): Promise<void> {
   const b = st.b;
@@ -1134,6 +1499,8 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
   const started = st.asking?.since ?? Date.now();
   // The conversation it is asked in: a /clear or resume before the answer drops it.
   const conversation = st.conversation;
+  // The turn it is asked after: its exchange is filed there, however many turns end before the answer.
+  const after = st.lastTurnId;
   const ms = Math.max(0, COMPLETE_DEADLINE_MS - (Date.now() - started));
   let cleared = false;
   let said = '';
@@ -1148,16 +1515,16 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
       sleeper($),
       (async (): Promise<ModelCompleteResult | 'timeout'> => {
         const t0 = await $.clock.now();
-        // The rememberedExchanges and the settings do not wait on each other.
-        const [rememberedExchanges, settings] = await Promise.all([readRememberedExchanges(st, $, c, ms), callSettings(st, $, 'ask.settings')]);
+        // The chatTurnsToRead and the settings do not wait on each other.
+        const [remembered, settings] = await Promise.all([readChatTurnsToRead(st, $, c, ms), callSettings(st, $, 'ask.settings')]);
         // Past the deadline already: no completion is sent that nobody waits for.
         if (late) return 'timeout' as const;
-        // A completion does not see the chat: the chatTurnsToRead turns tell it where the chat stands.
-        const prompt = questionPrompt(question, rememberedExchanges, chatTurnsToReadText(st.turns));
+        // A completion does not see the chat: the chatTurnsToRead tells it where the chat stands.
+        const prompt = questionPrompt(question, remembered.text);
         lg($, 'debug', 'ask.prompt', { length: prompt.length });
         // Abandoned the margin past the deadline, however late it is sent.
         const send = async (): Promise<ModelCompleteResult> =>
-          $.model.complete({ ...settings, system: oneLineSystem(c.persona), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: requestTimeoutMs(ms, (await $.clock.now()) - t0) });
+          completeRecorded(st, $, 'question', { ...settings, system: oneLineSystem(c.persona, st.options.chatTurnsToRead), prompt, maxTokens: QUESTION_MAX_TOKENS, timeoutMs: requestTimeoutMs(ms, (await $.clock.now()) - t0) }, remembered.memory);
         const first = await send();
         paid = first.usage;
         const leftMs = ms - ((await $.clock.now()) - t0);
@@ -1214,20 +1581,27 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
   const hidden = !shown && st.hidden;
   if (!shown && !hidden) warn($, 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
   lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', ...(reason ? { reason } : {}), ms: Date.now() - started, ...usage });
+  // The drawer: the answer, or why there is none.
+  const tokens = tokensOf(usage);
+  if (said && shown) feedAdd(st, $, { at: Date.now(), kind: 'answer', text: said, ...voice(c), ms: Date.now() - started, ...(tokens ? { tokens } : {}) });
+  else if (reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: reason, ...voice(c), ms: Date.now() - started });
   // One exchange: the question with its answer as shown, or the question alone.
-  rememberExchange(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question });
+  rememberExchange(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question }, after);
   refresh(st, $);
 }
 
-async function runCommand(st: State, $: EngineInterface, args: string): Promise<{ text: string }> {
+/** /buddy with `args`; `asQuestion` (the drawer's ask box) takes them as a question whatever they say, `off` or `help` too. */
+async function runCommand(st: State, $: EngineInterface, args: string, asQuestion = false, petting = false): Promise<{ text: string }> {
   const b = st.b;
   if (!b) return { text: 'buddy is still starting; try again in a moment' };
-  const action = parseCommand(args);
+  const action: Action = asQuestion ? { kind: 'question', text: args.trim() } : petting ? { kind: 'pet' } : parseCommand(args);
   lg($, 'info', 'command', { name: COMMAND, kind: action.kind, argsLength: args.trim().length });
   // This call took the one question slot: a failure before its ask ends frees it and ends the thinking line.
   let began = false;
   try {
     switch (action.kind) {
+      case 'drawer':
+        return toggleDrawer(st, $);
       case 'pet': {
         // Another session sharing the store may have petted it since: its count is the floor.
         try {
@@ -1276,7 +1650,7 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
       case 'help':
         return { text: [USAGE, ...st.options.errors].join('\n') };
       case 'moved':
-        return { text: `Switching characters moved to /${MENU_COMMAND}.` };
+        return { text: `Switching characters moved to the drawer's personality tab: /${COMMAND} opens it.` };
       case 'log': {
         if (!L.file) return { text: 'No log file: the option logFile is empty (failures still go to the debug log).' };
         try {
@@ -1301,7 +1675,8 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
         began = true;
         lg($, 'info', 'ask.start', { length: action.text.length });
         lg($, 'debug', 'ask.question', { question: action.text });
-        // The thinking line at once; ask reads the rememberedExchanges, the question joining it with its answer.
+        feedAdd(st, $, { at: Date.now(), kind: 'ask', text: action.text });
+        // The thinking line at once; ask reads the chatTurnsToRead, the question joining it with its answer.
         beginQuestion(b, Math.random);
         refresh(st, $);
         ask(st, $, action.text, c).catch((error) => {
@@ -1311,9 +1686,9 @@ async function runCommand(st: State, $: EngineInterface, args: string): Promise<
           failAnswer(b, message(error), c.id);
           refresh(st, $);
         });
-        const trouble = st.rememberedExchangesError;
-        st.rememberedExchangesError = '';
-        return { text: `Asked ${c.name}.${trouble ? ` (Its rememberedExchanges: ${trouble})` : ''}` };
+        const trouble = st.chatTurnsToReadError;
+        st.chatTurnsToReadError = '';
+        return { text: `Asked ${c.name}.${trouble ? ` (Its chatTurnsToRead: ${trouble})` : ''}` };
       }
     }
   } catch (error) {
@@ -1345,11 +1720,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
     clockPeriod: 0,
     lastKey: '',
     lastTickError: '',
-    rememberedExchanges: null,
-    rememberedExchangesChain: newChain(),
-    rememberedExchangesWrites: latestWrites<Stored>(),
-    rememberedExchangesError: '',
-    rememberedExchangesHangSaid: false,
+    chatTurnsToRead: null,
+    chatTurnsToReadChain: newChain(),
+    chatTurnsToReadWrites: latestWrites<Stored>(),
+    chatTurnsToReadError: '',
+    chatTurnsToReadHangSaid: false,
     asking: null,
     interactive: true,
     bandSeen: false,
@@ -1365,8 +1740,23 @@ export const register: Register = (on: On, options: PluginOptions) => {
     prompts: NO_PROMPTS,
     mainTurn: undefined,
     conversation: 0,
-    turns: [],
+    turnStarts: 0,
+    lastTurnId: undefined,
     warned: false,
+    roundsDir: '',
+    round: null,
+    roundBubble: null,
+    roundsChain: Promise.resolve(),
+    roundsFailed: false,
+    calls: 0,
+    feedChain: Promise.resolve(),
+    drawer: { open: false, tab: 'talk', timer: null, frame: 0, draft: '', bandId: '' },
+  };
+  // Every log record, at any level, joins the round being written; the drawing's per-second records and a round write's own failure do not.
+  tapped = st;
+  L.tap = (r) => {
+    if (r.event === 'band.scene' || r.event === 'clock.tick' || r.event === 'writing a round file') return;
+    roundAppend(st, eventLine(r.at, `LOG ${r.level} ${r.event} ${capValue(r.fields)}`));
   };
 
   on('session.start', async ($, e, next) => {
@@ -1384,6 +1774,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
     try {
       if (st.hidden && Date.now() - st.sharedAt >= SHARED_MS) syncHidden(st, $);
       const scene = bandScene(st, $, e.props);
+      // The drawer takes the band's place, hidden buddy or not; a survey still wins.
+      if (st.drawer.open && !e.props.hasSurvey) {
+        const tree = await drawDrawerBand(st, $, e);
+        if (tree) return tree;
+      }
       if (!scene) return next(e);
       const { Box, Text } = $.ui.resolve(e);
       return drawBand(Box, Text, scene);
@@ -1459,53 +1854,33 @@ export const register: Register = (on: On, options: PluginOptions) => {
     }
   });
 
-  on('command.run', { command: MENU_COMMAND }, async ($) => {
+  // The personality tab's preview follows the focus: ← and →, Tab, or a click move the ring onto a character.
+  on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
     try {
-      return await openMenu(st, $);
-    } catch (error) {
-      stopMenu(st);
-      log($, `/${MENU_COMMAND}`, error);
-      return { text: `/${MENU_COMMAND} failed: ${message(error)}` };
-    }
-  });
-
-  on('ui.render', { component: 'Pane', requestId: MENU_PANE }, async ($, e, next) => {
-    try {
-      const { Box, Text, Button } = $.ui.resolve(e);
-      // A pane kept open across a reload has no menu behind it: said, never blank.
-      if (!st.menu) return <Text>{`The menu closed; /${MENU_COMMAND} opens it again.`}</Text>;
-      st.menu.undrawn = 0;
-      return drawMenu(Box, Text, Button, st.menu, (item) => {
-        pickItem(st, $, item).catch((error) => log($, `picking ${item.label}`, error));
-      });
-    } catch (error) {
-      log($, 'drawing the menu', error);
-      return next(e);
-    }
-  });
-
-  // The preview follows the focus: arrows, Tab or a click move the ring onto a row.
-  on('ui.focus', { requestId: MENU_PANE }, async ($, e, next) => {
-    try {
-      lg($, 'debug', 'menu.focus', { element: e.element ?? null, origin: (e as { origin?: { kind?: string } }).origin?.kind ?? null, menu: st.menu !== null });
-      if (st.menu && e.element !== undefined && findItem(st.menu.model, e.element)) {
+      if (st.drawer.tab === 'personality' && st.menu && e.element !== undefined && findItem(st.menu.model, e.element)) {
         st.menu.focused = e.element;
-        st.menu.frame = 0;
         $.ui.invalidate('ui.render');
       }
     } catch (error) {
-      log($, 'following the menu focus', error);
+      log($, 'following the focus in the personality tab', error);
     }
     return next(e);
   });
 
-  // Esc (or the close mark) closes the menu and changes nothing.
-  on('ui.close', async ($, e, next) => {
+  // The main chat compacted: the buddy files the summary Claude now holds, as it files a turn.
+  on('session.compact', async ($, e, next) => {
+    const r = await next(e);
     try {
-      if (e.id === MENU_PANE) stopMenu(st);
+      if (r.messages && e.trigger !== 'precompute' && isMainLoop(e.agentId) && st.interactive) {
+        const before = new Set(e.messages.map((m) => m.handle).filter((h): h is string => h !== undefined));
+        // The summary is the message the compaction wrote: one the transcript did not hold before.
+        const summary = r.messages.filter((m) => m.handle === undefined || !before.has(m.handle)).map((m) => m.text).filter((t) => t.trim()).join('\n\n');
+        if (summary) rememberCompaction(st, $, summary);
+        else lg($, 'info', 'compaction.remembered', { length: 0, reason: 'no summary message' });
+      }
     } catch (error) {
-      log($, `closing /${MENU_COMMAND}`, error);
+      log($, 'remembering the compaction', error);
     }
-    return next(e);
+    return r;
   });
 };

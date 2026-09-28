@@ -3,12 +3,14 @@
 # Haiku) with this checkout loaded by --plugin-dir, two user turns each, the
 # buddy options pinned per session (model opus, effort low, logLevel debug,
 # logFile in the session's folder, always), every turn measured:
-#   S1 defaults (commentAfterEachTurn, suggestNextPrompt, rememberedExchanges 6): after each turn commentAfterEachTurn
+#   S1 defaults (commentAfterEachTurn, suggestNextPrompt, chatTurnsToRead 4): after each turn commentAfterEachTurn
 #      shows in the bubble and suggestNextPrompt in the prompt box; a /buddy question is
-#      answered, and a second one referring to it is answered from rememberedExchanges
+#      answered, and a second one referring to it is answered from chatTurnsToRead
 #   S2 commentAfterEachTurn false: no commentAfterEachTurn after a turn, suggestNextPrompt still shown
-#   S3 suggestNextPrompt false, rememberedExchanges 0: commentAfterEachTurn shows; no suggestNextPrompt; no rememberedExchanges kept
-#      or read (the store holds nothing for the session)
+#   S3 suggestNextPrompt false, chatTurnsToRead 1, roundsDir: commentAfterEachTurn shows; no suggestNextPrompt; the store
+#      holds only the last turn, and a question about the turn before it is answered as out of memory;
+#      roundsDir pre-filled with 150 files: each round overwrites the least recently written, the folder
+#      stays at 150, each turn's whole timeline in its round and each call verbatim
 #   S4 headless `claude -p`, then `-p --resume`: turn.skipped why headless and
 #      no model call from the plugin
 #   S5 customCharactersDir with one invalid character, the character option naming it:
@@ -20,8 +22,8 @@
 # Up to three sessions run at once, each on its own tmux socket and folder.
 # Writes /tmp/buddy/configs-{timestamp}/report.md and report.json; exits 1
 # when a check fails, 2 when a session could not be driven. Spends real tokens:
-# Haiku for the main chats, opus at low effort for the buddy. The --plugin-dir
-# store is set aside for the run and put back on exit.
+# Haiku for the main chats, opus at low effort for the buddy. Each session runs
+# in its own config dir under its folder (live_isolate in live-lib.sh).
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -31,7 +33,6 @@ CHARS=$PLUGIN/characters
 . "$ROOT/scripts/live-lib.sh"
 live_require
 command -v node >/dev/null || { echo "ERROR node not found"; exit 2; }
-PROJECTS=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects
 SESSIONS="S1 S2 S3 S4 S5"
 
 # ---- one session (a child process: ./live-configs.sh --session S1 {folder}) ----
@@ -41,7 +42,7 @@ options_of() {
   case $1 in
     S1|S4) echo '{}' ;;
     S2) echo '{ "commentAfterEachTurn": false }' ;;
-    S3) echo '{ "suggestNextPrompt": false, "rememberedExchanges": 0 }' ;;
+    S3) jq -n --arg d "$RUN/rounds" '{ suggestNextPrompt: false, chatTurnsToRead: 1, roundsDir: $d }' ;;
     S5) jq -n --arg d "$RUN/chars" '{ customCharactersDir: $d, character: "broken" }' ;;
   esac
 }
@@ -49,8 +50,8 @@ lines() { [ -f "$RUN/buddy.log" ] && wc -l < "$RUN/buddy.log" | tr -d ' ' || ech
 # How many records of event $1 the log holds from line $2 on.
 count() { tail -n +"$(($2 + 1))" "$RUN/buddy.log" 2>/dev/null | jq -c --arg e "$1" 'select(.event == $e)' 2>/dev/null | grep -c .; }
 check() { printf '%s\t%s\t%s\n' "$1" "$2" "${3//$'\t'/ }" >> "$RUN/checks.tsv"; [ "$1" = PASS ] || log "FAIL $2: $3"; }
-# The newest `kind` exchange of this session's rememberedExchanges in the store, or nothing.
-stored() { local s; s=$(store_file); [ -n "$s" ] && jq -r --arg k "rememberedExchanges:$ID" --arg kind "$1" '[.[$k].characters[]?[]? | select(.kind == $kind)] | last | if . == null then empty elif .kind == "question" then "\(.question) -> \(.answer // "(no answer)")" else .text end' "$s" 2>/dev/null; }
+# The newest `question` exchange of this session's chatTurnsToRead in the store, or the newest endOfTurn exchange's `commentAfterEachTurn` or `suggestNextPrompt`; nothing when none.
+stored() { local s; s=$(store_file); [ -n "$s" ] && jq -r --arg k "chatTurnsToRead:$ID" --arg f "$1" '[.[$k].blocks[]?.characters[]?[]? | if $f == "question" then select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")" else select(.kind == "endOfTurn") | .[$f] // empty end] | last // empty' "$s" 2>/dev/null; }
 # The transcript's reply holding $1: its timestamp, or nothing.
 reply_ts() { local f; f=$(transcript); [ -n "$f" ] && jq -r --arg m "$1" 'select(.type=="assistant") | select(any(.message.content[]?; .type=="text" and (.text|contains($m)))) | .timestamp' "$f" 2>/dev/null | tail -1; }
 squash() { tr -s ' \n' '  ' | sed 's/^ //; s/ $//'; }
@@ -114,7 +115,7 @@ turn() {
   commentAfterEachTurn_text=$(stored commentAfterEachTurn | squash); suggestNextPrompt_text=$(stored suggestNextPrompt | squash)
   if [ "$(count commentAfterEachTurn.outcome "$from")" -gt 0 ]; then
     case $(tail -n +"$((from + 1))" "$RUN/buddy.log" | jq -r 'select(.event == "commentAfterEachTurn.outcome") | .outcome' | tail -1) in
-      answered) if [ -n "$commentAfterEachTurn_text" ]; then grep -q -F -- "${commentAfterEachTurn_text:0:24}" <<<"$b" && pm=match || pm="mismatch: stored '${commentAfterEachTurn_text:0:40}'"; else [ -n "$b" ] && pm="non-empty (no rememberedExchanges to match)" || pm="empty bubble"; fi ;;
+      answered) if [ -n "$commentAfterEachTurn_text" ]; then grep -q -F -- "${commentAfterEachTurn_text:0:24}" <<<"$b" && pm=match || pm="mismatch: stored '${commentAfterEachTurn_text:0:40}'"; else [ -n "$b" ] && pm="non-empty (no chatTurnsToRead to match)" || pm="empty bubble"; fi ;;
       failed) grep -q "couldn't answer" <<<"$b" && pm="failure shown" || pm="no failure in the bubble" ;;
       *) pm="n/a" ;;
     esac
@@ -148,8 +149,15 @@ row_of() { tail -1 "$RUN/turns.jsonl" | jq -r --arg f "$1" '.[$f] // "" | tostri
 
 run_session() {
   S=$1; RUN=$2; WORK=$RUN/work; LOG=$RUN/drive.log
+  live_isolate
   mkdir -p "$WORK"; : > "$RUN/checks.tsv"; : > "$RUN/turns.jsonl"
   ID=$(uuidgen | tr 'A-Z' 'a-z'); echo "$ID" > "$RUN/session-id"
+  # roundsDir full at its cap: 150 slots, round-042 written longest ago, round-017 next.
+  if [ "$S" = S3 ]; then
+    mkdir -p "$RUN/rounds"
+    for n in $(seq 1 150); do f=$RUN/rounds/$(printf 'round-%03d.txt' "$n"); echo "seeded $n" > "$f"; touch -t 202601020000 "$f"; done
+    touch -t 202501010000 "$RUN/rounds/round-042.txt"; touch -t 202501020000 "$RUN/rounds/round-017.txt"
+  fi
   if [ "$S" = S5 ]; then mkdir -p "$RUN/chars"; printf '%s\n' '{ "name": "Broken", "poses": 3 }' > "$RUN/chars/broken.json"; fi
   jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" \
     '{ pluginConfigs: { "buddy@inline": { options: ({ model: "opus", effort: "low", logLevel: "debug", logFile: $log } + $o) } } }' > "$RUN/settings.json"
@@ -159,11 +167,11 @@ run_session() {
 
   if [ "$S" = S4 ]; then
     local f1 f2 from=0 end
-    (cd "$WORK" && CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 "$CLAUDE_BIN" -p --model haiku --setting-sources project --settings "$RUN/settings.json" \
+    (cd "$WORK" && "$LIVE_CLAUDE" -p --model haiku --setting-sources project --settings "$RUN/settings.json" \
       --plugin-dir "$PLUGIN" --session-id "$ID" "Reply with exactly: S4T1" < /dev/null > "$RUN/p1.txt" 2>&1) || { echo "ERROR claude -p exited $?: $(head -c 200 "$RUN/p1.txt")" >&2; exit 2; }
     end=$(reply_ts S4T1); metrics S4T1 0 "$end" "" "" ""
     from=$(lines)
-    (cd "$WORK" && CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 "$CLAUDE_BIN" -p --model haiku --setting-sources project --settings "$RUN/settings.json" \
+    (cd "$WORK" && "$LIVE_CLAUDE" -p --model haiku --setting-sources project --settings "$RUN/settings.json" \
       --plugin-dir "$PLUGIN" --resume "$ID" "Reply with exactly: S4T2" < /dev/null > "$RUN/p2.txt" 2>&1) || { echo "ERROR claude -p --resume exited $?: $(head -c 200 "$RUN/p2.txt")" >&2; exit 2; }
     end=$(reply_ts S4T2); metrics S4T2 "$from" "$end" "" "" ""
     grep -q S4T1 "$RUN/p1.txt" && grep -q S4T2 "$RUN/p2.txt" || { echo "ERROR a -p reply lacks its marker: $(head -c 80 "$RUN/p1.txt") / $(head -c 80 "$RUN/p2.txt")" >&2; exit 2; }
@@ -177,7 +185,7 @@ run_session() {
   T="tmux -L buddy-cfg-$S"; TGT=$S
   $T kill-server 2>/dev/null
   $T new-session -d -s "$S" -x 160 -y 50 -c "$WORK" \
-    "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 '$CLAUDE_BIN' --model haiku --setting-sources project --settings '$RUN/settings.json' \
+    "'$LIVE_CLAUDE' --model haiku --setting-sources project --settings '$RUN/settings.json' \
      --allowedTools Bash --plugin-dir '$PLUGIN' --session-id $ID"
   trap '$T capture-pane -p -t "$TGT" -S -300 > "$RUN/pane.txt" 2>/dev/null; f=$(transcript); [ -n "$f" ] && cp "$f" "$RUN/main.jsonl"; $T kill-server 2>/dev/null' EXIT
   live_boot
@@ -193,7 +201,7 @@ run_session() {
       while [ $((SECONDS - t0)) -lt 12 ]; do seen=$(bubble); grep -q "Couldn't load broken" <<<"$seen" && break; sleep 0.3; done
     fi
     pane > "$RUN/pane-error.txt"
-    if grep -q "Couldn't load broken" <<<"$seen" && grep -q '/buddy-personality' <<<"$seen" && shows_any "$RUN/duck.rows"; then check PASS "the duck is drawn with a bubble naming the error" "at $via: $seen"
+    if grep -q "Couldn't load broken" <<<"$seen" && grep -q 'personality tab' <<<"$seen" && shows_any "$RUN/duck.rows"; then check PASS "the duck is drawn with a bubble naming the error" "at $via: $seen"
     else check FAIL "the duck is drawn with a bubble naming the error" "at $via, bubble: ${seen:-empty}; duck drawn: $(shows_any "$RUN/duck.rows" && echo yes || echo no); pane in $RUN/pane-error.txt"; fi
   fi
 
@@ -216,16 +224,32 @@ run_session() {
     esac
   done
   if [ "$S" = S3 ]; then
-    local st mem
-    st=$(store_file); mem=$([ -n "$st" ] && jq -r --arg k "rememberedExchanges:$ID" '.[$k] // empty | tostring' "$st" 2>&1)
-    [ -z "$mem" ] && check PASS "rememberedExchanges 0: nothing kept or read for the session" "$([ -n "$st" ] && echo "the store has no rememberedExchanges:$ID" || echo "no store file"); turn.prompt lengths $(jq -r -s 'map(.promptLength) | join(",")' "$RUN/turns.jsonl")" || check FAIL "rememberedExchanges 0: nothing kept or read for the session" "${mem:0:120}"
+    local st kept a
+    st=$(store_file); kept=$([ -n "$st" ] && jq -r --arg k "chatTurnsToRead:$ID" '[.[$k].blocks[]? | select(.turn) | .turn.prompt] | join(" | ")' "$st" 2>&1)
+    grep -q 'S3T2' <<<"$kept" && ! grep -q 'S3T1' <<<"$kept" && check PASS "chatTurnsToRead 1: the store holds only the last turn" "$kept" || check FAIL "chatTurnsToRead 1: the store holds only the last turn" "${kept:0:160}"
+    # The buddy knows its memory is one turn long: asked about the turn before it, it says so, never guesses.
+    ask "what Bash command did Claude run in the turn before my last one?" "ask-past"; a=$(stored question)
+    [ "$(row_of outcome)" = answered ] && grep -q -i -E 'memory|remember|recall|forg' <<<"$a" && ! grep -q -E '(^|[^a-z])ls([^a-z]|$)' <<<"${a#*->}" && check PASS "a question past chatTurnsToRead is answered as out of memory" "$a" || check FAIL "a question past chatTurnsToRead is answered as out of memory" "$ASK_OUT / $(row_of outcome) / ${a:-nothing stored}"
+    # roundsDir at its cap: the session's start, T1 and T2 each overwrote the least recently written slot (042, 017, then one of the rest), the folder still holds 150.
+    # T1's round holds its prompt, the Bash call with its arguments and output, the log, the bubble, the turn's end and its end-of-turn call verbatim;
+    # T2's round also the question, asked after T2 ended.
+    local n r1 r2
+    n=$(ls "$RUN/rounds" | grep -c .)
+    r1=$(grep -l '─── IN · the prompt the turn began with ───' "$RUN/rounds"/*.txt | xargs grep -l 'S3T1' | head -1)
+    r2=$(grep -l '─── IN · the prompt the turn began with ───' "$RUN/rounds"/*.txt | xargs grep -l 'Reply with exactly: S3T2' | head -1)
+    [ "$n" = 150 ] && ! grep -q seeded "$RUN/rounds/round-042.txt" "$RUN/rounds/round-017.txt" \
+      && [ -n "$r1" ] && grep -q 'IN · tool call Bash' "$r1" && grep -q '      command: ls' "$r1" && grep -q '  LOG info turn.call' "$r1" && grep -q 'OUT · bubble' "$r1" \
+      && grep -q 'the turn ended (answer), as the buddy filed it' "$r1" && grep -q 'BUDDY CALL 1 · end-of-turn call' "$r1" && grep -q '─── IN: system ───' "$r1" \
+      && [ -n "$r2" ] && grep -q '/buddy question' "$r2" && grep -q 'turn before my last one' "$r2" && grep -q '─── OUT: answered' "$r2" \
+      && check PASS "roundsDir at 150: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2")" \
+      || check FAIL "roundsDir at 150: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$RUN/rounds" | head -4 | tr '\n' ' ')"
   fi
   if [ "$S" = S1 ]; then
     local a1 a2
     ask "remember the word tangerine" "ask1"; a1=$(stored question)
     [ "$(row_of outcome)" = answered ] && check PASS "/buddy question answered" "$a1" || check FAIL "/buddy question answered" "$ASK_OUT / $(row_of outcome) / bubble $(row_of bubble)"
     ask "what word did I ask you to remember?" "ask2"; a2=$(stored question)
-    [ "$(row_of outcome)" = answered ] && grep -q -i tangerine <<<"$a2 $(row_of bubble)" && check PASS "a second question is answered from rememberedExchanges" "$a2" || check FAIL "a second question is answered from rememberedExchanges" "$ASK_OUT / $(row_of outcome) / ${a2:-nothing stored} / bubble $(row_of bubble)"
+    [ "$(row_of outcome)" = answered ] && grep -q -i tangerine <<<"$a2 $(row_of bubble)" && check PASS "a second question is answered from chatTurnsToRead" "$a2" || check FAIL "a second question is answered from chatTurnsToRead" "$ASK_OUT / $(row_of outcome) / ${a2:-nothing stored} / bubble $(row_of bubble)"
   fi
 }
 
@@ -235,8 +259,6 @@ if [ "${1:-}" = --session ]; then run_session "$2" "$3"; exit $?; fi
 TOP=/tmp/buddy/configs-$(date +%Y%m%dT%H%M%S)
 RUN=$TOP; LOG=$TOP/drive.log
 mkdir -p "$TOP"
-live_store_aside
-trap restore_store EXIT
 echo "run dir: $TOP"
 # Each session's exit code lands in {folder}/exit: 2 = not driven.
 for wave in "S1 S2 S3" "S4 S5"; do

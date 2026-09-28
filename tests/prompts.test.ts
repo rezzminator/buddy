@@ -1,91 +1,50 @@
 import { describe, expect, test } from 'vitest';
 import {
-  CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, lostThread, pushTurn, chatTurnsToReadText, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
+  CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, lostThread, memoryRule, oneLine, oneLineSystem, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
   test('the completion system and prompt', () => {
-    expect(oneLineSystem('You are X.')).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${ONE_LINE_RULE}`);
+    expect(oneLineSystem('You are X.', 4)).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${memoryRule(4)}\n\n${ONE_LINE_RULE}`);
     expect(questionPrompt('hi')).toBe('The user asks you directly: hi');
   });
   test('the turn prompt counts tools and caps the command', () => {
-    const p = turnPrompt({ tools: ['Bash', 'Read', 'Bash'], failures: 1, lastBash: 'x'.repeat(200) }, [{ prompt: 'fix it', answer: 'Fixed.' }]);
+    const p = turnPrompt({ tools: ['Bash', 'Read', 'Bash'], failures: 1, lastBash: 'x'.repeat(200), actions: [] });
     expect(p).toContain(`Tools used: Bash x2, Read. Failures: 1. Last shell command: ${'x'.repeat(120)}.`);
-    expect(turnPrompt({ tools: [], failures: 0, lastBash: '' }, [{ prompt: 'hi', answer: 'Hello.' }])).toContain('Tools used: none. Failures: 0. Last shell command: none.');
+    expect(turnPrompt({ tools: [], failures: 0, lastBash: '', actions: [] })).toBe('In the turn that just ended: Tools used: none. Failures: 0. Last shell command: none.');
   });
   test('oneLine takes the first non-empty line, unquoted, capped', () => {
     expect(oneLine('\n  "Hello there."  \nmore')).toBe('Hello there.');
     expect(oneLine('')).toBe('');
-    expect(oneLine('y'.repeat(300))).toHaveLength(240);
+    expect(oneLine('y'.repeat(3000))).toHaveLength(3000);
   });
   test('lostThread', () => {
     expect(lostThread('Fixy', 'api-error')).toBe("Fixy couldn't answer: api-error");
   });
 });
 
-describe('rememberedExchanges in the prompts', () => {
-  const rememberedExchanges = 'Recently (oldest first):\nYou: remember pineapple\nCat: Noted.';
-  test('before the question, with leave to refer back to it', () => {
-    const c = questionPrompt('what word', rememberedExchanges);
-    expect(c.startsWith(rememberedExchanges)).toBe(true);
-    expect(c).toContain('you may refer back to it');
-    expect(c.endsWith('The user asks you directly: what word')).toBe(true);
-    const tp = turnPrompt({ tools: ['Read'], failures: 0, lastBash: '' }, [{ prompt: 'hi', answer: 'Hello.' }], rememberedExchanges);
-    expect(tp.startsWith(rememberedExchanges)).toBe(true);
-    expect(tp).toContain('you may refer back to it');
+describe('chatTurnsToRead in the prompts', () => {
+  const chatTurnsToRead = 'What you remember, oldest first:\n\nTurn 1. The user asked Claude:\nbuild it\nClaude answered:\nBuilt.\n- The user asked you: remember pineapple\n  You answered: Noted.';
+  test('before the question and before what the turn did, set apart by a blank line', () => {
+    expect(questionPrompt('what word', chatTurnsToRead)).toBe(`${chatTurnsToRead}\n\nThe user asks you directly: what word`);
+    const tp = turnPrompt({ tools: ['Read'], failures: 0, lastBash: '', actions: [] }, chatTurnsToRead);
+    expect(tp).toBe(`${chatTurnsToRead}\n\nIn the turn that just ended: Tools used: Read. Failures: 0. Last shell command: none.`);
   });
-  test('a completion\'s question sees the main chat\'s chatTurnsToRead turns, after the rememberedExchanges and before the question', () => {
-    const chatTurns = chatTurnsToReadText([{ prompt: 'build the thing', answer: 'Built it.' }]);
-    expect(chatTurns).toContain('The user asked Claude:\nbuild the thing');
-    expect(chatTurns).toContain('Claude answered:\nBuilt it.');
-    const q = questionPrompt('can you see the main chat?', rememberedExchanges, chatTurns);
-    expect(q.startsWith(rememberedExchanges)).toBe(true);
-    expect(q.indexOf('Built it.')).toBeGreaterThan(q.indexOf(rememberedExchanges));
-    expect(q.endsWith('The user asks you directly: can you see the main chat?')).toBe(true);
-    expect(chatTurnsToReadText([])).toBe('');
-    expect(questionPrompt('hi', '', '')).toBe('The user asks you directly: hi');
-  });
-  test('the chatTurnsToRead turns render oldest first, each prompt and answer keeping its end past its cap; the turn prompt reads the same block', () => {
-    const turns = [{ prompt: 'first ask', answer: 'first reply' }, { prompt: '', answer: '' }, { prompt: 'third ask', answer: 'third reply' }];
-    const w = chatTurnsToReadText(turns);
-    expect(w.indexOf('first ask')).toBeLessThan(w.indexOf('first reply'));
-    expect(w.indexOf('first reply')).toBeLessThan(w.indexOf('(not seen)'));
-    expect(w.indexOf('(no text)')).toBeLessThan(w.indexOf('third ask'));
-    expect(w.match(/The user asked Claude:/g)).toHaveLength(3);
-    const long = chatTurnsToReadText([{ prompt: `START${'a'.repeat(1500)}END`, answer: `HEAD${'b'.repeat(3000)}TAIL` }]);
-    expect(long).toContain(`...${'a'.repeat(1497)}END`);
-    expect(long).toContain(`...${'b'.repeat(2996)}TAIL`);
-    expect(long).not.toContain('START');
-    expect(long).not.toContain('HEAD');
-    expect(chatTurnsToReadText([{ prompt: 'p'.repeat(1500), answer: 'a'.repeat(3000) }])).not.toContain('...');
-    expect(turnPrompt({ tools: [], failures: 0, lastBash: '' }, turns)).toContain(w);
-  });
-  test('pushTurn keeps the last CHAT_TURNS_TO_READ_DEFAULT (3) turns, dropping the oldest, never changing the one it is given', () => {
-    expect(CHAT_TURNS_TO_READ_DEFAULT).toBe(3);
-    const t = (n: number) => ({ prompt: `p${n}`, answer: `a${n}` });
-    let turns: ReturnType<typeof t>[] = [];
-    for (let n = 1; n <= 3; n++) turns = pushTurn(turns, t(n));
-    expect(turns).toEqual([t(1), t(2), t(3)]);
-    const before = turns;
-    turns = pushTurn(turns, t(4));
-    expect(turns).toEqual([t(2), t(3), t(4)]);
-    expect(before).toEqual([t(1), t(2), t(3)]);
-  });
-  test('pushTurn honours a chatTurnsToRead of N from 1 to CHAT_TURNS_TO_READ_MAX (10): the last N turns, oldest first', () => {
-    expect(CHAT_TURNS_TO_READ_MAX).toBe(10);
-    const t = (n: number) => ({ prompt: `p${n}`, answer: `a${n}` });
-    let one: ReturnType<typeof t>[] = [];
-    let ten: ReturnType<typeof t>[] = [];
-    for (let n = 1; n <= 12; n++) {
-      one = pushTurn(one, t(n), 1);
-      ten = pushTurn(ten, t(n), 10);
-    }
-    expect(one).toEqual([t(12)]);
-    expect(ten).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(t));
-    expect(pushTurn(ten, t(13), 5)).toEqual([9, 10, 11, 12, 13].map(t));
-  });
-  test('no rememberedExchanges: the prompts as before', () => {
+  test('nothing remembered: the question alone', () => {
     expect(questionPrompt('hi', '')).toBe('The user asks you directly: hi');
+  });
+});
+
+describe('the memory rule', () => {
+  test('names how far the memory reaches, and tells the character to say it does not remember, never to make it up', () => {
+    expect(memoryRule(4)).toContain("you remember only the main chat's last 4 turns and what you and the user said around them");
+    expect(memoryRule(1)).toContain("the main chat's last turn and");
+    expect(memoryRule(4)).toContain("say in character that your short-term memory doesn't reach that far");
+    expect(memoryRule(4)).toContain('never guess it or make it up');
+  });
+  test('a question is told its reach; a comment is not asked anything', () => {
+    expect(oneLineSystem('You are X.', 7)).toContain(memoryRule(7));
+    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true })).not.toContain('short-term memory');
   });
 });
 
@@ -99,7 +58,7 @@ describe('the character rule', () => {
     expect(CHARACTER_RULE).toMatch(/repeat/);
   });
   test('comes right after the persona: questions and commentAfterEachTurn', () => {
-    expect(oneLineSystem('You are X.').startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
+    expect(oneLineSystem('You are X.', 4).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
     expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true }).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
     expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: false }).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
   });
@@ -129,19 +88,6 @@ describe('the end-of-turn call', () => {
     expect(suggestOnly).toContain('SUGGEST_NEXT_PROMPT:');
     expect(suggestOnly).not.toContain('COMMENT_AFTER_EACH_TURN:');
   });
-  test('the prompt: the user\'s last prompt, then Claude\'s answer, each keeping its end past its cap', () => {
-    const t = { tools: [], failures: 0, lastBash: '' };
-    const p = turnPrompt(t, [{ prompt: 'add a login page', answer: 'Done: login.tsx is in.' }]);
-    expect(p).toContain('The user asked Claude:\nadd a login page');
-    expect(p).toContain('Claude answered:\nDone: login.tsx is in.');
-    expect(p.indexOf('add a login page')).toBeLessThan(p.indexOf('Done: login.tsx is in.'));
-    const long = turnPrompt(t, [{ prompt: `START${'a'.repeat(5000)}END`, answer: `HEAD${'b'.repeat(9000)}TAIL` }]);
-    expect(long).toContain('END');
-    expect(long).toContain('TAIL');
-    expect(long).not.toContain('START');
-    expect(long).not.toContain('HEAD');
-    expect(long.length).toBeLessThan(1500 + 3000 + 400);
-  });
   test('parseTurnReply: the tagged lines, in any case, bullets tolerated', () => {
     expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: "Tests are green!"\nSUGGEST_NEXT_PROMPT: commit this')).toEqual({ commentAfterEachTurn: 'Tests are green!', suggestNextPrompt: 'commit this' });
     expect(parseTurnReply('  - comment_after_each_turn: Nice.\n * suggest_next_prompt:  run   the tests ')).toEqual({ commentAfterEachTurn: 'Nice.', suggestNextPrompt: 'run the tests' });
@@ -157,7 +103,7 @@ describe('the end-of-turn call', () => {
     expect(parseTurnReply('')).toEqual({ commentAfterEachTurn: null, suggestNextPrompt: null });
   });
   test('one short call: 120 tokens, 30 s', () => {
-    expect(TURN_MAX_TOKENS).toBe(120);
+    expect(TURN_MAX_TOKENS).toBe(2048);
     expect(TURN_DEADLINE_MS).toBe(30_000);
   });
   test('suggestNextPromptText: the first non-empty line, unquoted, whitespace collapsed', () => {
@@ -300,21 +246,6 @@ describe('the request timeout', () => {
     expect(requestTimeoutMs(30_000, 0)).toBe(35_000);
     expect(requestTimeoutMs(90_000, 60_000)).toBe(35_000);
     expect(requestTimeoutMs(30_000, 45_000)).toBe(5_000);
-  });
-});
-
-describe('a turn not started by the user', () => {
-  test('is never shown to a completion as what the user asked', () => {
-    const w = chatTurnsToReadText([{ prompt: 'hello from a peer', answer: 'Hi, peer.', from: 'peer' }]);
-    expect(w).not.toContain('The user asked Claude');
-    expect(w).toContain('Claude was sent, not by the user (peer):\nhello from a peer\n\nClaude answered:\nHi, peer.');
-  });
-  test('a turn whose origin was never seen, or the engine could not place, is shown as of unknown origin, never as not by the user', () => {
-    for (const from of ['unknown', 'unclassified']) {
-      const w = chatTurnsToReadText([{ prompt: 'go on', answer: 'Going.', from }]);
-      expect(w).not.toContain('not by the user');
-      expect(w).toContain('Claude was sent, from an unknown origin:\ngo on\n\nClaude answered:\nGoing.');
-    }
   });
 });
 

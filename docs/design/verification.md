@@ -12,8 +12,9 @@ Each gate below says what it proves and what it prints when it fails; a gate tha
 | Typecheck | `npm run typecheck` (`npm run types`, then `tsc`, then `tsc -p tsconfig.hooks.json`) | the engine, the tests and the adapter against `types/claude-code.d.ts`, which `npm run types` writes from the installed Claude Code (`/plugin-types`, no login needed) and git ignores | each type error by file and line |
 | Validate | `npm run validate:plugin` (`claude plugin validate --strict`, the repo and the plugin) | both manifests, and the rule on `$` | the violation; a broken `$` rule would otherwise load the module with zero hooks |
 | Release check | `scripts/release-check.sh [main's version]` | the version agrees in `plugin.json`, `marketplace.json`, `package.json` and the README badge; `CHANGELOG.md` has a dated section; the version moved past `main`'s | one `FAIL` line per disagreement and exit 1; `ERROR` and exit 2 when a file cannot be read |
-| Live proof | `npm run live` (`scripts/live-proof.sh`) | a real session draws, walks, answers, switches, hides, runs the menu and remembers | a table with a `FAIL` row per failed check and its evidence, exit 1; `ERROR` and exit 2 when the session cannot be driven |
+| Live proof | `npm run live` (`scripts/live-proof.sh`) | a real session draws, walks, answers, switches through the drawer's personality tab, hides and remembers | a table with a `FAIL` row per failed check and its evidence, exit 1; `ERROR` and exit 2 when the session cannot be driven |
 | Live configurations | `npm run live:configs` (`scripts/live-configs.sh`) | five real sessions, one per configuration, two turns each, every turn measured | `report.md` with a `FAIL` row per failed check and its evidence, and `unread` for a metric no record carried, exit 1; a session that could not be driven is `NOT DRIVEN` with its error, exit 2 |
+| Live drawer | `npm run live:drawer` (`scripts/live-drawer.sh`) | one real session, two turns and a `/buddy` question, then `/buddy` opens the drawer, captured, its talk tab checked to name the memory and hold both turns, its personality tab opened and left, and folded back with ctrl+x x from the prompt | a `FAIL` line per failed check (the drawer not drawn, missing the question or a turn, the personality tab not listing the characters, or not folded back), exit the count of FAILs; the screen in `drawer.txt` and `.ansi` |
 | CI | `.github/workflows/ci.yml` | `npm test`, the typecheck and the validation on every push to `develop` or `main` and every pull request; the release check on a pull request into `main` and on every push that lands on `main` | the failed step |
 | No leaks | a rule in `CLAUDE.md`, checked with a grep before a commit | no machine-absolute path and no personal data in a tracked file | the matching line |
 
@@ -27,37 +28,37 @@ The script drives a real, interactive Claude Code session and reads the screen.
 - **The session.** tmux on a private socket (`-L buddy-proof`), a 160 × 50 window, never your own tmux server. The real Claude binary (`CLAUDE_BIN`, else `claude` resolved past a text wrapper), with `--model haiku --setting-sources project --allowedTools Bash --plugin-dir plugins/buddy`, a fresh `--session-id`, and function hooks on.
 - **The options.** A settings file pins them under `buddy@inline`, the id a `--plugin-dir` copy reads: `commentAfterEachTurn: false`, `suggestNextPrompt: false`, `walkOverPromptBar: true`, `logLevel: debug`, and `logFile` in the run folder.
 - **The boot.** The trust dialog defaults to "No, exit", so the script presses Down, then Enter; the session is up once the prompt glyph shows, followed by a space or the no-break space Claude Code draws.
-- **The helpers.** `scripts/live-lib.sh` holds what both live scripts use: the binary, the store set aside and put back, the boot, the pane, the bubble, the transcript's replies, and sending a prompt or a command.
+- **The helpers.** `scripts/live-lib.sh` holds what both live scripts use: the binary, the run's own config dir (`live_isolate`), the boot, the pane, the bubble, the transcript's replies, and sending a prompt or a command.
 - **What it reads.** What is drawn, from the pane (`tmux capture-pane`). The art to look for, from the characters' own JSON: rows of four or more visible characters, and for a second character only rows the duck lacks. The bubble, as the text between the round border's bars. Each command's reply, from the session transcript's `<local-command-stdout>`, so a reply is read as data, not scraped.
 - **The evidence.** A timestamped run directory keeps every pane capture, the drive log and a copy of the transcript; each row of the table prints the evidence it saw.
 
-It spends a few cents of Haiku, and resets this plugin copy's `/buddy on` and `/buddy-personality` choices. `--setting-sources project` keeps the user's own settings, and so their `character` option, out of the run.
+It spends a few cents of Haiku, and touches nothing of yours: every session runs in a config dir of the run's own (`$RUN/config`: transcripts, the plugin store, sessions), from a clean environment (`env -i`) and the native binary, never a `claude` wrapper, so no transcript, store entry or fleet row is left behind. It signs in with a long-lived token from `claude setup-token`, read at launch from `$BUDDY_LIVE_TOKEN_FILE` (default `~/.config/buddy/live-token`); without one it stops with exit 2 and says how to make it. `--setting-sources project` keeps the user's own settings, and so their `character` option, out of the run.
 
-Every switch goes through the menu (`menu_pick`): open `/buddy-personality`, read which shipped entry holds the `*` (the highlight opens on it), press Up or Down the difference in id order, Enter. A menu marking no shipped entry stops the run with exit 2. `menu_mark` reopens it, reads the `*`, and closes it with Esc.
+Every switch goes through the drawer's personality tab (`menu_pick`): `/buddy`, ctrl+x tab (the focus lands on `talk`), Right, Enter (`tab_open`); read which shipped entry holds the `*`; press Right (Down scrolls a drawer taller than the band) until the focus, drawn in inverse video (`focused`), is on the wanted entry (`focus_on`, at most 15 steps), Enter; Esc and ctrl+x x fold the drawer (`tab_close`). A tab marking no shipped entry, or a focus that never reaches the entry, stops the run with exit 2. `menu_mark` reopens the tab, reads the `*`, and folds it.
 
 | Row | Drives | Passes when |
 | --- | --- | --- |
 | (a) the default (duck) is drawn | `/buddy on`, a menu pick of the duck | a row of `duck.json`'s art is in the pane |
 | (b) it walks | nothing; three samples 2 s apart, after the greeting | the duck's rows change between samples |
-| (c) `/buddy` pets | `/buddy` | the reply reads `{name}: N pets` |
-| (c) `/buddy-personality` marks the current one | the menu, then Esc | `* Quack (duck)` in the pane |
+| (c) the drawer's pet button pets | `/buddy`, ctrl+x tab, Right twice, Enter | the focus was on `♥ pet`, and its count rose by one |
+| (c) the personality tab marks the current one | the tab, then folded | `* Quack (duck)` in the pane |
 | (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply | the reply says `Asked`, and the bubble holds an answer |
 | (e) a test pass shows a `testPass` line | a prompt asking Claude to run `npm test` in the run's work folder, whose `package.json` test script prints `Tests: 3 passed` | a line of the duck's `testPass` pool shows in the bubble |
 | (f) question after a reply | `/buddy what did we just run` | the bubble holds an answer |
-| (g) a menu pick of `{other}` draws it | the menu, Up to the first non-duck character by id (`cat`), Enter | a row unique to its art is in the pane |
-| (g) reopened, the menu marks `{other}` | the menu, then Esc | `* {name} ({other})` in the pane |
-| (g) picking the default returns | the menu, Down to the duck, Enter | the duck's rows are back |
+| (g) a personality tab pick of `{other}` draws it | the tab, the focus on the first non-duck character by id (`cat`), Enter | a row unique to its art is in the pane |
+| (g) reopened, the tab marks `{other}` | the tab, then folded | `* {name} ({other})` in the pane |
+| (g) picking the default returns | the tab, the focus on the duck, Enter | the duck's rows are back |
 | (h) `/buddy off` hides | `/buddy off` | no duck row in the pane |
 | (h) `/buddy on` shows | `/buddy on` | the duck's rows are back |
-| (i) the menu opens | `/buddy-personality` | `* Quack (duck)`, `Shipped`, `customCharactersDir` and the duck's description in the pane, never its persona prompt |
-| (i) Down moves the preview | Down | the preview shows the next entry, `ghost` |
-| (i) Esc closes it, nothing changed | Esc | the preview and the groups are gone; the duck is still drawn |
-| (i) Enter on `cat` draws it | the menu again, Up to `cat`, Enter | `cat`'s preview showed first; its art is in the band; the pane is gone |
-| (i) reopened, the menu marks `cat` | the menu, then Esc | `* {name} (cat)` in the pane |
-| (i) picking the default returns | the menu, Down to the duck, Enter | the duck's rows are back |
+| (i) `/buddy` opens the personality tab | `tab_open` | `* Quack (duck)`, `Shipped`, `customCharactersDir` and the duck's description in the pane, never its persona prompt |
+| (i) Right moves the preview | Right until the focus is on the next entry, `ghost` | the focus is on it and the preview shows it |
+| (i) Esc, ctrl+x x: folded, nothing changed | Esc, ctrl+x x | the groups are gone; the duck is still drawn |
+| (i) Enter on `cat` draws it, the tab marks it | the tab again, the focus on `cat`, Enter, then folded | `cat`'s preview showed first; the tab, still open, marks `* {name} (cat)`; its art is in the band |
+| (i) reopened, the tab marks `cat` | the tab, then folded | `* {name} (cat)` in the pane |
+| (i) picking the default returns | the tab, the focus on the duck, Enter | the duck's rows are back |
 | (j) `/buddy remember the word pineapple` | that question | the reply says `Asked`, and the bubble holds an answer |
 | (j) the next answer remembers `pineapple` | `/buddy what word did I ask you to remember?` | the answer holds `pineapple` |
-| (j) the store holds this session's rememberedExchanges | nothing; the plugin's store file is read | its `rememberedExchanges:{session}` record holds the exchanges under `characters.duck`, no `thinking` filler |
+| (j) the store holds this session's chatTurnsToRead | nothing; the plugin's store file is read | its `chatTurnsToRead:{session}` record holds both questions among its blocks' `characters.duck` exchanges, no `thinking` filler |
 | (k) a question during a busy main turn | a prompt that runs `sleep 8` via Bash, then replies `K1`; `/buddy do you like yourself?` during it | the reply says `Asked`; the answer arrives before the main turn's `K1` reply, and the last outcome in the log is `answered` |
 | (k) a second immediate ask | `/buddy say ack` right after | its reply refuses out loud (`still thinking about your last question`) or says `Asked` |
 | (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start` and an `ask.outcome` answered |
@@ -78,11 +79,11 @@ Each session sends two prompts (one running `ls` via Bash, one plain reply), wai
 
 | Session | Options | Passes when |
 | --- | --- | --- |
-| S1 | the defaults | after each turn `commentAfterEachTurn` shows in the bubble (`commentAfterEachTurn.outcome` answered, its stored text in the pane) and `suggestNextPrompt` in the prompt box (`suggestNextPrompt.outcome` shown, its stored text in the pane); `/buddy remember the word tangerine` is answered, and `/buddy what word did I ask you to remember?` answers `tangerine` from `rememberedExchanges` |
+| S1 | the defaults | after each turn `commentAfterEachTurn` shows in the bubble (`commentAfterEachTurn.outcome` answered, its stored text in the pane) and `suggestNextPrompt` in the prompt box (`suggestNextPrompt.outcome` shown, its stored text in the pane); `/buddy remember the word tangerine` is answered, and `/buddy what word did I ask you to remember?` answers `tangerine` from `chatTurnsToRead` |
 | S2 | `commentAfterEachTurn: false` | no `commentAfterEachTurn.outcome` after a turn; a `suggestNextPrompt` is shown |
-| S3 | `suggestNextPrompt: false`, `rememberedExchanges: 0` | `commentAfterEachTurn` shows after each turn; no `suggestNextPrompt.outcome`; the store holds nothing under `rememberedExchanges:{session}` |
+| S3 | `suggestNextPrompt: false`, `chatTurnsToRead: 1` | `commentAfterEachTurn` shows after each turn; no `suggestNextPrompt.outcome`; `chatTurnsToRead:{session}` holds only the second turn; `/buddy what Bash command did Claude run in the turn before my last one?` is answered as out of memory (it names its memory, and not `ls`) |
 | S4 | the defaults, headless | `claude -p`, then `claude -p --resume`: two `turn.skipped` with `why: headless`, and no `turn.call`, `turn.settings`, `turn.prompt`, `ask.settings` or `ask.start` |
-| S5 | `customCharactersDir` holding one invalid `broken.json`, `character: broken` | the duck is drawn with a bubble naming the error (`Couldn't load broken: …; /buddy-personality picks another`); the error holds the bubble 10 s from the session's start, part of it behind the trust dialog, so when it is gone by the prompt `/buddy reload` says it again, and the row names which |
+| S5 | `customCharactersDir` holding one invalid `broken.json`, `character: broken` | the duck is drawn with a bubble naming the error (`Couldn't load broken: …; the personality tab in /buddy picks another`); the error holds the bubble 10 s from the session's start, part of it behind the trust dialog, so when it is gone by the prompt `/buddy reload` says it again, and the row names which |
 
 A `suggestNextPrompt` check also passes on `suggestNextPrompt.outcome` none: the model answered `SUGGEST_NEXT_PROMPT: NONE`, which by design hands the prompt box back to Claude Code's own suggestion, and the row says so.
 Per turn the report reads, from the log: `commentAfterEachTurn.outcome` and `suggestNextPrompt.outcome` with their `ms` (the turn's end to the reply, as the plugin measures it) and the call's `inTok`, `outTok`, `cacheRead` and `cacheWrite`; from the transcript, the reply's timestamp, so `end→commentAfterEachTurn ms` is the `commentAfterEachTurn.outcome` record's time minus the main turn's end; the number of model calls (`turn.settings`, `ask.settings`); and every error record.
@@ -133,7 +134,7 @@ Named here, so none reads as a pass:
 
 | File | What |
 | --- | --- |
-| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `types`, `typecheck`, `validate:plugin`, `release:check`, `live` and `live:configs` scripts |
+| [`package.json`](../../package.json) | the `test`, `test:unit`, `test:hooks`, `types`, `typecheck`, `validate:plugin`, `release:check`, `live`, `live:configs` and `live:drawer` scripts |
 | [`tests/`](../../tests/) | one vitest file per engine concern, [`fixtures.ts`](../../tests/fixtures.ts), the hatch fixtures |
 | [`plugins/buddy/tests/buddy.test.tsx`](../../plugins/buddy/tests/buddy.test.tsx) | the hook tests; `world` answers `$.fs`, `$.store`, `$.clock`, `$.model` and the rest from memory |
 | [`scripts/live-proof.sh`](../../scripts/live-proof.sh) | the live proof |

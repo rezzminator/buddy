@@ -17,7 +17,9 @@
     "validate:plugin": "claude plugin validate --strict . && claude plugin validate --strict plugins/buddy",
     "release:check": "scripts/release-check.sh",
     "live": "scripts/live-proof.sh",
-    "live:configs": "scripts/live-configs.sh"
+    "live:configs": "scripts/live-configs.sh",
+    "live:drawer": "scripts/live-drawer.sh",
+    "audit": "node scripts/audit.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

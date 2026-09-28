@@ -175,7 +175,7 @@ describe('usageFields', () => {
 
 describe('notice', () => {
   test('a transcript notice names the plugin: Claude Code states its name only for the debug log', () => {
-    expect(notice('reading the rememberedExchanges failed: EIO')).toBe('buddy: reading the rememberedExchanges failed: EIO');
+    expect(notice('reading the chatTurnsToRead failed: EIO')).toBe('buddy: reading the chatTurnsToRead failed: EIO');
   });
 });
 
@@ -183,5 +183,20 @@ describe('sumUsage', () => {
   test('adds two calls\' usage, key by key, so a retried question logs what both cost', () => {
     expect(usageFields(sumUsage({ input_tokens: 600, output_tokens: 0 }, { input_tokens: 610, output_tokens: 30, cache_read_input_tokens: 5 }))).toEqual({ inTok: 1210, cacheRead: 5, cacheWrite: 0, outTok: 30, cachePct: 0 });
     expect(sumUsage(undefined, { input_tokens: 1 })).toEqual({ input_tokens: 1 });
+  });
+  test('the tap sees every record at any level, and one that throws costs the log nothing', async () => {
+    const d = disk();
+    const L = new Logger('error', '/logs/b.log', 1000, () => 7);
+    const seen: string[] = [];
+    L.tap = (r) => seen.push(`${r.at} ${r.level} ${r.event} ${JSON.stringify(r.fields)}`);
+    L.log('debug', 'quiet', { a: 1 });
+    L.log('error', 'loud');
+    expect(seen).toEqual(['7 debug quiet {"a":1}', '7 error loud {}']);
+    L.tap = () => {
+      throw new Error('tap broke');
+    };
+    L.log('error', 'still');
+    await L.flush(d.io);
+    expect(d.files['/logs/b.log']).toContain('"event":"still"');
   });
 });

@@ -10,5 +10,5 @@
 - [ ] `npm test` passes (unit and function-hook tests)
 - [ ] `npm run typecheck` passes
 - [ ] `npm run validate:plugin` passes
-- [ ] A new or changed character loads without `(invalid)` in `/buddy-personality`
+- [ ] A new or changed character loads without `(invalid)` in the personality tab of `/buddy`
 - [ ] README, CONTRIBUTING and CHANGELOG updated where behaviour changed

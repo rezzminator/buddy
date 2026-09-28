@@ -57,7 +57,7 @@ describe('brain', () => {
     expect(react(b, { tool: 'Edit', isError: false, denied: true, output: '', command: '' }, never)).toBe('toolFail');
     expect(currentPose(b)).toBe('oops');
     expect(react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never)).toBeNull();
-    expect(b.turn).toEqual({ tools: ['Bash', 'Edit', 'Read'], failures: 1, lastBash: 'npm test' });
+    expect(b.turn).toEqual({ tools: ['Bash', 'Edit', 'Read'], failures: 1, lastBash: 'npm test', actions: [] });
     ticks(b, 2000 / 200);
     expect(b.confetti).toBeNull();
   });
@@ -124,12 +124,12 @@ describe('brain', () => {
   test('the turn\'s summary at every end, tools or none; commentAfterEachTurn due only when on and past secondsBetweenComments', () => {
     const b = createBrain(char(), true);
     const read = () => react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never);
-    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: [], failures: 0, lastBash: '' }, commentAfterEachTurnDue: true });
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: [], failures: 0, lastBash: '', actions: [] }, commentAfterEachTurnDue: true });
     read();
-    expect(endTurn(b, false, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, commentAfterEachTurnDue: false });
+    expect(endTurn(b, false, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '', actions: [] }, commentAfterEachTurnDue: false });
     expect(b.turn.tools).toEqual([]);
     read();
-    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '' }, commentAfterEachTurnDue: false });
+    expect(endTurn(b, true, 45)).toEqual({ turn: { tools: ['Read'], failures: 0, lastBash: '', actions: [] }, commentAfterEachTurnDue: false });
     ticks(b, 45000 / 200);
     expect(endTurn(b, true, 45).commentAfterEachTurnDue).toBe(true);
   });

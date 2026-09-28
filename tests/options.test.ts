@@ -4,7 +4,7 @@ import { DEFAULTS, expandHome, logPath, observeEffort, resolveEffort, resolveMod
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, rememberedExchanges: 6, chatTurnsToRead: 3, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', ambiguousCharacterWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, chatTurnsToRead: 4, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', roundsDir: '', ambiguousCharacterWidth: 'narrow' });
   });
   test('good values', () => {
     const o = resolveOptions({ character: ' Cat ', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: 'false', model: 'sonnet', effort: ' HIGH ', secondsBetweenComments: '10' });
@@ -111,36 +111,23 @@ describe('the suggestNextPrompt option', () => {
 });
 
 describe('the chatTurnsToRead option', () => {
-  test('3 by default; a whole number from 1 to 10, as a number or its string', () => {
-    expect(resolveOptions({}).chatTurnsToRead).toBe(3);
+  test('4 by default; a whole number from 1 to 10, as a number or its string', () => {
+    expect(resolveOptions({}).chatTurnsToRead).toBe(4);
     expect(resolveOptions({ chatTurnsToRead: 1 })).toMatchObject({ chatTurnsToRead: 1, errors: [] });
     expect(resolveOptions({ chatTurnsToRead: '10' })).toMatchObject({ chatTurnsToRead: 10, errors: [] });
-    expect(resolveOptions({ chatTurnsToRead: '' })).toMatchObject({ chatTurnsToRead: 3, errors: [] });
+    expect(resolveOptions({ chatTurnsToRead: '' })).toMatchObject({ chatTurnsToRead: 4, errors: [] });
   });
-  test('0, above 10, fractional or not a number: 3, and the error says why', () => {
+  test('0, above 10, fractional or not a number: 4, and the error says why', () => {
     for (const v of [0, 11, 2.5, 'lots', true]) {
       const o = resolveOptions({ chatTurnsToRead: v });
-      expect(o.chatTurnsToRead).toBe(3);
-      expect(o.errors).toEqual([`option chatTurnsToRead ignored: ${JSON.stringify(v)} is not a whole number from 1 to 10; reading 3`]);
+      expect(o.chatTurnsToRead).toBe(4);
+      expect(o.errors).toEqual([`option chatTurnsToRead ignored: ${JSON.stringify(v)} is not a whole number from 1 to 10; reading 4`]);
     }
   });
-});
-
-describe('the rememberedExchanges option', () => {
-  test('default 6; 0 is off; a whole number as given', () => {
-    expect(resolveOptions({}).rememberedExchanges).toBe(6);
-    expect(resolveOptions({ rememberedExchanges: 0 })).toMatchObject({ rememberedExchanges: 0, errors: [] });
-    expect(resolveOptions({ rememberedExchanges: '12' })).toMatchObject({ rememberedExchanges: 12, errors: [] });
-    expect(resolveOptions({ rememberedExchanges: 30 })).toMatchObject({ rememberedExchanges: 30, errors: [] });
-  });
-  test('above 30 caps at 30 and says so', () => {
-    expect(resolveOptions({ rememberedExchanges: 31 })).toMatchObject({ rememberedExchanges: 30, errors: ['option rememberedExchanges capped: 31 is above 30; remembering 30'] });
-  });
-  test('negative, fractional or not a number: 6, and the note says why', () => {
-    expect(resolveOptions({ rememberedExchanges: -1 })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: -1 is not a whole number of exchanges; remembering 6'] });
-    expect(resolveOptions({ rememberedExchanges: 2.5 })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: 2.5 is not a whole number of exchanges; remembering 6'] });
-    expect(resolveOptions({ rememberedExchanges: 'x' })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: "x" is not a whole number of exchanges; remembering 6'] });
-    expect(resolveOptions({ rememberedExchanges: true })).toMatchObject({ rememberedExchanges: 6, errors: ['option rememberedExchanges ignored: true is not a whole number of exchanges; remembering 6'] });
+  test('the removed rememberedExchanges is an unknown option: it changes nothing', () => {
+    const o = resolveOptions({ rememberedExchanges: 0 });
+    expect(o).not.toHaveProperty('rememberedExchanges');
+    expect(o.chatTurnsToRead).toBe(4);
   });
 });
 
@@ -176,6 +163,12 @@ describe('expandHome', () => {
     const o = resolveOptions({ logLevel: 'loud' });
     expect(o.logLevel).toBe('info');
     expect(o.errors).toEqual(['option logLevel ignored: "loud" is not error, info or debug']);
+  });
+
+  test('roundsDir: off by default; a path, trimmed; a non-string is ignored by name', () => {
+    expect(resolveOptions({}).roundsDir).toBe('');
+    expect(resolveOptions({ roundsDir: ' $CLAUDE_CONFIG_DIR/buddy/rounds ' }).roundsDir).toBe('$CLAUDE_CONFIG_DIR/buddy/rounds');
+    expect(resolveOptions({ roundsDir: 3 }).errors).toEqual(['option roundsDir ignored: not a string']);
   });
 
   test('logFile: a path, trimmed; empty turns the file off; a non-string is ignored by name', () => {

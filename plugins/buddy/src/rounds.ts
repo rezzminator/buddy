@@ -1,0 +1,125 @@
+// The rounds: one text file per main-chat turn, when the roundsDir option is
+// set, holding in the order it happened everything that went into the buddy
+// and everything that came out of it, from the turn's start to the next
+// turn's start: the prompt the turn began with; each tool call the buddy
+// heard, with its arguments and output; every log record, at any level; each
+// line the bubble drew; the turn's end as the buddy filed it; and every model
+// call, its system prompt, prompt and reply verbatim. The folder holds at most
+// ROUNDS_MAX files, round-001.txt to round-150.txt, shared by every session
+// and account writing there: a new round takes a free slot, else overwrites
+// the one written least recently (Claude Code's $.fs can write but never
+// delete). No I/O: the adapter lists and stats the folder and writes the text.
+
+/** The most round files the folder holds: past it the least recently written is overwritten. */
+export const ROUNDS_MAX = 150;
+/** How much of one tool argument or output a round keeps; the rest is counted. */
+export const ROUND_VALUE_CAP = 500;
+
+/** The turn's end as the buddy filed it. */
+export type RoundTurn = { turnId: string; reason: string; prompt: string; answer: string; did: readonly string[]; from?: string };
+
+/** One model call, literally: what was sent and what came back. */
+export type RoundCall = {
+  kind: 'endOfTurn' | 'question';
+  at: number;
+  settings: Record<string, unknown>;
+  system: string;
+  prompt: string;
+  /** `answered`, `not answered: {reason}` or `threw: {error}`. */
+  outcome: string;
+  reply: string;
+  ms: number;
+  usage: Record<string, number>;
+};
+
+/** The file name of slot `n`, 1 to ROUNDS_MAX. */
+export function roundSlot(n: number): string {
+  return `round-${String(n).padStart(3, '0')}.txt`;
+}
+
+/** The first slot no file takes among `names` (the folder's entries), or null when all ROUNDS_MAX are taken. */
+export function freeRoundSlot(names: readonly string[]): string | null {
+  const taken = new Set(names);
+  for (let n = 1; n <= ROUNDS_MAX; n++) if (!taken.has(roundSlot(n))) return roundSlot(n);
+  return null;
+}
+
+/** The slot written least recently, by `mtimeMs`; a slot that could not be stated (NaN) goes first. */
+export function oldestRoundSlot(slots: readonly { name: string; mtimeMs: number }[]): string {
+  return [...slots].sort((a, b) => (Number.isNaN(a.mtimeMs) ? -Infinity : a.mtimeMs) - (Number.isNaN(b.mtimeMs) ? -Infinity : b.mtimeMs))[0]?.name ?? roundSlot(1);
+}
+
+const rule = (title: string) => `─── ${title} ───`;
+const clock = (at: number) => new Date(at).toISOString().slice(11, 23);
+
+/** A round's head: when it opened, the session, and the turn with the prompt it began with; or, with no turn, that it came before any turn this buddy saw. */
+export function roundHead(at: number, sessionId: string, start: { turnId: string; prompt: string } | null): string {
+  const when = new Date(at).toISOString();
+  if (!start) return `═══ ROUND · ${when} · session ${sessionId} · before any turn this buddy saw ═══\n`;
+  return [`═══ ROUND · ${when} · session ${sessionId} · turn ${start.turnId} ═══`, '', rule('IN · the prompt the turn began with'), start.prompt || '(none)', ''].join('\n');
+}
+
+/** One moment of the timeline, one line: its time, then what happened. */
+export function eventLine(at: number, text: string): string {
+  return `${clock(at)}  ${text}\n`;
+}
+
+/** A value for the timeline: a string as it is, anything else as JSON; past ROUND_VALUE_CAP cut, the rest counted. */
+export function capValue(v: unknown): string {
+  let s: string;
+  try {
+    s = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v));
+  } catch {
+    s = String(v);
+  }
+  return s.length > ROUND_VALUE_CAP ? `${s.slice(0, ROUND_VALUE_CAP)}… (${s.length - ROUND_VALUE_CAP} more characters)` : s;
+}
+
+/** A tool call the buddy heard: its tool, each argument, its output, what the buddy made of it (the step, the reaction). */
+export function toolLines(at: number, call: { tool: string; args: Record<string, unknown>; output: string; failed: boolean; step: string | null; reaction: string | null; agentId?: string }): string {
+  const who = call.agentId ? ` · subagent ${call.agentId}, not the main turn's` : '';
+  const lines = [eventLine(at, `IN · tool call ${call.tool}${call.failed ? ' (failed)' : ''}${who}`)];
+  for (const [k, v] of Object.entries(call.args)) if (k !== 'tool' && k !== 'tool_use_id' && k !== 'agentId') lines.push(`      ${k}: ${capValue(v)}\n`);
+  lines.push(`      output: ${capValue(call.output) || '(none)'}\n`);
+  if (!call.agentId) lines.push(`      → step: ${call.step ?? '(none, left out)'} · reaction: ${call.reaction ?? 'none'}\n`);
+  return lines.join('');
+}
+
+/** The turn's end as the buddy filed it into its memory: why it ended, the prompt, its origin, the steps, the answer. */
+export function turnEndSection(at: number, turn: RoundTurn): string {
+  const origin = turn.from === undefined ? 'the user' : `not the user: ${turn.from}`;
+  return [
+    '',
+    rule(`IN · ${clock(at)} · the turn ended (${turn.reason}), as the buddy filed it`),
+    `prompt (from ${origin}):`,
+    turn.prompt || '(none seen)',
+    'steps (the Claude did: line):',
+    turn.did.length > 0 ? turn.did.join('\n') : '(none)',
+    "Claude's answer:",
+    turn.answer || '(no text)',
+    '',
+    '',
+  ].join('\n');
+}
+
+/** The `n`th call of a round, verbatim: its settings, system prompt and prompt going in, its outcome and reply coming out. */
+export function callSection(n: number, call: RoundCall): string {
+  const kind = call.kind === 'endOfTurn' ? 'end-of-turn call' : '/buddy question';
+  const settings = Object.entries(call.settings).filter(([, v]) => v !== undefined).map(([k, v]) => `${k} ${String(v)}`).join(' · ');
+  const usage = Object.entries(call.usage).map(([k, v]) => `${k} ${v}`).join(' · ');
+  return [
+    '',
+    `═══ BUDDY CALL ${n} · ${kind} · sent ${clock(call.at)}${settings ? ` · ${settings}` : ''} ═══`,
+    '',
+    rule('IN: system'),
+    call.system,
+    '',
+    rule('IN: prompt'),
+    call.prompt,
+    '',
+    rule(`OUT: ${call.outcome} · ${call.ms} ms${usage ? ` · ${usage}` : ''}`),
+    call.reply || '(no text)',
+    '',
+    '',
+  ].join('\n');
+}

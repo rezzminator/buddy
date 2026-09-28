@@ -1,5 +1,5 @@
 # Shared helpers of the live scripts (scripts/live-proof.sh, scripts/live-configs.sh):
-# the claude binary, the --plugin-dir store set aside, and one interactive
+# the claude binary, a config dir of the run's own (live_isolate), and one interactive
 # session in tmux on a private socket, read from its pane and its transcript.
 # Sourced, never run. The caller sets, before calling a helper:
 #   T       the tmux command on the private socket (tmux -L {socket})
@@ -23,15 +23,36 @@ live_require() {
   command -v jq >/dev/null || { echo "ERROR jq not found"; exit 2; }
 }
 
-# A run starts on the default character: the --plugin-dir store keeps picks and pets from earlier runs,
-# so it is moved aside into $RUN/store-aside and put back by restore_store.
-STORE_DIR=${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/store
-live_store_aside() {
-  mkdir -p "$RUN/store-aside"
-  mv "$STORE_DIR"/buddy_inline-*.json "$RUN/store-aside/" 2>/dev/null
+# Every session runs isolated from yours: its own config dir in the run folder
+# ($RUN/config: transcripts, plugin store, settings, sessions), a clean
+# environment (env -i: nothing of the calling chat, its session ids, sockets
+# or wrappers), and the native binary, never a `claude` wrapper. So a run
+# leaves no transcript, store entry or fleet row in your own config dir, and
+# every run starts on the default character with an empty store.
+# It signs in with a long-lived token from `claude setup-token`, read from
+# $BUDDY_LIVE_TOKEN_FILE (default ~/.config/buddy/live-token) at launch, never
+# written into the run folder or a command line.
+# Sets LIVE_CONFIG, PROJECTS, STORE_DIR and LIVE_CLAUDE, the launcher to run in
+# place of claude; exits 2 without a token.
+live_isolate() {
+  local token=${BUDDY_LIVE_TOKEN_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/buddy/live-token}
+  [ -s "$token" ] || { printf '%s\n' "ERROR no sign-in token at $token: run \`claude setup-token\`, then save the token it prints there (chmod 600), or point BUDDY_LIVE_TOKEN_FILE at it" >&2; exit 2; }
+  LIVE_CONFIG=$RUN/config
+  PROJECTS=$LIVE_CONFIG/projects
+  STORE_DIR=$LIVE_CONFIG/plugins/store
+  mkdir -p "$LIVE_CONFIG"
+  # A fresh config dir would open on the first-run screens.
+  printf '%s\n' '{ "hasCompletedOnboarding": true, "theme": "dark" }' > "$LIVE_CONFIG/.claude.json"
+  LIVE_CLAUDE=$RUN/claude
+  cat > "$LIVE_CLAUDE" <<LAUNCH
+#!/bin/sh
+exec env -i HOME="\$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" TERM="\${TERM:-xterm-256color}" COLORTERM="\${COLORTERM:-truecolor}" LANG="\${LANG:-en_US.UTF-8}" TMPDIR="\${TMPDIR:-/tmp}" \\
+  CLAUDE_CONFIG_DIR="$LIVE_CONFIG" CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 CLAUDE_CODE_OAUTH_TOKEN="\$(cat '$token')" \\
+  '$CLAUDE_BIN' "\$@"
+LAUNCH
+  chmod 700 "$LIVE_CLAUDE"
 }
-restore_store() { rm -f "$STORE_DIR"/buddy_inline-*.json; mv "$RUN/store-aside"/*.json "$STORE_DIR/" 2>/dev/null; }
-# This plugin's store file (the --plugin-dir copy), or nothing.
+# This plugin's store file in the run's config dir, or nothing.
 store_file() { ls "$STORE_DIR"/buddy_inline-*.json 2>/dev/null | head -1; }
 
 log() { echo "$(date +%T) $*" >> "$LOG"; }

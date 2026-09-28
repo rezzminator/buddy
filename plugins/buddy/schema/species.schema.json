@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/rezzminator/buddy/plugins/buddy/schema/species.schema.json",
   "title": "buddy species template",
-  "description": "species/{species}.json: the sprite an original companion wears (/buddy-personality). The engine fills in the rolled eye for each {E}, overlays the hat on row 0, and colors it by rarity. Frames are the blank hat row plus 1 to 4 body rows, every row exactly `width` columns with {E} counted as one. Lines may use {name}.",
+  "description": "species/{species}.json: the sprite an original companion wears (the personality tab of /buddy). The engine fills in the rolled eye for each {E}, overlays the hat on row 0, and colors it by rarity. Frames are the blank hat row plus 1 to 4 body rows, every row exactly `width` columns with {E} counted as one. Lines may use {name}.",
   "type": "object",
   "additionalProperties": false,
   "required": [

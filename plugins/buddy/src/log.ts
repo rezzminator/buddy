@@ -58,6 +58,8 @@ export class Logger {
   /** The log file; '' writes no file (errors still reach the fallback). */
   file: string;
   context: { session?: string; character?: string } = {};
+  /** Sees every record, at any level and whether or not the file is on, before the level decides: the round files' timeline. */
+  tap: ((record: { at: number; level: LogLevel; event: string; fields: LogFields }) => void) | null = null;
   private readonly now: () => number;
   private readonly cap: number;
   private pending: string[] = [];
@@ -80,6 +82,11 @@ export class Logger {
 
   /** Queues one record when `level` is on; the next flush writes it after every one before it. */
   log(level: LogLevel, event: string, fields: LogFields = {}): void {
+    try {
+      this.tap?.({ at: this.now(), level, event, fields });
+    } catch {
+      // A tap that throws never costs the log its record.
+    }
     if (!this.enabled(level)) return;
     let line: string;
     try {

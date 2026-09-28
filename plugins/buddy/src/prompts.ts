@@ -2,11 +2,14 @@
 // and for the end-of-turn call, which writes the buddy's `commentAfterEachTurn` and
 // `suggestNextPrompt` together. Each demands short lines.
 
+import type { Action } from './did.ts';
+
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
-export const QUESTION_MAX_TOKENS = 100;
-/** The end-of-turn call's budget: a COMMENT_AFTER_EACH_TURN and a SUGGEST_NEXT_PROMPT, short. */
-export const TURN_MAX_TOKENS = 120;
-/** How long the end-of-turn call, its rememberedExchanges and settings reads included, may take before its commentAfterEachTurn and suggestNextPrompt are given up. */
+/** A question's output cap. The model's thinking counts against it, so it is far above the one line the rules ask for: a cap that cut the thinking would cut the answer, or leave none. */
+export const QUESTION_MAX_TOKENS = 2048;
+/** The end-of-turn call's output cap, a COMMENT_AFTER_EACH_TURN and a SUGGEST_NEXT_PROMPT, as high as a question's for the same reason. */
+export const TURN_MAX_TOKENS = 2048;
+/** How long the end-of-turn call, its chatTurnsToRead and settings reads included, may take before its commentAfterEachTurn and suggestNextPrompt are given up. */
 export const TURN_DEADLINE_MS = 30_000;
 /** How long past the buddy's own deadline a completion runs before the engine abandons it (`timeoutMs`): the deadline always ends it first, with one reason. */
 export const REQUEST_MARGIN_MS = 5_000;
@@ -27,19 +30,22 @@ export function retriesEmpty(r: { isAnswered: boolean; reason?: string; text?: s
   if (leftMs < RETRY_MIN_MS) return false;
   return r.isAnswered ? oneLine(r.text ?? '') === '' : r.reason === 'empty-reply';
 }
-/** How many of the main chat's latest turns a completion reads by default: the chatTurnsToRead option's default. */
-export const CHAT_TURNS_TO_READ_DEFAULT = 3;
-/** The most of the main chat's latest turns a completion may read: the chatTurnsToRead option's ceiling. */
-export const CHAT_TURNS_TO_READ_MAX = 10;
-/** How much of each of those prompts a completion reads: its end. */
-const TURN_PROMPT_CAP = 1500;
-/** How much of each of those answers a completion reads: its end. */
-const TURN_ANSWER_CAP = 3000;
-const REPLY_CAP = 240;
 
-/** The rendered rememberedExchanges before what is asked, and leave to refer back to it; '' without one. */
-function rememberedExchangesBlock(rememberedExchanges: string): string {
-  return rememberedExchanges ? `${rememberedExchanges}\nThat is what you and the user said to each other lately; you may refer back to it.\n\n` : '';
+/** The rendered chatTurnsToRead, which carries its own heading, set apart before what is asked; '' without one. */
+function chatTurnsToReadBlock(chatTurnsToRead: string): string {
+  return chatTurnsToRead ? `${chatTurnsToRead}\n\n` : '';
+}
+
+/**
+ * How far the character's memory reaches, `turns` being the chatTurnsToRead
+ * option: it says so, in character, when asked about anything older, and
+ * never makes it up.
+ */
+export function memoryRule(turns: number): string {
+  return (
+    `Your memory is short: you remember only the main chat's last ${turns === 1 ? 'turn' : `${turns} turns`} and what you and the user said around them. ` +
+    "Asked about anything not in it, say in character that your short-term memory doesn't reach that far; never guess it or make it up."
+  );
 }
 
 /**
@@ -53,17 +59,18 @@ export const CHARACTER_RULE =
   'The character decides HOW it is said, never WHAT is true. ' +
   'Never repeat what the chat already said.';
 
-/** The system prompt of a completion: persona, the character rule and the one-line rule. */
-export function oneLineSystem(persona: string): string {
-  return `${persona}\n\n${CHARACTER_RULE}\n\n${ONE_LINE_RULE}`;
+/** The system prompt of a /buddy question's completion: persona, the character rule, the memory rule for `turns` remembered, and the one-line rule. */
+export function oneLineSystem(persona: string, turns: number): string {
+  return `${persona}\n\n${CHARACTER_RULE}\n\n${memoryRule(turns)}\n\n${ONE_LINE_RULE}`;
 }
 
-/** A completion's question, after the buddy's rememberedExchanges and the main chat's chatTurnsToRead turns (`chatTurnsToReadText`), when there are some. */
-export function questionPrompt(question: string, rememberedExchanges = '', exchange = ''): string {
-  return `${rememberedExchangesBlock(rememberedExchanges)}${exchange}The user asks you directly: ${question}`;
+/** A completion's question, after what the buddy remembers (its chatTurnsToRead, rendered), when it remembers anything. */
+export function questionPrompt(question: string, chatTurnsToRead = ''): string {
+  return `${chatTurnsToReadBlock(chatTurnsToRead)}The user asks you directly: ${question}`;
 }
 
-export type TurnSummary = { tools: string[]; failures: number; lastBash: string };
+/** A main turn's tally so far: its tools, its failures, its last shell command, and its steps for the chatTurnsToRead (actionOf). */
+export type TurnSummary = { tools: string[]; failures: number; lastBash: string; actions: Action[] };
 
 /** What the turn did: the tools it used, counted, its failures, its last shell command capped. */
 function turnFacts(t: TurnSummary): string {
@@ -72,11 +79,6 @@ function turnFacts(t: TurnSummary): string {
   const tools = [...counts].map(([name, n]) => (n > 1 ? `${name} x${n}` : name)).join(', ') || 'none';
   const bash = t.lastBash ? t.lastBash.slice(0, 120) : 'none';
   return `Tools used: ${tools}. Failures: ${t.failures}. Last shell command: ${bash}.`;
-}
-
-/** `text` whole when it fits `cap`, else its end, marked cut. */
-function tail(text: string, cap: number): string {
-  return text.length > cap ? `...${text.slice(text.length - cap)}` : text;
 }
 
 /** What the end-of-turn call writes: commentAfterEachTurn, suggestNextPrompt, or both. */
@@ -126,17 +128,16 @@ export function turnSystem(persona: string, wants: TurnWants): string {
 }
 
 /**
- * One main-thread turn: the prompt it began with and what Claude answered.
+ * One main-thread turn: the prompt it began with, what Claude did (one line
+ * per step, didOf; absent when it used no tool), and what Claude answered.
  * `from`, set when that prompt was not known to be the user's: its origin (a
  * peer, a task notification, a plugin), `unclassified` when the engine could
  * not place it, or `unknown` when no submission of it was seen.
  */
-export type Turn = { prompt: string; answer: string; from?: string };
+export type Turn = { prompt: string; answer: string; did?: string[]; from?: string };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
-/** Origins that say nothing of whose a prompt was: no submission seen (`unknown`), or one the engine could not place. */
-const UNKNOWN_ORIGINS: readonly string[] = ['unknown', 'unclassified'];
 
 /** Whether a prompt of origin `kind` (prompt.submit's `origin.kind`) is the user's own. */
 export function isUserOrigin(kind: string): boolean {
@@ -208,28 +209,9 @@ export function endsConversation(reason: string): boolean {
   return reason === 'clear' || reason === 'resume';
 }
 
-/** The chatTurnsToRead turns with `turn` added last, the oldest dropped past `size` turns (the chatTurnsToRead option); `turns` itself unchanged. */
-export function pushTurn(turns: readonly Turn[], turn: Turn, size = CHAT_TURNS_TO_READ_DEFAULT): Turn[] {
-  return [...turns, turn].slice(-size);
-}
-
-/**
- * The main chat's chatTurnsToRead turns, which a completion cannot see for itself:
- * oldest first, each prompt and answer keeping its end; '' for none.
- */
-export function chatTurnsToReadText(turns: readonly Turn[]): string {
-  if (turns.length === 0) return '';
-  const blocks = turns.map((t) => {
-    // A prompt that was not the user's is never shown as what the user asked; one of unknown origin is never said not to be.
-    const asked = t.from === undefined ? 'The user asked Claude:' : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:' : `Claude was sent, not by the user (${t.from}):`;
-    return `${asked}\n${tail(t.prompt, TURN_PROMPT_CAP) || '(not seen)'}\n\nClaude answered:\n${tail(t.answer, TURN_ANSWER_CAP) || '(no text)'}\n\n`;
-  });
-  return `The main chat's last ${turns.length === 1 ? 'turn' : `${turns.length} turns`}, oldest first:\n\n${blocks.join('')}`;
-}
-
-/** The end-of-turn call's prompt: the buddy's rememberedExchanges, the main chat's chatTurnsToRead turns, then what the turn did. */
-export function turnPrompt(t: TurnSummary, turns: readonly Turn[], rememberedExchanges = ''): string {
-  return `${rememberedExchangesBlock(rememberedExchanges)}${chatTurnsToReadText(turns)}${turnFacts(t)}`;
+/** The end-of-turn call's prompt: what the buddy remembers (its chatTurnsToRead, rendered, the turn just ended its last), then what the turn did. */
+export function turnPrompt(t: TurnSummary, chatTurnsToRead = ''): string {
+  return `${chatTurnsToReadBlock(chatTurnsToRead)}In the turn that just ended: ${turnFacts(t)}`;
 }
 
 const TAGGED = /^[\s\-*]*(comment_after_each_turn|suggest_next_prompt)\s*:\s*(.*)$/i;
@@ -251,11 +233,10 @@ export function parseTurnReply(reply: string): { commentAfterEachTurn: string | 
   };
 }
 
-/** A reply as one bubble line: the first non-empty line, unquoted, capped. */
+/** A reply as one bubble line: the first non-empty line, unquoted, whole: what the buddy says is never cut. */
 export function oneLine(reply: string): string {
   const line = reply.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
-  const unquoted = line.replace(/^["'`]+|["'`]+$/g, '').trim();
-  return unquoted.length > REPLY_CAP ? `${unquoted.slice(0, REPLY_CAP - 3)}...` : unquoted;
+  return line.replace(/^["'`]+|["'`]+$/g, '').trim();
 }
 
 /** The longest suggestNextPrompt kept: past it, the reply is not a prompt someone would type. */
