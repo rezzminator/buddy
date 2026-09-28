@@ -76,7 +76,7 @@ Hidden is the adapter's state, not the brain's: the band yields and the clock st
 | `/buddy on` | `wake`, `greet` | the greeting |
 | a finished tool call | `react` | wakes, adds the call to the turn's tally, reacts per the table below |
 | a turn ends | `wake`, `endTurn` | the tally resets; a `commentAfterEachTurn` is due or not ([Voice](./voice.md)) |
-| the drawer's `♥ pet` | `pet` | `petted` pose and line, one more pet |
+| ctrl+x p in the drawer | `pet` | `petted` pose and line, one more pet |
 | `/buddy` alone | | opens or folds the drawer ([Drawer](./drawer.md)) |
 | `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's deadline (90 s), then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
 | the band draws | `observeBand` | width, height, and work starting or stopping |

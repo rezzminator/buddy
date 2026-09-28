@@ -314,15 +314,15 @@ describe('/buddy', () => {
     expect(w.commands).toEqual(['buddy']);
   });
 
-  test("the drawer's pet button pets, counts and remembers", async ($, on) => {
+  test("ctrl+x p pets, counts and remembers", async ($, on) => {
     const w = world(on, { character: 'fixy', pets: 4 });
     await $.session.start(START);
     const ui = await band($);
     expect((await $.command.run(run(''))).text).toMatch(/^The drawer is open above your prompt/);
-    await ui.press({ key: 'pet' });
+    await ui.press({ key: 'key-pet' });
     await w.clock.settle();
     expect(w.saved.get('pets')).toBe(5);
-    expect(await label(ui, 'pet')).toBe('♥ pet · 5');
+    expect(await shows(ui, /^♥ 5$/)).toBe(true);
     await fold(ui, w);
     expect(await shows(ui, /Fixy purrs\./)).toBe(true);
     await ui.unmount();
@@ -425,7 +425,7 @@ describe('/buddy', () => {
     await $.command.run(run('remember the word pineapple'));
     await w.clock.settle();
     await personality($, w, ui);
-    await ui.press({ key: 'use:duck' });
+    await pick(ui, w, 'use:duck');
     await w.clock.settle();
     await ui.unmount();
     const again = await band($);
@@ -681,15 +681,20 @@ function eyesOf(variant: 'native' | 'npm'): RegExp {
 /** /buddy opens the drawer on `ui`, the band, and its personality tab is pressed and built. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function personality($: any, w: { clock: { settle: () => Promise<void> } }, ui: any): Promise<void> {
-  if (!(await ui.find({ key: 'tab-personality' }))) await $.command.run(run(''));
-  await ui.press({ key: 'tab-personality' });
+  if (!(await ui.find({ key: 'key-tab' }))) await $.command.run(run(''));
+  await ui.press({ key: 'key-tab' });
   await w.clock.settle();
 }
 
-/** The person's arrow moving the band's focus ring onto `key`. */
+/** ctrl+x n until `key`'s row is lit: each step switches to the character it lands on, one that cannot be drawn only lit. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function focus($: any, key: string): Promise<void> {
-  await $.ui.focus({ component: 'AbovePrompt', requestId: BAND_ID, element: key, origin: { kind: 'person' } });
+async function pick(ui: any, w: { clock: { settle: () => Promise<void> } }, key: string): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    if (JSON.stringify((await ui.find({ key }))?.children ?? null).includes('"inverse":true')) return;
+    await ui.press({ key: 'key-next' });
+    await w.clock.settle();
+  }
+  throw new Error(`ctrl+x n never lit ${key}`);
 }
 
 /** The drawer's close button: the band draws the buddy and its bubble again. */
@@ -701,7 +706,8 @@ async function fold(ui: any, w: { clock: { settle: () => Promise<void> } }): Pro
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function label(ui: any, key: string): Promise<unknown> {
-  return (await ui.find({ key }))?.props.label;
+  const found = await ui.find({ key });
+  return found?.props.label ?? found?.text;
 }
 
 describe("the drawer's personality tab", () => {
@@ -711,7 +717,8 @@ describe("the drawer's personality tab", () => {
     const pane = await band($);
     await personality($, w, pane);
     expect(w.opens).toEqual([]);
-    for (const title of [/^Shipped$/, /^Yours$/, /^customCharactersDir$/]) expect(await shows(pane, title)).toBe(true);
+    for (const title of [/^Shipped$/, /^Yours$/]) expect(await shows(pane, title)).toBe(true);
+    expect(await shows(pane, /^customCharactersDir$/)).toBe(false);
     expect(await label(pane, 'use:fixy')).toBe('* Fixy (fixy)');
     expect(await label(pane, 'use:duck')).toBe('  Duck Fixture (duck)');
     expect(await label(pane, 'use:broken')).toBe('  broken (invalid)');
@@ -719,23 +726,17 @@ describe("the drawer's personality tab", () => {
     expect(await shows(pane, /^Fixy, a test fixture\.$/)).toBe(true);
     expect(await shows(pane, /You are Fixy/)).toBe(false);
     expect(await shows(pane, /^“Fixy says hi\.”$/)).toBe(true);
-    expect(await shows(pane, /^customCharactersDir is not set: point it at your own character files\.$/)).toBe(true);
+    expect(await shows(pane, /^None yet: set customCharactersDir to a folder of your own character files\.$/)).toBe(true);
     await pane.unmount();
   });
 
-  test('down moves the highlight and the preview follows; Enter picks, remembers and greets, the tab staying open on it', async ($, on) => {
+  test('ctrl+x n lights the next character and switches to it at once, the preview following; the tab stays open on it', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
     await personality($, w, ui);
-    const pane = ui;
-    await focus($, 'use:duck');
-    expect(await shows(pane, /^Duck Fixture$/)).toBe(true);
-    expect(await shows(pane, /^Fixy$/)).toBe(false);
-    await focus($, 'use:broken');
-    expect(await shows(pane, /^Can't draw it: persona: required$/)).toBe(true);
-    await pane.press({ key: 'use:duck' });
-    await w.clock.settle();
+    await pick(ui, w, 'use:duck');
+    expect(await shows(ui, /^Duck Fixture$/)).toBe(true);
     expect(w.saved.get('character')).toBe('duck');
     expect(await label(ui, 'use:duck')).toBe('* Duck Fixture (duck)');
     expect(await label(ui, 'use:fixy')).toBe('  Fixy (fixy)');
@@ -746,40 +747,41 @@ describe("the drawer's personality tab", () => {
     await ui.unmount();
   });
 
-  test('an invalid entry cannot be picked; picking the configured default goes back to it', async ($, on) => {
+  test('ctrl+x b goes back; a character that cannot be drawn is lit, its preview saying why, and never picked', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
     await personality($, w, ui);
-    await ui.press({ key: 'use:broken' });
+    await pick(ui, w, 'use:broken');
+    expect(await shows(ui, /^Can't draw it: persona: required$/)).toBe(true);
+    expect(w.saved.get('character')).not.toBe('broken');
+    expect(w.logs.filter((l) => /Can't pick/.test(l))).toEqual([]);
+    await pick(ui, w, 'use:fixy');
+    await ui.press({ key: 'key-back' });
     await w.clock.settle();
-    expect(w.logs).toContain("buddy: Can't pick broken (invalid): persona: required");
+    const before = (await label(ui, 'use:fixy')) as string;
+    expect(before.startsWith('  ')).toBe(true);
+    await ui.press({ key: 'key-next' });
+    await w.clock.settle();
     expect(w.saved.get('character')).toBe('fixy');
-    expect(await shows(ui, /\(f_f\)/)).toBe(true);
-    await ui.press({ key: 'use:duck' });
-    await w.clock.settle();
-    expect(w.saved.get('character')).toBe('duck');
-    expect(await shows(ui, /\(d_d\)/)).toBe(true);
+    expect(await label(ui, 'use:fixy')).toBe('* Fixy (fixy)');
     await ui.unmount();
   });
 
-  test('a highlight alone changes nothing; the talk tab goes back to the thread', async ($, on) => {
+  test('ctrl+x t goes back to the thread', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
     await personality($, w, ui);
-    await focus($, 'use:duck');
-    expect(await shows(ui, /^Duck Fixture$/)).toBe(true);
-    expect(w.saved.get('character')).toBe('fixy');
     expect(await label(ui, 'use:fixy')).toBe('* Fixy (fixy)');
-    await ui.press({ key: 'tab-talk' });
+    await ui.press({ key: 'key-tab' });
     await w.clock.settle();
     expect(await ui.find({ key: 'use:fixy' })).toBeUndefined();
     expect(await shows(ui, /Nothing between you and Fixy yet/)).toBe(true);
     await ui.unmount();
   });
 
-  test('a companion in ~/.claude.json: two Yours entries; the preview animates and shows its card; Enter draws it and saves soul and roll', async ($, on) => {
+  test('a companion in ~/.claude.json: two Yours entries; ctrl+x n onto one draws it, saves soul and roll, and its preview animates with its card', async ($, on) => {
     const w = world(on, {}, {}, { files: { [CONFIG]: config(MOCHI) } });
     await $.session.start(START);
     const ui = await band($);
@@ -787,7 +789,7 @@ describe("the drawer's personality tab", () => {
     const pane = ui;
     expect(await label(pane, 'original:native')).toBe('  Mochi — native install');
     expect(await label(pane, 'original:npm')).toBe('  Mochi — npm install');
-    await focus($, 'original:npm');
+    await pick(pane, w, 'original:npm');
     expect(await shows(pane, /^Mochi$/)).toBe(true);
     expect(await shows(pane, eyesOf('npm'))).toBe(true);
     expect(await shows(pane, /^hatched 2026-04-01$/)).toBe(true);
@@ -801,8 +803,6 @@ describe("the drawer's personality tab", () => {
       blinked = await shows(pane, /<-->/);
     }
     expect(blinked).toBe(true);
-    await pane.press({ key: 'original:npm' });
-    await w.clock.settle();
     expect(w.saved.get('character')).toBe('original');
     expect(w.saved.get('original')).toEqual({ variant: 'npm', soul: MOCHI });
     expect(await label(pane, 'original:npm')).toBe('* Mochi — npm install');
@@ -870,12 +870,13 @@ describe("the drawer's personality tab", () => {
     expect(w.logs.join('\n')).not.toContain('secretToken');
   });
 
-  test('no companion anywhere says so in one line', async ($, on) => {
+  test('no companion anywhere takes no line: Yours holds only your own characters, or says how to add some', async ($, on) => {
     const w = world(on, {}, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const pane = await band($);
     await personality($, w, pane);
-    expect(await shows(pane, /^No companion in ~\/\.claude\.json or its backups\.$/)).toBe(true);
+    expect(await shows(pane, /No companion/)).toBe(false);
+    expect(await shows(pane, /^None yet: set customCharactersDir to a folder of your own character files\.$/)).toBe(true);
   });
 });
 
@@ -900,7 +901,7 @@ describe('core fixes', () => {
     const ui = await band($);
     await $.command.run(run('what is up'));
     await personality($, w, ui);
-    await ui.press({ key: 'use:duck' });
+    await pick(ui, w, 'use:duck');
     await w.clock.settle();
     await fold(ui, w);
     await w.clock.advance(5000);
@@ -917,7 +918,7 @@ describe('core fixes', () => {
     const ui = await band($);
     w.saved.set('pets', 10);
     await $.command.run(run(''));
-    await ui.press({ key: 'pet' });
+    await ui.press({ key: 'key-pet' });
     await w.clock.settle();
     expect(w.saved.get('pets')).toBe(11);
     await fold(ui, w);
@@ -1178,7 +1179,7 @@ describe('hook paths', () => {
     await $.command.run(run('on'));
     const ui = await band($);
     await personality($, w, ui);
-    await ui.press({ key: 'use:duck' });
+    await pick(ui, w, 'use:duck');
     await fold(ui, w);
     const drawn = JSON.stringify(await ui.drawn());
     expect(drawn).not.toContain('tab-personality');
@@ -1400,7 +1401,7 @@ describe('the end-of-turn call, turn by turn', () => {
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await personality($, w, ui);
-    await ui.press({ key: 'use:duck' });
+    await pick(ui, w, 'use:duck');
     await w.clock.settle();
     await fold(ui, w);
     await w.clock.advance(5_000);
@@ -1734,7 +1735,7 @@ describe('the round-3 audit fixes', () => {
     await w.clock.settle();
     w.slow.sessionIdMs = 0;
     await $.command.run(run(''));
-    await ui.press({ key: 'pet' });
+    await ui.press({ key: 'key-pet' });
     await w.clock.advance(61_000);
     await w.clock.settle();
     expect(w.logs.filter((l) => /remembering the line failed/.test(l))).toEqual([]);
@@ -1772,7 +1773,7 @@ describe('the round-3 audit fixes', () => {
     await w.clock.settle();
     w.slow.chatTurnsToReadSetMs = 70_000;
     await $.command.run(run(''));
-    await ui.press({ key: 'pet' });
+    await ui.press({ key: 'key-pet' });
     await w.clock.advance(61_000);
     await w.clock.settle();
     w.slow.chatTurnsToReadSetMs = 0;
@@ -1916,6 +1917,29 @@ describe('the round-3 audit fixes', () => {
 });
 
 describe('the drawer', () => {
+  test('the drawer has no button but its shortcuts: each a ctrl+x chord on an engine action, their guide the last row', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 140, maxRows: 40 });
+    await $.command.run(run(''));
+    await w.clock.settle();
+    const buttons = (await ui.findAll({ type: 'Button' })) as { key: string; props: { label: string; action?: string } }[];
+    expect(buttons.map((b) => [b.key, b.props.label, b.props.action])).toEqual([
+      ['key-tab', 'ctrl+x t talk/personality', 'pane:next'],
+      ['key-use', 'ctrl+x u use the idea', 'pane:previous'],
+      ['key-next', 'ctrl+x n next character', 'diff:back'],
+      ['key-back', 'ctrl+x b previous character', 'app:cycleDiffBase'],
+      ['key-pet', 'ctrl+x p pet', 'permission:toggleDebug'],
+      ['close', 'ctrl+x x close', 'pane:close'],
+    ]);
+    // The guide is drawn after everything else: the drawer's bottom-left.
+    const drawn = JSON.stringify(await ui.drawn());
+    expect(drawn.lastIndexOf('"guide"')).toBeGreaterThan(drawn.lastIndexOf('ask-input'));
+    expect((await ui.find({ key: 'guide' }))?.text).toMatch(/^ctrl\+x tab ask · ctrl\+x t talk\/personality/);
+    expect(await shows(ui, /←|↑↓|Enter presses/)).toBe(false);
+    await ui.unmount();
+  });
+
   test('/buddy alone opens the band above the prompt into the drawer, full width: the thread, the idea with use, the ask box; again folds it back into the buddy', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: run the tests' }, { isAnswered: true, text: 'Because it passed.' }] });
     const filled: string[] = [];
@@ -1934,7 +1958,7 @@ describe('the drawer', () => {
     expect(await shows(ui, /^Fixy likes that\.$/)).toBe(true);
     expect(await shows(ui, /^fix the build$/)).toBe(true);
     expect(await shows(ui, /^run the tests$/)).toBe(true);
-    await ui.press({ key: 'use3' });
+    await ui.press({ key: 'key-use' });
     await w.clock.settle();
     expect(filled).toEqual(['run the tests']);
     // The ask box asks whatever it says, `off` included: never a /buddy subcommand.
@@ -1943,7 +1967,7 @@ describe('the drawer', () => {
     expect(w.completes.at(-1)!.prompt).toContain('off');
     expect(await shows(ui, /^off$/)).toBe(true);
     expect(await shows(ui, /^Because it passed\.$/)).toBe(true);
-    // Its close button (x) folds it back, as the command again does.
+    // ctrl+x x folds it back, as the command again does.
     await ui.press({ key: 'close' });
     await w.clock.settle();
     expect(await shows(ui, /^F I X Y$/)).toBe(false);

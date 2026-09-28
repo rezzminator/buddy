@@ -9,7 +9,6 @@ import { EYE_TOKEN, type HatArt, type SpeciesTemplate } from './species.ts';
 
 export const ORIGINAL_ID = 'original';
 export const CONFIG_NAME = '.claude.json';
-export const SHOWN_CONFIG = '~/.claude.json';
 export const VARIANTS: readonly Variant[] = ['native', 'npm'];
 
 export type Soul = { name: string; personality: string; hatchedAt?: number | string };

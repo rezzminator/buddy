@@ -1,11 +1,12 @@
 import { clockOf, mix, packCells, rgbOf, seconds, shimmerRule, short, statsOf, wrapText, type FeedEntry } from '../src/feed.ts';
-import { findItem, listWidth, previewOf, rowLabel, type Item, type Menu } from '../src/menu.ts';
+import { findItem, listWidth, previewOf, rowLabel, type Menu } from '../src/menu.ts';
 import type { Soul } from '../src/original.ts';
 
 // The drawer /buddy opens: the band above the prompt opened full width into
 // two tabs, talk (the buddy and its whole thread with you, src/feed.ts) and
 // personality (every character to pick, with a live preview, src/menu.ts).
-// No `$` here: buddy.tsx hands it the surface's elements, what to draw and
+// It has no buttons: every act is a ctrl+x chord (SHORTCUTS), their guide the
+// drawer's last row, at its left. No `$` here: buddy.tsx hands it the surface's elements, what to draw and
 // the handlers.
 
 /** A surface's element constructor, as buddy.tsx types it. */
@@ -86,9 +87,26 @@ const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, Math.max(0,
 
 // ---- the drawer -------------------------------------------------------------
 
-/** The drawer's left column, the buddy; the column of each idea's button at the right-most side. */
+/** The drawer's left column, the buddy; the column at the right-most side saying what became of each idea. */
 const DRAWER_LEFT = 22;
-const DRAWER_BUTTON = 16;
+const DRAWER_MARK = 16;
+
+/**
+ * The drawer's shortcuts, each a ctrl+x chord. A plugin hears a chord only
+ * through an engine keybinding action no engine handler holds at the prompt:
+ * each is drawn as a plain Button naming its action, which the chord presses
+ * while the drawer is open. ctrl+x b and ctrl+x x are the engine's own
+ * defaults; the others are bound in keybindings.json (README: Shortcuts).
+ */
+export const SHORTCUTS = [
+  { key: 'key-tab', chord: 'ctrl+x t', does: 'talk/personality', action: 'pane:next' },
+  { key: 'key-use', chord: 'ctrl+x u', does: 'use the idea', action: 'pane:previous' },
+  { key: 'key-next', chord: 'ctrl+x n', does: 'next character', action: 'diff:back' },
+  { key: 'key-back', chord: 'ctrl+x b', does: 'previous character', action: 'app:cycleDiffBase' },
+  { key: 'key-pet', chord: 'ctrl+x p', does: 'pet', action: 'permission:toggleDebug' },
+  { key: 'close', chord: 'ctrl+x x', does: 'close', action: 'pane:close' },
+] as const;
+export type Shortcut = (typeof SHORTCUTS)[number]['key'];
 
 /** How a drawer row says who spoke and how: a glyph, a label, their color, the text's own. */
 function speaker(e: FeedEntry, v: DrawerView): { glyph: string; label: string; color: string; text: string; bold: boolean } {
@@ -113,7 +131,7 @@ function speaker(e: FeedEntry, v: DrawerView): { glyph: string; label: string; c
 /** The drawer's label column: the glyph, a space, the longest label it cuts to. */
 const LABEL_W = 20;
 
-/** What the drawer's buttons and ask box do. */
+/** What the drawer's shortcuts and ask box do. `step`: the next (1) or previous (-1) character, switched to at once. */
 export type DrawerActs = {
   use: (text: string) => void;
   ask: (text: string) => void;
@@ -121,10 +139,14 @@ export type DrawerActs = {
   setDraft: (text: string) => void;
   close: () => void;
   pet: () => void;
-  talk: () => void;
-  personality: () => void;
-  pick: (item: Item) => void;
+  tab: () => void;
+  step: (by: 1 | -1) => void;
 };
+
+/** The newest idea you have neither sent nor passed over: what ctrl+x u puts in the prompt box. */
+export function openIdea(feed: readonly FeedEntry[]): FeedEntry | undefined {
+  return [...feed].reverse().find((e) => e.kind === 'suggest' && e.taken === undefined);
+}
 
 /** A section rule across the thread: `head` dim, `body` bright, `tail` dim after it. */
 function sectionRule(E: Elements, key: string, width: number, head: string, body: string, tail = '') {
@@ -141,13 +163,13 @@ function sectionRule(E: Elements, key: string, width: number, head: string, body
 }
 
 /** The whole thread the buddy remembers, oldest first: a section per turn of yours or compaction, each message of yours and its under it. */
-function thread(E: Elements, v: DrawerView, act: DrawerActs, centerW: number) {
-  const { Box, Text, Button } = E;
-  const textW = Math.max(10, centerW - LABEL_W - DRAWER_BUTTON - 1);
+function thread(E: Elements, v: DrawerView, centerW: number) {
+  const { Box, Text } = E;
+  const textW = Math.max(10, centerW - LABEL_W - DRAWER_MARK - 1);
   // Messages only: its canned idle lines are the band's chatter, never a message.
   const messages = v.feed.filter((e) => e.kind !== 'line');
-  // The newest idea still open is drawn as the main action.
-  const openIdea = [...messages].reverse().find((e) => e.kind === 'suggest' && e.taken === undefined)?.id;
+  // The newest idea still open is the one ctrl+x u uses.
+  const idea = openIdea(messages)?.id;
   const rows = messages.map((e) => {
     if (e.kind === 'clear') return sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  new conversation`, '');
     if (e.kind === 'compact') return sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text);
@@ -160,7 +182,9 @@ function thread(E: Elements, v: DrawerView, act: DrawerActs, centerW: number) {
         ? <Text color="green">✓ you sent it</Text>
         : e.taken === false
           ? <Text dimColor>not sent</Text>
-          : <Button key={`use${e.id}`} label="use" variant={e.id === openIdea ? 'primary' : undefined} dimColor={e.id !== openIdea} onPress={() => act.use(e.text)} />;
+          : e.id === idea
+            ? <Text color="magenta">ctrl+x u uses it</Text>
+            : null;
     return (
       <Box key={`d${e.id}`} flexDirection="row">
         <Box width={LABEL_W} flexShrink={0}>
@@ -172,16 +196,16 @@ function thread(E: Elements, v: DrawerView, act: DrawerActs, centerW: number) {
         <Box flexDirection="column" flexGrow={1}>
           {lines.map((l) => (who.text ? <Text color={who.text} italic={e.kind === 'suggest'}>{l}</Text> : <Text bold={who.bold}>{l}</Text>))}
         </Box>
-        <Box width={DRAWER_BUTTON} flexShrink={0} justifyContent="flex-end">{end}</Box>
+        <Box width={DRAWER_MARK} flexShrink={0} justifyContent="flex-end">{end}</Box>
       </Box>
     );
   });
   return rows.length === 0 ? <Text dimColor>{`Nothing between you and ${v.name} yet: ask it below, or finish a turn with Claude.`}</Text> : rows;
 }
 
-/** The personality tab: every character as a row to pick, beside the preview of the one the focus is on. */
-function personality(E: Elements, v: DrawerView, act: DrawerActs) {
-  const { Box, Text, Button } = E;
+/** The personality tab: every character as a row, the one ctrl+x n and b stepped to lit, beside its preview. */
+function personality(E: Elements, v: DrawerView) {
+  const { Box, Text } = E;
   const m = v.menu;
   if (!m) return <Text dimColor>Finding every character…</Text>;
   const p = previewOf(findItem(m.model, m.focused), v.frame, v.now);
@@ -189,7 +213,11 @@ function personality(E: Elements, v: DrawerView, act: DrawerActs) {
     <Box key={`group:${n}`} flexDirection="column" marginTop={n === 0 ? 0 : 1}>
       <Text bold>{s.title}</Text>
       {s.lines.map((line) => <Text wrap="wrap">{line}</Text>)}
-      {s.items.map((item) => <Button key={item.key} label={rowLabel(item, m.current)} plain onPress={() => act.pick(item)} />)}
+      {s.items.map((item) => (
+        <Box key={item.key}>
+          <Text inverse={item.key === m.focused} wrap="truncate-end">{rowLabel(item, m.current)}</Text>
+        </Box>
+      ))}
     </Box>
   ));
   const preview =
@@ -215,15 +243,45 @@ function personality(E: Elements, v: DrawerView, act: DrawerActs) {
   );
 }
 
+/** The last row, at the drawer's left: every shortcut, each pressed by its chord. */
+function guide(E: Elements, v: DrawerView, act: DrawerActs) {
+  const { Box, Text, Button } = E;
+  const idea = openIdea(v.feed);
+  const does: Record<Shortcut, () => void> = {
+    'key-tab': act.tab,
+    'key-use': () => {
+      if (idea) act.use(idea.text);
+    },
+    'key-next': () => act.step(1),
+    'key-back': () => act.step(-1),
+    'key-pet': act.pet,
+    close: act.close,
+  };
+  return (
+    <Box key="guide" flexDirection="row" flexWrap="wrap">
+      <Text dimColor>{E.Input ? 'ctrl+x tab ask · ' : ''}</Text>
+      {SHORTCUTS.map((k, n) => (
+        <Box key={`g${k.key}`} flexDirection="row">
+          <Button key={k.key} label={`${k.chord} ${k.does}`} plain dimColor action={k.action} onPress={does[k.key]} />
+          <Text dimColor>{n < SHORTCUTS.length - 1 ? ' · ' : ''}</Text>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
 export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
-  const { Box, Text, Button, Input } = E;
+  const { Box, Text, Input } = E;
   const s = statusOf(v);
   const st = statsOf(v.feed);
   const W = Math.max(60, v.cols);
-  const centerW = Math.max(24, W - DRAWER_LEFT - 2);
+  // Inside the frame (a border and a column of padding each side), the body's own border and padding, and the gap to the card.
+  const innerW = W - 4;
+  const centerW = Math.max(24, innerW - DRAWER_LEFT - 1 - 4);
+  const frame = { borderStyle: 'single', borderColor: 'gray', borderDimColor: true };
   const talking = v.tab === 'talk';
   const left = (
-    <Box key="left" flexDirection="column" width={DRAWER_LEFT} flexShrink={0} alignItems="center">
+    <Box key="left" flexDirection="column" width={DRAWER_LEFT} flexShrink={0} alignItems="center" {...frame}>
       {Sprite(E, v)}
       <Text bold color={v.color}>{v.name.toUpperCase().split('').join(' ')}</Text>
       <Text>
@@ -233,34 +291,32 @@ export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
       <Text dimColor>{`${st.comments + st.answers} replies`}</Text>
       <Text dimColor>{`${st.taken} of ${st.suggestions} ideas used`}</Text>
       <Text dimColor>{st.avgMs === null ? v.engine : `${seconds(st.avgMs)} · ${short(st.tokens)} tokens`}</Text>
-      <Button key="pet" label={`♥ pet · ${v.pets}`} plain onPress={act.pet} />
+      <Text color="red">{`♥ ${v.pets}`}</Text>
     </Box>
   );
   const askW = Math.max(30, Math.floor(W / 2));
   return (
     <Box flexDirection="column" width={W}>
       {Shimmer(E, v, W)}
-      <Box key="tabs" flexDirection="row" gap={2}>
-        <Button key="tab-talk" label="talk" variant={talking ? 'primary' : undefined} dimColor={!talking} onPress={act.talk} />
-        <Button key="tab-personality" label="personality" variant={talking ? undefined : 'primary'} dimColor={talking} onPress={act.personality} />
-        <Text dimColor wrap="truncate-end">{talking ? `  everything ${v.name} remembers: your last ${v.turnsRemembered} turns with Claude` : `  pick who sits above your prompt`}</Text>
-      </Box>
-      <Box flexDirection="row" gap={2}>
-        {left}
-        <Box key="body" flexDirection="column" flexGrow={1} justifyContent="flex-end">{talking ? thread(E, v, act, centerW) : personality(E, v, act)}</Box>
-      </Box>
-      <Box key="hint" flexDirection="row" justifyContent="space-between">
-        <Text dimColor wrap="truncate-end">ctrl+x tab steps in · ←→ move · ↑↓ scroll · Enter presses · ctrl+x x closes</Text>
-        {/* ctrl+x x, the chord that closes a pane, presses it from the prompt too, while no pane holds that chord. */}
-        <Button key="close" label="✕ close" action="pane:close" dimColor onPress={act.close} />
+      <Box key="frame" flexDirection="column" width={W} borderStyle="round" borderColor={v.color} paddingX={1}>
+        <Box key="tabs" flexDirection="row" gap={2}>
+          <Text key="tab-talk" bold={talking} inverse={talking} dimColor={!talking}>{' talk '}</Text>
+          <Text key="tab-personality" bold={!talking} inverse={!talking} dimColor={talking}>{' personality '}</Text>
+          <Text dimColor wrap="truncate-end">{talking ? `  everything ${v.name} remembers: your last ${v.turnsRemembered} turns with Claude` : `  who sits above your prompt: ctrl+x n and b switch`}</Text>
+        </Box>
+        <Box flexDirection="row" gap={1}>
+          {left}
+          <Box key="body" flexDirection="column" flexGrow={1} justifyContent="flex-end" paddingX={1} {...frame}>{talking ? thread(E, v, centerW) : personality(E, v)}</Box>
+        </Box>
       </Box>
       {Input ? (
         <Box key="ask" flexDirection="row" justifyContent="center">
           <Box borderStyle="round" borderColor={v.status === 'thinking' ? 'yellow' : v.color} borderDimColor={v.status !== 'thinking'} paddingX={1} width={askW}>
-            <Input key="ask-input" placeholder={v.status === 'thinking' ? `${v.name} is thinking…` : `ask ${v.name}…`} submitLabel="ask" value={act.draft} onInput={(t: string) => act.setDraft(t)} onSubmit={(t: string) => act.ask(t)} />
+            <Input key="ask-input" autoFocus placeholder={v.status === 'thinking' ? `${v.name} is thinking…` : `ask ${v.name}…`} submitLabel="ask" value={act.draft} onInput={(t: string) => act.setDraft(t)} onSubmit={(t: string) => act.ask(t)} />
           </Box>
         </Box>
       ) : null}
+      {guide(E, v, act)}
     </Box>
   );
 }

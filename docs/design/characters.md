@@ -54,8 +54,8 @@ flowchart LR
 | Source | Where | Marked |
 | --- | --- | --- |
 | Shipped (`builtin`) | the plugin's `characters/`: `cat`, `dragon`, `duck`, `ghost`, `professor`, `robot`, `yellow-duck` | |
-| `customCharactersDir` (`user`) | the folder the `customCharactersDir` option names; `~` expands to HOME | the menu's `customCharactersDir` group |
-| Original (`original`) | built from the account's roll and a species template, id `original`, reserved: a character file with that id is refused with an error naming the file, said in the menu's `customCharactersDir` group, the log, and the bubble at each session start and `/buddy reload` (`mergeRoster`, `startWarning`) | [Original companion](./original-companion.md) |
+| `customCharactersDir` (`user`) | the folder the `customCharactersDir` option names; `~` expands to HOME | the personality tab's Yours group, after your original |
+| Original (`original`) | built from the account's roll and a species template, id `original`, reserved: a character file with that id is refused with an error naming the file, said in the personality tab's Yours group, the log, and the bubble at each session start and `/buddy reload` (`mergeRoster`, `startWarning`) | [Original companion](./original-companion.md) |
 
 A file is a candidate when it is a visible `.json` entry that is not a folder (`isCharacterFile`).
 The roster keeps every candidate, valid or not, sorted by id; an id in both `characters/` and `customCharactersDir` is taken from `customCharactersDir`.
@@ -63,7 +63,7 @@ An invalid file stays in the roster with its first error, so the drawer's person
 A folder that cannot be listed is logged, named in the menu's group, and said in the bubble at each session start and `/buddy reload` (`startWarning`).
 The roster loads at session start and again on `/buddy reload`.
 
-The character drawn is chosen in order (`choose`): the stored choice (Enter in the drawer's personality tab), then the `character` option, then `duck` (`DEFAULT_ID`).
+The character drawn is chosen in order (`choose`): the stored choice (a switch in the drawer's personality tab), then the `character` option, then `duck` (`DEFAULT_ID`).
 A missing or invalid choice draws the duck with a bubble `Couldn't load {id}: {why}; the personality tab in /buddy picks another` for 10 seconds, and the log says it too.
 If `duck.json` itself fails, a minimal stand-in duck compiled into the engine (`STANDIN_DEFAULT`) draws, so an error always has a buddy to say it.
 
@@ -74,7 +74,7 @@ A line is never the one said last from the same pool (`pickLine`).
 
 | Event | Fires when | Chance | Shows for |
 | --- | --- | --- | --- |
-| `greeting` | a character is set with nothing to warn about (no load error, no roster error, no first-time option warning; `startWarning`): session start, `/buddy reload`, Enter in the menu; and `/buddy on` | always | 6 s |
+| `greeting` | a character is set with nothing to warn about (no load error, no roster error, no first-time option warning; `startWarning`): session start, `/buddy reload`, a switch in the personality tab; and `/buddy on` | always | 6 s |
 | `toolFail` | a finished tool call was denied, or failed without reading like a test failure | always | 6 s |
 | `testPass` | a Bash call's output matches the pass pattern and not the fail one, and the call did not fail | always | 6 s, with confetti |
 | `testFail` | a Bash call's output matches the fail pattern | always | 6 s |
@@ -90,8 +90,8 @@ An original companion's pools come from its species template, with `{name}` fill
 ## How a contributor adds one
 
 1. Write `{id}.json` in a folder of your own; [`CONTRIBUTING.md`](../../CONTRIBUTING.md) has a working example.
-2. Point `customCharactersDir` at the folder and start a session. The drawer's personality tab (`/buddy`) lists it under `customCharactersDir`, or as `{id} (invalid)` with the first error in its preview.
-3. Enter on it in the menu draws it. Edit, save, `/buddy reload`. Try a narrow window too.
+2. Point `customCharactersDir` at the folder and start a session. The drawer's personality tab (`/buddy`) lists it under Yours, or as `{id} (invalid)` with the first error in its preview.
+3. ctrl+x n or ctrl+x b onto it draws it. Edit, save, `/buddy reload`. Try a narrow window too.
 4. To ship it: add it to `plugins/buddy/characters/` with the relative `$schema`, add a row to the README's Characters table, run the checks, and open a pull request against `develop`.
 
 A shipped character is original work (no copied character, trademark or real person), friendly, not a recolour of one already built in, and MIT-licensed.

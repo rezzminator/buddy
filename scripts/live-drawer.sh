@@ -5,7 +5,8 @@
 # turns and a /buddy question, then opens the drawer with /buddy, keeps what it drew,
 # colors and all ($RUN/drawer.ansi, the screen with its escape codes, and
 # drawer.txt), checks its talk tab spans the memory and its personality tab
-# lists the characters, and folds it back with ctrl+x x from the prompt.
+# lists the characters, each reached by its ctrl+x chord, and folds it back
+# with ctrl+x x from the prompt.
 # Each check prints PASS or FAIL; the exit code counts the FAILs.
 # Usage: scripts/live-drawer.sh [columns] [rows]  (default 200 x 60)
 set -uo pipefail
@@ -60,22 +61,21 @@ send "/buddy"
 sleep 4
 $T capture-pane -e -p -t drawer > "$RUN/drawer.ansi"
 $T capture-pane -p -t drawer > "$RUN/drawer.txt"
-check "/buddy drew the drawer above the prompt" "grep -q -F '↑↓ scroll · Enter presses' '$RUN/drawer.txt' && grep -q -F 'what do you make of this project' '$RUN/drawer.txt'"
+check "/buddy drew the drawer above the prompt, its shortcuts on the last row" "grep -q -F 'ctrl+x t talk/personality' '$RUN/drawer.txt' && grep -q -F 'what do you make of this project' '$RUN/drawer.txt'"
 check "the talk tab names the memory and holds both turns" "grep -q -F 'remembers: your last 4 turns with Claude' '$RUN/drawer.txt' && grep -q -F 'you → Claude: Run this Bash command' '$RUN/drawer.txt' && grep -q -F 'you → Claude: Now run: npm test' '$RUN/drawer.txt'"
-# ctrl+x tab steps in on `talk`; Right and Enter open the personality tab; Enter on `talk` goes back.
-$T send-keys -t drawer C-x; $T send-keys -t drawer Tab; sleep 1
-$T send-keys -t drawer Right; sleep 1; $T send-keys -t drawer Enter; sleep 3
+# Every act is a ctrl+x chord pressed from the prompt: ctrl+x t opens the personality tab, and again goes back to talk.
+$T send-keys -t drawer C-x t; sleep 3
 $T capture-pane -p -t drawer > "$RUN/personality.txt"
-check "the personality tab lists the characters, the duck marked" "grep -q -F '* Quack (duck)' '$RUN/personality.txt' && grep -q -F 'Shipped' '$RUN/personality.txt'"
-$T send-keys -t drawer Left; sleep 1; $T send-keys -t drawer Enter; sleep 2
-check "talk goes back to the thread" "pane | grep -q -F 'what do you make of this project'"
-# Right walks its buttons to the ask box (Up and Down scroll a drawer taller than the band), which then shows its submit label; Esc steps out.
-for _ in $(seq 1 10); do pane | grep -q -F '⏎ ask' && break; $T send-keys -t drawer Right; sleep 1; done
-check "Right reaches the ask box" "pane | grep -q -F '⏎ ask'"
+check "ctrl+x t: the personality tab lists the characters, the duck marked" "grep -q -F '* Quack (duck)' '$RUN/personality.txt' && grep -q -F 'Shipped' '$RUN/personality.txt'"
+$T send-keys -t drawer C-x t; sleep 2
+check "ctrl+x t again goes back to the thread" "pane | grep -q -F 'what do you make of this project'"
+# ctrl+x tab steps into the ask box, which then shows its submit label; Esc steps out.
+$T send-keys -t drawer C-x Tab; sleep 1
+check "ctrl+x tab reaches the ask box" "pane | grep -q -F '⏎ ask'"
 $T send-keys -t drawer Escape; sleep 1
-# ctrl+x x from the prompt folds it back (its close button holds the pane:close chord while no pane is open).
-$T send-keys -t drawer C-x; $T send-keys -t drawer x
+# ctrl+x x from the prompt folds it back (pane:close, while no pane is open).
+$T send-keys -t drawer C-x x
 sleep 3
-check "ctrl+x x from the prompt folded it back" "! pane | grep -q -F '↑↓ scroll · Enter presses'"
+check "ctrl+x x from the prompt folded it back" "! pane | grep -q -F 'ctrl+x t talk/personality'"
 echo "screen: $RUN/drawer.txt (and .ansi with colors)"
 exit "$FAILS"

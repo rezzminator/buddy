@@ -13,7 +13,7 @@ Characters are JSON files, seven shipped and any number of your own, and the dra
 | [Voice](./voice.md) | questions (a completion on the chat's last turns), `commentAfterEachTurn`, the one-line rule and token caps, `model` |
 | [chatTurnsToRead](./chatTurnsToRead.md) | `chatTurnsToRead`: the short-term memory, the chat's last turns with what the buddy and you said after each, kept per session, fed into every prompt |
 | [Original companion](./original-companion.md) | recomputing the companion Claude Code hatched: identity, hash, PRNG, bones, species art, privacy, legal |
-| [Drawer](./drawer.md) | `/buddy` alone: the talk tab spanning the memory, the personality tab's groups, the live preview, Enter and Esc, persistence, error lines |
+| [Drawer](./drawer.md) | `/buddy` alone: the talk tab spanning the memory, the personality tab's groups, the live preview, the ctrl+x shortcuts, persistence, error lines |
 | [Verification](./verification.md) | every gate and its broken state, the live proof row by row, the bugs the gates caught |
 
 ## How they fit together
@@ -57,10 +57,10 @@ flowchart LR
 
 | Key | Holds | Written by |
 | --- | --- | --- |
-| `character` | the chosen character id | Enter in the drawer's personality tab; picking the `character` option's own entry stores that id |
+| `character` | the chosen character id | a switch in the drawer's personality tab (ctrl+x n or b); stepping onto the `character` option's own entry stores that id |
 | `hidden` | `true` while hidden | `/buddy off`, `/buddy on` |
-| `pets` | the pet count | the drawer's `♥ pet` |
-| `original` | the picked original's roll (`native` or `npm`) and its soul | Enter on a "Yours" entry in the personality tab |
+| `pets` | the pet count | ctrl+x p in the drawer |
+| `original` | the picked original's roll (`native` or `npm`) and its soul | a switch to a "Yours" original in the personality tab |
 | `chatTurnsToRead:{session}` | before 0.4.0 only: a chat's memory, moved into its folder's `memory.json` when the chat is next opened | see [chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept) |
 
 Every session shares one store, and Claude Code raises no event when it changes, so a session reads back what another may have written: a pet counts on from the stored `pets`, and `hidden` is read back while the band draws ([Engine](./engine.md#the-tick)).

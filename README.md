@@ -125,13 +125,40 @@ the variable is set.
 
 | Command | What it does |
 | --- | --- |
-| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, status, counts, `♥ pet`), a talk tab and a personality tab, a box to ask it centred right above your prompt, and `✕ close`. The talk tab is everything the buddy remembers, whole and scrollable: your last `chatTurnsToRead` turns with Claude, each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each next-prompt idea with a `use` button at its right. ctrl+x tab steps in, ← and → (or Tab) move between its buttons and the box, ↑ and ↓ scroll it when it is taller than the band, Enter presses; ctrl+x x closes it from the prompt (while no pane is open), and so does `/buddy` again. |
+| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, status, counts, its pets as `♥ N`), a talk tab and a personality tab, a box to ask it centred right above your prompt, and on its last row the [shortcuts](#shortcuts). The talk tab is everything the buddy remembers, whole and scrollable: your last `chatTurnsToRead` turns with Claude, each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each next-prompt idea marked at its right `✓ you sent it` or `not sent`, and the newest open one `ctrl+x u uses it`. The drawer has no buttons: every act is a ctrl+x chord. ctrl+x x closes it from the prompt (while no pane is open), and so does `/buddy` again. |
 | `/buddy {question}` | Ask it: it thinks, then answers in one line, in character. While hidden it replies `{name} is hidden; /buddy on first`. |
 | `/buddy off` / `/buddy on` | Hide or show it, remembered across restarts and shared with your other sessions. |
 | `/buddy reload` | Rescan the characters, after you edit one. |
 | `/buddy help` | Usage, then every option that was ignored or capped, and why. |
 | `/buddy log` | The log file's path and its last 20 lines, to paste into an issue. |
 | `/buddy list` / `/buddy use {id}` | `Switching characters moved to the drawer's personality tab: /buddy opens it.` — no model call. |
+
+### Shortcuts
+
+The drawer's last row, at its bottom-left, is its guide:
+`ctrl+x tab ask · ctrl+x t talk/personality · ctrl+x u use the idea · ctrl+x n/b next/previous character · ctrl+x p pet · ctrl+x x close`.
+
+| Chord | Does |
+| --- | --- |
+| ctrl+x tab | steps into the ask box |
+| ctrl+x t | switches between the talk and personality tabs |
+| ctrl+x u | puts the newest open idea in your prompt box |
+| ctrl+x n / ctrl+x b | switches to the next or previous character in the personality tab |
+| ctrl+x p | pets the buddy |
+| ctrl+x x | closes the drawer |
+
+A plugin hears a chord only through a Claude Code keybinding action that
+nothing else holds at the prompt, so buddy borrows six: ctrl+x b
+(`app:cycleDiffBase`) and ctrl+x x (`pane:close`) are Claude Code's own
+defaults, and ctrl+x tab is its own step-in. The other four need these lines
+in your `~/.claude/keybindings.json` (or `$CLAUDE_CONFIG_DIR/keybindings.json`
+when that is set); merge them into the file if you have one:
+
+```json
+{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x n":"diff:back","ctrl+x p":"permission:toggleDebug"}}]}
+```
+
+Without them only ctrl+x b, ctrl+x x and ctrl+x tab work.
 
 ## 🎭 Characters
 
@@ -149,17 +176,16 @@ The choice is, in order: your last pick in the drawer's personality tab, then th
 `character` option, then `duck`. Your own characters sit beside these, and one with
 a built-in's id replaces it. The id `original` is reserved for your original
 companion: a file that takes it is refused, never drawn, with an error
-naming the file in the personality tab's `customCharactersDir` group, and in
+naming the file in the personality tab's "Yours" group, and in
 the bubble when a session starts and after `/buddy reload`.
 
 ## 🐣 Pick a personality
 
-`/buddy` opens the drawer; press its `personality` tab (ctrl+x tab steps in,
-→ moves, Enter presses). The entries sit on the left, a live preview
-of the focused one on the right.
+`/buddy` opens the drawer; ctrl+x t opens its personality tab. The entries
+sit on the left, a live preview of the lit one on the right, in two groups.
 
 - **Shipped**: the characters that come with the plugin.
-- **Yours**: the companion Claude Code's own `/buddy` hatched for your
+- **Yours**: first the companion Claude Code's own `/buddy` hatched for your
   account, when Claude Code's config still holds its name and personality,
   or one of its ten newest backups does. The config is `~/.claude.json`, its
   backups beside it and in `~/.claude/backups/`; with `CLAUDE_CONFIG_DIR`
@@ -168,22 +194,25 @@ of the focused one on the right.
   file or one over 5 MB is skipped. It is listed
   twice, as the native install and as the npm install rolled it: the two
   turned your account id into a different species, eyes, hat and stats, and
-  the preview lets you recognise yours.
-- **`customCharactersDir`**: your own characters, from the `customCharactersDir` option.
+  the preview lets you recognise yours. No companion found takes no line.
+  Then your own characters, from the `customCharactersDir` option. With none,
+  it says `None yet: set customCharactersDir to a folder of your own character files.`
+  (or `No character files in customCharactersDir.` when it is set).
 
-← and → move between the entries, and the preview follows: the sprite in its idle
+ctrl+x n and ctrl+x b light the next or previous entry, round the list (the
+tab opens if it was not), and switch to it at once. The preview shows the lit one: the sprite in its idle
 animation, the name, its description (for your original, its saved personality) and a greeting in its voice;
 for your original companion also its rarity stars, shiny, the five stats as
 bars (`SNARK     ████████░░ 81`) and the day it hatched. `*` marks the one
-drawn now. Enter switches to the focused one and remembers it: it is still there
-after `/reload` and a restart; the tab stays open, its `*` moved. Esc leaves
-the drawer to the prompt and changes nothing; `talk` goes back to the thread.
+drawn now. The switch is remembered: it is still there after `/reload` and a
+restart; the tab stays open, its `*` moved. An entry that cannot be drawn is
+lit, its preview saying why, and never picked. ctrl+x t goes back to the thread.
 
 The tab only reads the config and its backups; it never writes them. A file it cannot
 read shows as one line in the "Yours" group, saying why. Your account id is
 never shown, saved or logged. To go back to your usual character, pick it
 in the tab: the `character` option's one is listed under Shipped, or under
-`customCharactersDir` when it is your own.
+Yours when it is your own.
 
 ## 🧠 How it works
 

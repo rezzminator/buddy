@@ -1,13 +1,14 @@
 import { frameAt, type Character } from './character.ts';
 import type { Variant } from './hatch.ts';
 import { poolFor } from './lines.ts';
-import { ORIGINAL_ID, SHOWN_CONFIG, originalLabel, type Soul } from './original.ts';
+import { ORIGINAL_ID, originalLabel, type Soul } from './original.ts';
 import type { Entry, Roster } from './roster.ts';
 import { spriteColor } from './scene.ts';
 
-// The drawer's personality tab as plain data. Three titled groups of
-// entries, one focusable row each, and the preview of the one the focus is
-// on. The drawer draws it one to one; an error is a line in its group.
+// The drawer's personality tab as plain data. Two titled groups of
+// entries, Shipped and Yours (your original companion's two rolls, then your
+// own character files), one row each, and the preview of the one lit.
+// The drawer draws it one to one; an error is a line in its group.
 
 export type Pick = { kind: 'use'; id: string } | { kind: 'original'; variant: Variant };
 /** `about`: the line the preview says of it, its description, or an original's personality. */
@@ -16,10 +17,10 @@ export type Item = { key: string; label: string; pick: Pick; character?: Charact
 export type Section = { title: string; lines: string[]; items: Item[] };
 export type Menu = { sections: Section[] };
 
-/** What the "Yours" group found: a failure to look, nothing, or the companion rolled both ways. */
+/** What the look for your original companion found: a failure to look, nothing, or the companion rolled both ways. */
 export type Originals =
   | { kind: 'error'; error: string }
-  | { kind: 'none'; notes: string[]; shownConfig?: string }
+  | { kind: 'none'; notes: string[] }
   | { kind: 'found'; soul: Soul; from?: string; notes: string[]; rolls: { variant: Variant; character?: Character; error?: string }[] };
 
 export type MenuInput = {
@@ -40,10 +41,10 @@ function entryItem(e: Entry): Item {
   return e.character ? { key: itemKey(pick), label: `${e.character.name} (${e.id})`, pick, character: e.character, about: e.character.description } : { key: itemKey(pick), label: `${e.id} (invalid)`, pick, error: e.error ?? 'invalid' };
 }
 
-function yours(o: Originals): Section {
-  const title = 'Yours';
-  if (o.kind === 'error') return { title, lines: [o.error], items: [] };
-  if (o.kind === 'none') return { title, lines: [`No companion in ${o.shownConfig ?? SHOWN_CONFIG} or its backups.`, ...o.notes], items: [] };
+/** Your original companion's rolls, and the lines said of the look for it: a failure, where a backup was read from, its notes; nothing when there is none. */
+function originals(o: Originals): { lines: string[]; items: Item[] } {
+  if (o.kind === 'error') return { lines: [o.error], items: [] };
+  if (o.kind === 'none') return { lines: o.notes, items: [] };
   const items = o.rolls.map((r): Item => {
     const pick: Pick = { kind: 'original', variant: r.variant };
     const item: Item = { key: itemKey(pick), label: originalLabel(o.soul.name, r.variant), pick };
@@ -53,22 +54,23 @@ function yours(o: Originals): Section {
     } else item.error = r.error ?? 'no art for it';
     return item;
   });
-  return { title, lines: [...(o.from ? [`From the backup ${o.from}.`] : []), ...o.notes], items };
+  return { lines: [...(o.from ? [`From the backup ${o.from}.`] : []), ...o.notes], items };
 }
 
 export function buildMenu(i: MenuInput): Menu {
   const shipped = i.roster.entries.filter((e) => e.source === 'builtin').map(entryItem);
   const mine = i.roster.entries.filter((e) => e.source === 'user').map(entryItem);
   const shippedLines = i.shippedError ? [i.shippedError] : shipped.length === 0 ? ['No shipped characters found.'] : [];
-  // A roster error that is not a listing failure: a file taking a reserved id, said in the customCharactersDir group.
+  // A roster error that is not a listing failure: a file taking a reserved id, said in Yours.
   const listing = new Set([i.shippedError, i.customCharactersDir.error]);
   const refused = i.roster.errors.filter((e) => !listing.has(e));
-  const customCharactersDirLines = [...(!i.customCharactersDir.isSet ? ['customCharactersDir is not set: point it at your own character files.'] : i.customCharactersDir.error ? [i.customCharactersDir.error] : mine.length === 0 ? ['No character files in customCharactersDir.'] : []), ...refused];
+  const original = originals(i.originals);
+  const items = [...original.items, ...mine];
+  const dir = i.customCharactersDir.error ? [i.customCharactersDir.error] : items.length > 0 ? [] : i.customCharactersDir.isSet ? ['No character files in customCharactersDir.'] : ['None yet: set customCharactersDir to a folder of your own character files.'];
   return {
     sections: [
       { title: 'Shipped', lines: shippedLines, items: shipped },
-      yours(i.originals),
-      { title: 'customCharactersDir', lines: customCharactersDirLines, items: mine },
+      { title: 'Yours', lines: [...original.lines, ...dir, ...refused], items },
     ],
   };
 }
@@ -79,14 +81,6 @@ export function allItems(m: Menu): Item[] {
 
 export function findItem(m: Menu, key: string): Item | undefined {
   return allItems(m).find((i) => i.key === key);
-}
-
-/** The key `by` rows from `key`, kept inside the list: what Down (+1) and Up (-1) reach. */
-export function moveKey(m: Menu, key: string, by: number): string | undefined {
-  const items = allItems(m);
-  if (items.length === 0) return undefined;
-  const at = Math.max(0, items.findIndex((i) => i.key === key));
-  return items[Math.max(0, Math.min(items.length - 1, at + by))]!.key;
 }
 
 /** The entry drawn now: the original by its roll, any other by its id. */

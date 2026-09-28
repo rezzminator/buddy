@@ -24,7 +24,8 @@ live_require() {
 }
 
 # Every session runs isolated from yours: its own config dir in the run folder
-# ($RUN/config: transcripts, plugin store, settings, sessions), a clean
+# ($RUN/config: transcripts, plugin store, settings, sessions, and the drawer's
+# chords in keybindings.json), a clean
 # environment (env -i: nothing of the calling chat, its session ids, sockets
 # or wrappers), and the native binary, never a `claude` wrapper. So a run
 # leaves no transcript, store entry or fleet row in your own config dir, and
@@ -42,6 +43,8 @@ live_isolate() {
   mkdir -p "$LIVE_CONFIG"
   # A fresh config dir would open on the first-run screens.
   printf '%s\n' '{ "hasCompletedOnboarding": true, "theme": "dark" }' > "$LIVE_CONFIG/.claude.json"
+  # The drawer's four chords the engine does not bind itself (README: Shortcuts).
+  printf '%s\n' '{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x n":"diff:back","ctrl+x p":"permission:toggleDebug"}}]}' > "$LIVE_CONFIG/keybindings.json"
   LIVE_CLAUDE=$RUN/claude
   cat > "$LIVE_CLAUDE" <<LAUNCH
 #!/bin/sh

@@ -14,7 +14,7 @@ Each gate below says what it proves and what it prints when it fails; a gate tha
 | Release check | `scripts/release-check.sh [main's version]` | the version agrees in `plugin.json`, `marketplace.json`, `package.json` and the README badge; `CHANGELOG.md` has a dated section; the version moved past `main`'s | one `FAIL` line per disagreement and exit 1; `ERROR` and exit 2 when a file cannot be read |
 | Live proof | `npm run live` (`scripts/live-proof.sh`) | a real session draws, walks, answers, switches through the drawer's personality tab, hides and remembers | a table with a `FAIL` row per failed check and its evidence, exit 1; `ERROR` and exit 2 when the session cannot be driven |
 | Live configurations | `npm run live:configs` (`scripts/live-configs.sh`) | five real sessions, one per configuration, two turns each, every turn measured | `report.md` with a `FAIL` row per failed check and its evidence, and `unread` for a metric no record carried, exit 1; a session that could not be driven is `NOT DRIVEN` with its error, exit 2 |
-| Live drawer | `npm run live:drawer` (`scripts/live-drawer.sh`) | one real session, two turns and a `/buddy` question, then `/buddy` opens the drawer, captured, its talk tab checked to name the memory and hold both turns, its personality tab opened and left, and folded back with ctrl+x x from the prompt | a `FAIL` line per failed check (the drawer not drawn, missing the question or a turn, the personality tab not listing the characters, or not folded back), exit the count of FAILs; the screen in `drawer.txt` and `.ansi` |
+| Live drawer | `npm run live:drawer` (`scripts/live-drawer.sh`) | one real session, two turns and a `/buddy` question, then `/buddy` opens the drawer, captured, its talk tab checked to name the memory and hold both turns, its shortcuts' row drawn last, its personality tab opened and left with ctrl+x t, the ask box reached with ctrl+x tab, and folded back with ctrl+x x from the prompt | a `FAIL` line per failed check (the drawer not drawn, missing the question or a turn, the personality tab not listing the characters, the ask box not reached, or not folded back), exit the count of FAILs; the screen in `drawer.txt` and `.ansi` |
 | CI | `.github/workflows/ci.yml` | `npm test`, the typecheck and the validation on every push to `develop` or `main` and every pull request; the release check on a pull request into `main` and on every push that lands on `main` | the failed step |
 | No leaks | a rule in `CLAUDE.md`, checked with a grep before a commit | no machine-absolute path and no personal data in a tracked file | the matching line |
 
@@ -34,28 +34,29 @@ The script drives a real, interactive Claude Code session and reads the screen.
 
 It spends a few cents of Haiku, and touches nothing of yours: every session runs in a config dir of the run's own (`$RUN/config`: transcripts, the plugin store, sessions), from a clean environment (`env -i`) and the native binary, never a `claude` wrapper, so no transcript, store entry or fleet row is left behind. It signs in with a long-lived token from `claude setup-token`, read at launch from `$BUDDY_LIVE_TOKEN_FILE` (default `~/.config/buddy/live-token`); without one it stops with exit 2 and says how to make it. `--setting-sources project` keeps the user's own settings, and so their `character` option, out of the run.
 
-Every switch goes through the drawer's personality tab (`menu_pick`): `/buddy`, ctrl+x tab (the focus lands on `talk`), Right, Enter (`tab_open`); read which shipped entry holds the `*`; press Right (Down scrolls a drawer taller than the band) until the focus, drawn in inverse video (`focused`), is on the wanted entry (`focus_on`, at most 15 steps), Enter; Esc and ctrl+x x fold the drawer (`tab_close`). A tab marking no shipped entry, or a focus that never reaches the entry, stops the run with exit 2. `menu_mark` reopens the tab, reads the `*`, and folds it.
+Every switch goes through the drawer's personality tab (`menu_pick`), each act a ctrl+x chord pressed from the prompt (`tmux send-keys C-x {key}`): `/buddy`, ctrl+x t (`tab_open`); read which shipped entry holds the `*`; press ctrl+x n (or ctrl+x b, whichever way the wanted entry lies among the shipped ids) once per entry between them, each step switching at once, until the `*` marks the wanted entry (`step_to`); ctrl+x x folds the drawer (`tab_close`). A tab marking no shipped entry, or steps that never reach the entry, stop the run with exit 2. `menu_mark` reopens the tab, reads the `*`, and folds it. `live_isolate` writes the four chords the engine does not bind itself into the run's `keybindings.json` ([README: Shortcuts](../../README.md#shortcuts)).
 
 | Row | Drives | Passes when |
 | --- | --- | --- |
 | (a) the default (duck) is drawn | `/buddy on`, a menu pick of the duck | a row of `duck.json`'s art is in the pane |
 | (b) it walks | nothing; three samples 2 s apart, after the greeting | the duck's rows change between samples |
-| (c) the drawer's pet button pets | `/buddy`, ctrl+x tab, Right twice, Enter | the focus was on `♥ pet`, and its count rose by one |
+| (c) ctrl+x p pets | `/buddy`, ctrl+x p | the left card's `♥ N` rose by one |
 | (c) the personality tab marks the current one | the tab, then folded | `* Quack (duck)` in the pane |
 | (d) question before a reply | `/buddy what is your favourite tool`, before the chat's first reply | the reply says `Asked`, and the bubble holds an answer |
 | (e) a test pass shows a `testPass` line | a prompt asking Claude to run `npm test` in the run's work folder, whose `package.json` test script prints `Tests: 3 passed` | a line of the duck's `testPass` pool shows in the bubble |
 | (f) question after a reply | `/buddy what did we just run` | the bubble holds an answer |
-| (g) a personality tab pick of `{other}` draws it | the tab, the focus on the first non-duck character by id (`cat`), Enter | a row unique to its art is in the pane |
+| (g) a personality tab pick of `{other}` draws it | the tab, stepped to the first non-duck character by id (`cat`) | a row unique to its art is in the pane |
 | (g) reopened, the tab marks `{other}` | the tab, then folded | `* {name} ({other})` in the pane |
-| (g) picking the default returns | the tab, the focus on the duck, Enter | the duck's rows are back |
+| (g) picking the default returns | the tab, stepped back to the duck | the duck's rows are back |
 | (h) `/buddy off` hides | `/buddy off` | no duck row in the pane |
 | (h) `/buddy on` shows | `/buddy on` | the duck's rows are back |
-| (i) `/buddy` opens the personality tab | `tab_open` | `* Quack (duck)`, `Shipped`, `customCharactersDir` and the duck's description in the pane, never its persona prompt |
-| (i) Right moves the preview | Right until the focus is on the next entry, `ghost` | the focus is on it and the preview shows it |
-| (i) Esc, ctrl+x x: folded, nothing changed | Esc, ctrl+x x | the groups are gone; the duck is still drawn |
-| (i) Enter on `cat` draws it, the tab marks it | the tab again, the focus on `cat`, Enter, then folded | `cat`'s preview showed first; the tab, still open, marks `* {name} (cat)`; its art is in the band |
+| (i) `/buddy` opens the personality tab | `tab_open` | `* Quack (duck)`, `Shipped`, `Yours` and the duck's description in the pane, never its persona prompt |
+| (i) ctrl+x n lights the next entry and switches to it | ctrl+x n once | the next entry, `ghost`, is lit and marked `*`, and the preview shows it |
+| (i) ctrl+x b steps back | ctrl+x b once | the duck is marked `*` again, its preview back |
+| (i) ctrl+x x folds it, the duck drawn | ctrl+x x | the shortcuts' row is gone; the duck is still drawn |
+| (i) stepping onto `cat` draws it, the tab marks it | the tab again, stepped to `cat`, then folded | `cat`'s preview showed; the tab, still open, marks `* {name} (cat)`; its art is in the band |
 | (i) reopened, the tab marks `cat` | the tab, then folded | `* {name} (cat)` in the pane |
-| (i) picking the default returns | the tab, the focus on the duck, Enter | the duck's rows are back |
+| (i) picking the default returns | the tab, stepped back to the duck | the duck's rows are back |
 | (j) `/buddy remember the word pineapple` | that question | the reply says `Asked`, and the bubble holds an answer |
 | (j) the next answer remembers `pineapple` | `/buddy what word did I ask you to remember?` | the answer holds `pineapple` |
 | (j) the chat's memory.json holds this session's chatTurnsToRead | nothing; `projects/*/{session}/buddy/memory.json` in the run's config dir is read | it holds both questions among its blocks' `characters.duck` exchanges, no `thinking` filler |

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import {
-  LIST_MIN_WIDTH, allItems, buildMenu, currentKeyOf, findItem, listWidth, moveKey, previewOf, rowLabel, type MenuInput, type Originals,
+  LIST_MIN_WIDTH, allItems, buildMenu, currentKeyOf, findItem, listWidth, previewOf, rowLabel, type MenuInput, type Originals,
 } from '../plugins/buddy/src/menu.ts';
 import { loadEntries, mergeRoster } from '../plugins/buddy/src/roster.ts';
 
@@ -21,25 +21,26 @@ const found: Originals = { kind: 'found', soul: { name: 'Mochi', personality: 'R
 const input = (o: Partial<MenuInput> = {}): MenuInput => ({ roster, customCharactersDir: { isSet: true }, originals: found, ...o });
 
 describe('buildMenu', () => {
-  test('three titled groups: shipped, yours (both rolls), customCharactersDir', () => {
+  test('two titled groups: shipped, and yours (the original companion both rolls, then your own files)', () => {
     const m = buildMenu(input());
-    expect(m.sections.map((s) => s.title)).toEqual(['Shipped', 'Yours', 'customCharactersDir']);
+    expect(m.sections.map((s) => s.title)).toEqual(['Shipped', 'Yours']);
     expect(m.sections[0]!.items.map((i) => i.label)).toEqual(['bad (invalid)', 'Cat (cat)', 'Duck (duck)']);
-    expect(m.sections[1]!.items.map((i) => [i.key, i.label])).toEqual([['original:native', 'Mochi — native install'], ['original:npm', 'Mochi — npm install']]);
+    expect(m.sections[1]!.items.map((i) => [i.key, i.label])).toEqual([['original:native', 'Mochi — native install'], ['original:npm', 'Mochi — npm install'], ['use:mine', 'Mine (mine)']]);
     expect(m.sections[1]!.items[1]!.error).toBe('species/hats.json has no crown');
-    expect(m.sections[2]!.items.map((i) => i.key)).toEqual(['use:mine']);
     expect(m.sections.flatMap((s) => s.lines)).toEqual([]);
   });
 
   test('a failure to look is a line in its group, never an empty group', () => {
     const m = buildMenu(input({ originals: { kind: 'error', error: "couldn't read ~/.claude.json: EACCES" }, shippedError: "couldn't read /x/characters: gone", customCharactersDir: { isSet: true, error: "couldn't read ~/chars: gone" } }));
-    expect(m.sections.map((s) => s.lines)).toEqual([["couldn't read /x/characters: gone"], ["couldn't read ~/.claude.json: EACCES"], ["couldn't read ~/chars: gone"]]);
-    expect(m.sections[1]!.items).toEqual([]);
+    expect(m.sections.map((s) => s.lines)).toEqual([["couldn't read /x/characters: gone"], ["couldn't read ~/.claude.json: EACCES", "couldn't read ~/chars: gone"]]);
+    expect(m.sections[1]!.items.map((i) => i.key)).toEqual(['use:mine']);
   });
 
-  test('nothing there says so in one line; a backup is named', () => {
+  test('no companion is no line; an empty Yours says how to fill it in one line; a backup is named', () => {
     const none = buildMenu(input({ originals: { kind: 'none', notes: [] }, customCharactersDir: { isSet: false }, roster: mergeRoster([], []) }));
-    expect(none.sections.map((s) => s.lines)).toEqual([['No shipped characters found.'], ['No companion in ~/.claude.json or its backups.'], ['customCharactersDir is not set: point it at your own character files.']]);
+    expect(none.sections.map((s) => s.lines)).toEqual([['No shipped characters found.'], ['None yet: set customCharactersDir to a folder of your own character files.']]);
+    expect(buildMenu(input({ originals: { kind: 'none', notes: [] }, customCharactersDir: { isSet: true }, roster: mergeRoster([], []) })).sections[1]!.lines).toEqual(['No character files in customCharactersDir.']);
+    expect(buildMenu(input({ originals: { kind: 'none', notes: [] } })).sections[1]).toMatchObject({ lines: [], items: [{ key: 'use:mine' }] });
     const backup = buildMenu(input({ originals: { ...found, from: '~/.claude.json.backup' } as Originals }));
     expect(backup.sections[1]!.lines).toEqual(['From the backup ~/.claude.json.backup.']);
   });
@@ -47,12 +48,8 @@ describe('buildMenu', () => {
 
 describe('moving and marking', () => {
   const m = buildMenu(input());
-  test('down and up walk every row in order, kept inside the list', () => {
+  test('every row in order: the shipped ones, then yours', () => {
     expect(allItems(m).map((i) => i.key)).toEqual(['use:bad', 'use:cat', 'use:duck', 'original:native', 'original:npm', 'use:mine']);
-    expect(moveKey(m, 'use:duck', 1)).toBe('original:native');
-    expect(moveKey(m, 'use:mine', 1)).toBe('use:mine');
-    expect(moveKey(m, 'use:bad', -1)).toBe('use:bad');
-    expect(moveKey(buildMenu(input({ roster: mergeRoster([], []), originals: { kind: 'none', notes: [] } })), 'x', 1)).toBeUndefined();
   });
   test('the current row: the original by its roll, any other by id, marked with *', () => {
     expect(currentKeyOf('original', 'npm')).toBe('original:npm');

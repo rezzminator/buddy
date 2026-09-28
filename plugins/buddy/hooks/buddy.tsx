@@ -6,7 +6,7 @@ import {
   type Brain,
 } from '../src/brain.ts';
 import { frameAt, type Character } from '../src/character.ts';
-import { USAGE, parseCommand, type Action } from '../src/command.ts';
+import { DRAWER_KEYS, USAGE, parseCommand, type Action } from '../src/command.ts';
 import { allItems, buildMenu, currentKeyOf, findItem, type Item, type Originals } from '../src/menu.ts';
 import {
   CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, storeKey,
@@ -1281,7 +1281,7 @@ async function findOriginals($: EngineInterface): Promise<Originals> {
     const backup = await backupSoul($, config.sources, notes);
     if (backup) ({ soul, label: from } = backup);
   }
-  if (!soul) return { kind: 'none', notes, shownConfig: config.sources.shownConfig };
+  if (!soul) return { kind: 'none', notes };
   const rolls: { variant: Variant; character?: Character; error?: string }[] = [];
   for (const variant of VARIANTS) {
     const r = await rollOriginal($, config.identity, soul, variant);
@@ -1341,7 +1341,25 @@ function showTalk(st: State, $: EngineInterface): void {
   scrollDrawerToEnd(st, $);
 }
 
-/** Enter on a character: switches and remembers the choice (the store's `character`); the new one greets, the tab stays open on it. */
+/**
+ * ctrl+x n (`by` 1) or b (-1): the personality tab, opened if it is not,
+ * lights the next or previous character, round the list, and switches to it
+ * at once; one that cannot be drawn is lit, its preview saying why, and not picked.
+ */
+async function stepCharacter(st: State, $: EngineInterface, by: 1 | -1): Promise<void> {
+  if (st.drawer.tab !== 'personality' || !st.menu) await openPersonality(st, $);
+  const m = st.menu;
+  if (!m) return;
+  const items = allItems(m.model);
+  if (items.length === 0) return;
+  const at = items.findIndex((i) => i.key === m.focused);
+  const item = items[(Math.max(0, at) + by + items.length) % items.length]!;
+  m.focused = item.key;
+  $.ui.invalidate('ui.render');
+  if (item.character) await pickItem(st, $, item);
+}
+
+/** A character picked: switches and remembers the choice (the store's `character`); the new one greets, the tab stays open on it. */
 async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void> {
   const b = st.b;
   const menu = st.menu;
@@ -1464,7 +1482,7 @@ function toggleDrawer(st: State, $: EngineInterface): { text: string } {
   }
   lg($, 'info', d.open ? 'drawer.open' : 'drawer.close', {});
   $.ui.invalidate('ui.render');
-  return { text: d.open ? 'The drawer is open above your prompt: ctrl+x tab steps in, ←→ move, ↑↓ scroll, ctrl+x x closes.' : 'The drawer folded back.' };
+  return { text: d.open ? `The drawer is open above your prompt: ${DRAWER_KEYS}.` : 'The drawer folded back.' };
 }
 
 /** The drawer in the band above the prompt; a thread taller than the band scrolls in it. */
@@ -1483,12 +1501,12 @@ async function drawDrawerBand(st: State, $: EngineInterface, e: { surface: strin
     pet: () => {
       runCommand(st, $, '', false, true).catch((error: unknown) => log($, 'petting from the drawer', error));
     },
-    talk: () => showTalk(st, $),
-    personality: () => {
-      openPersonality(st, $).catch((error: unknown) => log($, 'opening the personality tab', error));
+    tab: () => {
+      if (st.drawer.tab === 'talk') openPersonality(st, $).catch((error: unknown) => log($, 'opening the personality tab', error));
+      else showTalk(st, $);
     },
-    pick: (item) => {
-      pickItem(st, $, item).catch((error: unknown) => log($, `picking ${item.label}`, error));
+    step: (by) => {
+      stepCharacter(st, $, by).catch((error: unknown) => log($, 'switching the character', error));
     },
   });
 }
@@ -1894,19 +1912,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
       log($, `/${COMMAND}`, error);
       return { text: `/${COMMAND} failed: ${message(error)}` };
     }
-  });
-
-  // The personality tab's preview follows the focus: ← and →, Tab, or a click move the ring onto a character.
-  on('ui.focus', { component: 'AbovePrompt' }, async ($, e, next) => {
-    try {
-      if (st.drawer.tab === 'personality' && st.menu && e.element !== undefined && findItem(st.menu.model, e.element)) {
-        st.menu.focused = e.element;
-        $.ui.invalidate('ui.render');
-      }
-    } catch (error) {
-      log($, 'following the focus in the personality tab', error);
-    }
-    return next(e);
   });
 
   // The main chat compacted: the buddy files the summary Claude now holds, as it files a turn.

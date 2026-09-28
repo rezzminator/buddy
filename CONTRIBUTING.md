@@ -15,7 +15,7 @@ makes the file invalid.
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in built-ins |
-| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the `customCharactersDir` group of the drawer's personality tab and in the bubble at a session's start and after `/buddy reload`; the id the personality tab stores |
+| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the Yours group of the drawer's personality tab and in the bubble at a session's start and after `/buddy reload`; the id the personality tab stores |
 | `name` | string ≤ 40 | yes | display name |
 | `description` | string ≤ 100 | yes | one line for the personality tab's preview and the hover card |
 | `author` | string ≤ 60 | no | credit |
@@ -68,7 +68,7 @@ voice.
 
 | Event | Said when |
 | --- | --- |
-| `greeting` | the session starts, or after Enter in the drawer's personality tab, `/buddy reload` and `/buddy on` |
+| `greeting` | the session starts, or after a switch in the drawer's personality tab, `/buddy reload` and `/buddy on` |
 | `toolFail` | a tool call failed or was denied |
 | `testPass` | a Bash command's output reads like a test pass |
 | `testFail` | a Bash command's output reads like a test failure |
@@ -140,9 +140,9 @@ Every pose it leaves out falls back as the table above says: `oops`,
 2. Point the `customCharactersDir` option at that folder: through `/plugin configure`, or in
    `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersDir`.
    Start a new session.
-3. `/buddy` opens the drawer; its personality tab lists it under `customCharactersDir`, or as `blob (invalid)`
+3. `/buddy` opens the drawer; its personality tab (ctrl+x t) lists it under Yours, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.
-4. Enter on it draws it.
+4. ctrl+x n or ctrl+x b onto it draws it.
 5. Edit the file, save, and run `/buddy reload` to see the change. Try a
    narrow window as well as a wide one.
 6. Pick your usual character in the personality tab to go back to it.

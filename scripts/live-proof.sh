@@ -4,21 +4,23 @@
 # band from the pane and the /buddy replies from the transcript:
 #   (a) the default character, the duck, is drawn above the prompt
 #   (b) it walks: the band changes between samples while nothing is said
-#   (c) the drawer's pet button pets it and counts; its personality tab
-#       marks it with *
+#   (c) ctrl+x p in the drawer pets it and counts (`♥ N`); its personality
+#       tab marks it with *
 #   (d) a /buddy question before the first reply is answered: `model`
 #       needs no turns to read
 #   (e) a Bash `npm test` run printing a test pass shows a testPass line
 #   (f) a /buddy question after a reply is answered
-#   (g) Enter on another character in the personality tab draws it, and the
-#       reopened tab marks it with *; picking the duck there returns
+#   (g) stepping onto another character in the personality tab (ctrl+x n or
+#       b) draws it, and the reopened tab marks it with *; stepping back to
+#       the duck returns
 #   (h) /buddy off hides the band; /buddy on brings it back
 #   (i) /buddy opens the drawer and its personality tab, the duck marked;
-#       Right moves the focus and the preview to the next entry; Esc leaves and
-#       ctrl+x x folds it, nothing changed; Enter on cat draws the cat, the tab
-#       open with cat marked, and the reopened tab marks it; picking the duck
-#       returns. HOME stays real (a fake one logs the session out), so
-#       no row reads or prints the "Yours" group: hook tests prove that path.
+#       ctrl+x n lights the next entry and switches to it, the preview following;
+#       ctrl+x b steps back; ctrl+x x folds it, the duck drawn; stepping onto
+#       cat draws the cat, the tab open with cat marked, and the reopened tab
+#       marks it; stepping back to the duck returns. The run's config dir holds
+#       no companion, so no row reads an original in "Yours": hook tests prove
+#       that path.
 #   (j) chatTurnsToRead: /buddy remember the word pineapple, then /buddy what word did I
 #       ask you to remember? is answered with pineapple; the plugin's store
 #       holds both as exchanges, no thinking filler (its chatTurnsToRead:{session} key,
@@ -81,7 +83,8 @@ live_boot
 $T capture-pane -p -t proof > "$RUN/boot.txt"
 
 # The personality tab: Shipped lists characters/ sorted by id; * marks the
-# entry drawn now; the preview follows the focus, drawn in inverse video.
+# entry drawn now. ctrl+x n and b step to the next or previous entry and
+# switch to it at once, so the lit entry and the * move together.
 IDS=$(ls "$CHARS"/*.json | xargs -n1 basename | sed 's/\.json$//' | sort)
 # The start of a description as the preview's one line shows it (never the persona).
 about_of() { jq -r '.description | gsub("\\s+"; " ") | .[0:40]' "$CHARS/$1.json"; }
@@ -94,24 +97,27 @@ index_of() { grep -n -x -- "$1" <<<"$IDS" | cut -d: -f1; }
 shipped() { pane | awk '/Shipped/ { buf = ""; on = 1 } on { buf = buf $0 "\n" } /Yours/ { on = 0 } END { printf "%s", buf }'; }
 # The shipped id the open menu marks with *, or nothing.
 marked() { local id g; g=$(shipped); for id in $IDS; do grep -q -F -- "* $(name_of "$id") ($id)" <<<"$g" && { echo "$id"; return 0; }; done; return 1; }
-# /buddy opens the drawer on its talk tab; ctrl+x tab steps in on `talk`,
-# Right moves to `personality`, Enter opens it.
+# The chords are pressed from the prompt: /buddy opens the drawer on its talk
+# tab, ctrl+x t opens the personality tab.
 tab_open() {
   command_out "/buddy" >/dev/null || { echo "ERROR /buddy gave no reply" >&2; exit 2; }
   sleep 2
-  $T send-keys -t proof C-x; $T send-keys -t proof Tab; sleep 1
-  $T send-keys -t proof Right; sleep 1
-  $T send-keys -t proof Enter; sleep 3
+  $T send-keys -t proof C-x t; sleep 3
 }
-# Esc leaves the drawer for the prompt; ctrl+x x from the prompt folds it.
-tab_close() { $T send-keys -t proof Escape; sleep 1; $T send-keys -t proof C-x; $T send-keys -t proof x; sleep 2; }
-# The lines holding the focus, which the band draws in inverse video, escapes stripped.
-focused() { $T capture-pane -e -p -t proof | grep -a -E $'\e\\[(1;)?7m' | sed $'s/\e\\[[0-9;]*m//g'; }
-# Moves the focus right to the entry of id $1, up to 15 steps; fails when it never gets there.
-focus_on() {
-  local k
-  for ((k = 0; k < 15; k++)); do focused | grep -q -F -- "($1)" && return 0; $T send-keys -t proof Right; sleep 0.7; done
-  focused | grep -q -F -- "($1)"
+# ctrl+x x from the prompt folds it.
+tab_close() { $T send-keys -t proof C-x x; sleep 2; }
+# The lines drawn in inverse video, the lit entry among them, escapes stripped.
+lit() { $T capture-pane -e -p -t proof | grep -a -E $'\e\\[(1;)?7m' | sed $'s/\e\\[[0-9;]*m//g'; }
+# Steps from the marked entry to the one of id $1, ctrl+x n forward or ctrl+x b
+# back through the shipped ids, until the * marks it; fails when it never does.
+step_to() {
+  local from k n key=n
+  from=$(marked) || return 1
+  n=$(( $(index_of "$1") - $(index_of "$from") ))
+  [ "$n" -lt 0 ] && { n=$(( -n )); key=b; }
+  for ((k = 0; k < n; k++)); do $T send-keys -t proof C-x "$key"; sleep 1.5; done
+  sleep 1.5
+  [ "$(marked)" = "$1" ]
 }
 # Opens the personality tab, says which shipped entry it marks, folds the drawer.
 menu_mark() {
@@ -121,15 +127,14 @@ menu_mark() {
   tab_close
   echo "$m"
 }
-# Opens the personality tab, moves the focus to $1, Enter, folds the drawer.
-# Fails loudly when no shipped entry is marked or $1 is never focused: the steps are unknown.
+# Opens the personality tab, steps to $1 (which switches to it), folds the drawer.
+# Fails loudly when no shipped entry is marked or $1 is never reached: the steps are unknown.
 menu_pick() {
   local from
   tab_open
   from=$(marked) || { pane > "$RUN/menu-unmarked.txt"; echo "ERROR the personality tab marks no shipped character; pane in $RUN/menu-unmarked.txt" >&2; exit 2; }
-  focus_on "$1" || { pane > "$RUN/menu-to-$1.txt"; echo "ERROR the focus never reached $1; pane in $RUN/menu-to-$1.txt" >&2; exit 2; }
-  in_pane "$(about_of "$1")" || { pane > "$RUN/menu-to-$1.txt"; log "no $1 preview with the focus on it"; }
-  $T send-keys -t proof Enter; sleep 3
+  step_to "$1" || { pane > "$RUN/menu-to-$1.txt"; echo "ERROR stepping never reached $1; pane in $RUN/menu-to-$1.txt" >&2; exit 2; }
+  in_pane "$(about_of "$1")" || { pane > "$RUN/menu-to-$1.txt"; log "no $1 preview with it lit"; }
   tab_close
   log "picked $1 from $from"
 }
@@ -149,17 +154,14 @@ sleep 8
 s1=$(pane | grep -F -f "$RUN/default.rows"); sleep 2; s2=$(pane | grep -F -f "$RUN/default.rows"); sleep 2; s3=$(pane | grep -F -f "$RUN/default.rows")
 if [ -n "$s1" ] && { [ "$s1" != "$s2" ] || [ "$s2" != "$s3" ]; }; then add "(b) it walks" PASS "the band changed across samples"; else add "(b) it walks" FAIL "no change in 4 s"; fi
 
-# The pet button: ctrl+x tab steps in on `talk`; two steps right is `♥ pet · N`.
+# ctrl+x p pets: the left card's `♥ N` rises by one.
 command_out "/buddy" >/dev/null || exit 2; sleep 2
-pets() { pane | sed -n 's/.*♥ pet · \([0-9][0-9]*\).*/\1/p' | head -1; }
+pets() { pane | sed -n 's/.*♥ \([0-9][0-9]*\).*/\1/p' | head -1; }
 p0=$(pets)
-$T send-keys -t proof C-x; $T send-keys -t proof Tab; sleep 1
-$T send-keys -t proof Right; sleep 0.7; $T send-keys -t proof Right; sleep 1
-onpet=$(focused | grep -c -F '♥ pet')
-$T send-keys -t proof Enter; sleep 2
+$T send-keys -t proof C-x p; sleep 2
 p1=$(pets); pane > "$RUN/c-pet.txt"
 tab_close
-if [ "$onpet" -gt 0 ] && [ -n "$p0" ] && [ "${p1:-0}" -eq $((p0 + 1)) ]; then add "(c) the drawer's pet button pets" PASS "♥ pet · $p0 -> $p1"; else add "(c) the drawer's pet button pets" FAIL "focus on pet: $onpet, $p0 -> ${p1:-none}; pane in $RUN/c-pet.txt"; fi
+if [ -n "$p0" ] && [ "${p1:-0}" -eq $((p0 + 1)) ]; then add "(c) ctrl+x p pets" PASS "♥ $p0 -> $p1"; else add "(c) ctrl+x p pets" FAIL "♥ ${p0:-none} -> ${p1:-none}; pane in $RUN/c-pet.txt"; fi
 m=$(menu_mark c) || exit 2
 if [ "$m" = "$DEFAULT" ]; then add "(c) the personality tab marks the current one" PASS "* $DEF_NAME ($DEFAULT)"; else add "(c) the personality tab marks the current one" FAIL "marked: ${m:-none}; pane in $RUN/menu-c.txt"; fi
 
@@ -202,26 +204,29 @@ NEXT=$(grep -A1 -x "$DEFAULT" <<<"$IDS" | tail -1)
 rows_of "$PICK" | grep -v -x -F -f "$RUN/default.rows" > "$RUN/pick.rows"
 tab_open
 pane > "$RUN/i-open.txt"
-if in_pane "* $DEF_NAME ($DEFAULT)" && in_pane "Shipped" && in_pane "customCharactersDir" && in_pane "$(about_of "$DEFAULT")" && ! in_pane "$(persona_of "$DEFAULT")"; then
+if in_pane "* $DEF_NAME ($DEFAULT)" && in_pane "Shipped" && in_pane "Yours" && in_pane "$(about_of "$DEFAULT")" && ! in_pane "$(persona_of "$DEFAULT")"; then
   add "(i) /buddy opens the personality tab" PASS "* $DEF_NAME ($DEFAULT), the groups, its description"
 else add "(i) /buddy opens the personality tab" FAIL "pane in $RUN/i-open.txt"; fi
-focus_on "$NEXT"; sleep 1
-pane > "$RUN/i-down.txt"
-if focused | grep -q -F "($NEXT)" && in_pane "$(about_of "$NEXT")" && ! in_pane "$(about_of "$DEFAULT")"; then add "(i) Right moves the preview to $NEXT" PASS "preview shows the $NEXT description"
-else add "(i) Right moves the preview to $NEXT" FAIL "pane in $RUN/i-down.txt"; fi
+$T send-keys -t proof C-x n; sleep 3
+pane > "$RUN/i-next.txt"
+if lit | grep -q -F "($NEXT)" && [ "$(marked)" = "$NEXT" ] && in_pane "$(about_of "$NEXT")" && ! in_pane "$(about_of "$DEFAULT")"; then add "(i) ctrl+x n lights $NEXT and switches to it" PASS "* $(name_of "$NEXT") ($NEXT), its description in the preview"
+else add "(i) ctrl+x n lights $NEXT and switches to it" FAIL "pane in $RUN/i-next.txt"; fi
+$T send-keys -t proof C-x b; sleep 3
+pane > "$RUN/i-back.txt"
+if [ "$(marked)" = "$DEFAULT" ] && in_pane "$(about_of "$DEFAULT")"; then add "(i) ctrl+x b steps back to $DEFAULT" PASS "* $DEF_NAME ($DEFAULT)"
+else add "(i) ctrl+x b steps back to $DEFAULT" FAIL "pane in $RUN/i-back.txt"; fi
 tab_close
-pane > "$RUN/i-esc.txt"
-if ! in_pane "customCharactersDir" && shows_any "$RUN/default.rows"; then add "(i) Esc, ctrl+x x: folded, nothing changed" PASS "drawer folded, $DEFAULT still drawn"
-else add "(i) Esc, ctrl+x x: folded, nothing changed" FAIL "pane in $RUN/i-esc.txt"; fi
+pane > "$RUN/i-close.txt"
+if ! in_pane "ctrl+x t talk/personality" && shows_any "$RUN/default.rows"; then add "(i) ctrl+x x folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
+else add "(i) ctrl+x x folds it, $DEFAULT drawn" FAIL "pane in $RUN/i-close.txt"; fi
 tab_open
-if focus_on "$PICK" && in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi
-$T send-keys -t proof Enter; sleep 3
+if step_to "$PICK" && in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi
 pane > "$RUN/i-pick.txt"
 m=$(marked)
 tab_close
 pane > "$RUN/i-picked.txt"
-if [ "$pre" = ok ] && [ "$m" = "$PICK" ] && shows_any "$RUN/pick.rows"; then add "(i) Enter on $PICK draws it, the tab marks it" PASS "* $(name_of "$PICK") ($PICK); its sprite in the band"
-else add "(i) Enter on $PICK draws it, the tab marks it" FAIL "$pre / marked: ${m:-none} / panes in $RUN/i-pick.txt, i-picked.txt"; fi
+if [ "$pre" = ok ] && [ "$m" = "$PICK" ] && shows_any "$RUN/pick.rows"; then add "(i) stepping onto $PICK draws it, the tab marks it" PASS "* $(name_of "$PICK") ($PICK); its sprite in the band"
+else add "(i) stepping onto $PICK draws it, the tab marks it" FAIL "$pre / marked: ${m:-none} / panes in $RUN/i-pick.txt, i-picked.txt"; fi
 m=$(menu_mark i) || exit 2
 if [ "$m" = "$PICK" ]; then add "(i) reopened, the tab marks $PICK" PASS "* $(name_of "$PICK") ($PICK)"; else add "(i) reopened, the tab marks $PICK" FAIL "marked: ${m:-none}; pane in $RUN/menu-i.txt"; fi
 menu_pick "$DEFAULT"
