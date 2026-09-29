@@ -6,6 +6,7 @@ function disk(refuse = false) {
   const fallback: string[] = [];
   const io: LogIO = {
     read: async (p) => files[p],
+    exists: async (p) => p in files,
     write: async (p, t) => {
       if (refuse) throw new Error(`EACCES: ${p}`);
       files[p] = t;
@@ -45,16 +46,25 @@ describe('Logger', () => {
     expect(lines(d.files['/l/b.log']).map((x) => x.event)).toEqual(['yes', 'now']);
   });
 
-  test('past the cap the file rotates once to .1', async () => {
+  test('past the cap the file is archived whole to the next free number: every record kept, in order, none overwritten', async () => {
     const d = disk();
-    const L = new Logger('info', '/l/b.log', 200);
-    for (let i = 0; i < 3; i++) L.log('info', `e${i}`, { pad: 'x'.repeat(40) });
+    const L = new Logger('info', '/l/b.log', 250);
+    for (let i = 0; i < 10; i++) {
+      L.log('info', `e${i}`, { pad: 'x'.repeat(40) });
+      await L.flush(d.io);
+    }
+    const archives = Object.keys(d.files).filter((p) => p !== '/l/b.log').sort((x, y) => Number(x.split('.').pop()) - Number(y.split('.').pop()));
+    expect(archives.length).toBeGreaterThanOrEqual(3);
+    expect(archives).toEqual(archives.map((_, i) => `/l/b.log.${i + 1}`));
+    expect([...archives, '/l/b.log'].flatMap((p) => lines(d.files[p]).map((x) => x.event))).toEqual(Array.from({ length: 10 }, (_, i) => `e${i}`));
+  });
+
+  test('a flush larger than the cap is kept whole', async () => {
+    const d = disk();
+    const L = new Logger('info', '/l/b.log', 100);
+    L.log('info', 'big', { pad: 'x'.repeat(300) });
     await L.flush(d.io);
-    const first = d.files['/l/b.log']!;
-    L.log('info', 'e3', { pad: 'x'.repeat(40) });
-    await L.flush(d.io);
-    expect(d.files['/l/b.log.1']).toBe(first);
-    expect(lines(d.files['/l/b.log']).map((x) => x.event)).toEqual(['e3']);
+    expect(lines(d.files['/l/b.log'])[0].pad).toBe('x'.repeat(300));
   });
 
   test('two sessions flushing the same file at once keep every record', async () => {
@@ -97,6 +107,7 @@ describe('Logger', () => {
     let refuse = true;
     const bad: LogIO = {
       read: d.io.read,
+      exists: d.io.exists,
       write: async (p, t) => {
         if (refuse) throw new Error(`EACCES: ${p}`);
         await d.io.write(p, t);

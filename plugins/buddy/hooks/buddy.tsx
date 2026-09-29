@@ -16,7 +16,7 @@ import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transc
 import { actionOf, denialReason, didOf, failureReason, type Failure } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
 import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
-import { callSection, capValue, eventLine, freeRoundSlot, oldestRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
+import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
@@ -199,6 +199,7 @@ function logIO($: EngineInterface): LogIO {
       if (typeof text !== 'string') throw new Error(`${path} is not text`);
       return text;
     },
+    exists: async (path) => $.fs.exists(path),
     write: async (path, text) => $.fs.write(path, text),
     fallback: (line) => say($, line),
   };
@@ -1327,20 +1328,10 @@ function flushRound($: EngineInterface): void {
   if (tapped) writeRound(tapped, $, tapped.round);
 }
 
-/** The slot a new round takes in the chat's folder `dir`: a free one, else the one written least recently, so the folder never holds more than ROUNDS_MAX. */
+/** The file name a new round takes in the chat's folder `dir`: the number after the highest round there. */
 async function nextRoundSlot($: EngineInterface, dir: string): Promise<string> {
   const names = (await $.fs.exists(dir)) ? (await $.fs.list(dir)).filter((f) => f.kind === 'file').map((f) => f.name) : [];
-  const free = freeRoundSlot(names);
-  if (free) return free;
-  const slots = await Promise.all(names.filter((n) => /^round-\d{3}\.txt$/.test(n)).map(async (name) => {
-    try {
-      return { name, mtimeMs: (await $.fs.stat(`${dir}/${name}`)).mtimeMs };
-    } catch (error) {
-      L.error('reading a round slot\'s time', error, { name });
-      return { name, mtimeMs: Number.NaN };
-    }
-  }));
-  return oldestRoundSlot(slots);
+  return newRoundSlot(names);
 }
 
 /** A main turn began: the round before it is written as it stands, and this turn's opens with the prompt it began with. */

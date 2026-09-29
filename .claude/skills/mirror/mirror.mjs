@@ -140,7 +140,7 @@ function buddyDirOf(arg) {
 }
 
 function rounds(dir) {
-  return readdirSync(dir).filter((f) => /^round-\d+\.txt$/.test(f)).sort().map((f) => join(dir, f));
+  return readdirSync(dir).filter((f) => /^round-\d+\.txt$/.test(f)).sort((x, y) => parseInt(x.slice(6), 10) - parseInt(y.slice(6), 10)).map((f) => join(dir, f));
 }
 
 function live(o) {

@@ -1,19 +1,16 @@
 import { describe, expect, test } from 'vitest';
-import { ROUNDS_MAX, ROUND_VALUE_CAP, callSection, capValue, eventLine, freeRoundSlot, oldestRoundSlot, roundHead, roundSlot, toolLines, turnEndSection, type RoundCall } from '../plugins/buddy/src/rounds.ts';
+import { ROUND_VALUE_CAP, callSection, capValue, eventLine, newRoundSlot, roundHead, roundSlot, toolLines, turnEndSection, type RoundCall } from '../plugins/buddy/src/rounds.ts';
 
 const AT = Date.UTC(2026, 8, 28, 7, 53, 12, 123);
 
 describe('the round files', () => {
-  test('at most 150 slots: a free one first, the lowest', () => {
-    expect(ROUNDS_MAX).toBe(150);
+  test('a new round takes the number after the highest, with no ceiling, never overwriting one', () => {
     expect(roundSlot(7)).toBe('round-007.txt');
-    expect(freeRoundSlot([])).toBe('round-001.txt');
-    expect(freeRoundSlot(['round-001.txt', 'round-003.txt', 'notes.md', 'some-session'])).toBe('round-002.txt');
-    expect(freeRoundSlot(Array.from({ length: ROUNDS_MAX }, (_, i) => roundSlot(i + 1)))).toBeNull();
-  });
-  test('all taken: the least recently written is overwritten, one that could not be stated first', () => {
-    expect(oldestRoundSlot([{ name: 'round-001.txt', mtimeMs: 30 }, { name: 'round-002.txt', mtimeMs: 10 }, { name: 'round-003.txt', mtimeMs: 20 }])).toBe('round-002.txt');
-    expect(oldestRoundSlot([{ name: 'round-001.txt', mtimeMs: 30 }, { name: 'round-002.txt', mtimeMs: Number.NaN }])).toBe('round-002.txt');
+    expect(roundSlot(1000)).toBe('round-1000.txt');
+    expect(newRoundSlot([])).toBe('round-001.txt');
+    expect(newRoundSlot(['round-001.txt', 'round-003.txt', 'notes.md', 'memory.json', 'some-session'])).toBe('round-004.txt');
+    expect(newRoundSlot(Array.from({ length: 150 }, (_, i) => roundSlot(i + 1)))).toBe('round-151.txt');
+    expect(newRoundSlot(['round-999.txt', 'round-1000.txt'])).toBe('round-1001.txt');
   });
 });
 

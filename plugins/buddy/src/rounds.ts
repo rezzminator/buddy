@@ -5,15 +5,13 @@
 // turn's start: the prompt the turn began with; each tool call the buddy
 // heard, with its arguments and output; every log record, at any level; each
 // line the bubble drew; the turn's end as the buddy filed it; and every model
-// call, its system prompt, prompt and reply verbatim. Each chat's folder holds
-// at most ROUNDS_MAX files, round-001.txt to round-150.txt: a new round takes
-// a free slot, else overwrites the one written least recently (Claude Code's $.fs can write but never
-// delete). No I/O: the adapter lists and stats the folder and writes the text.
+// call, its system prompt, prompt and reply verbatim. Each chat's folder keeps
+// every round, round-001.txt on: a new round takes the number after the
+// highest there, so none is ever overwritten. No I/O: the adapter lists the
+// folder and writes the text.
 
 import { ADDED_LABEL, BUDDY_PROMPT, BUDDY_PROMPT_LABEL, TAKEN_SUGGESTION } from './chatTurnsToRead.ts';
 
-/** The most round files the folder holds: past it the least recently written is overwritten. */
-export const ROUNDS_MAX = 150;
 /** How much of one tool argument or output a round keeps; the rest is counted. */
 export const ROUND_VALUE_CAP = 500;
 
@@ -34,21 +32,19 @@ export type RoundCall = {
   usage: Record<string, number>;
 };
 
-/** The file name of slot `n`, 1 to ROUNDS_MAX. */
+/** The file name of round `n`, from 1, at least three digits. */
 export function roundSlot(n: number): string {
   return `round-${String(n).padStart(3, '0')}.txt`;
 }
 
-/** The first slot no file takes among `names` (the folder's entries), or null when all ROUNDS_MAX are taken. */
-export function freeRoundSlot(names: readonly string[]): string | null {
-  const taken = new Set(names);
-  for (let n = 1; n <= ROUNDS_MAX; n++) if (!taken.has(roundSlot(n))) return roundSlot(n);
-  return null;
-}
-
-/** The slot written least recently, by `mtimeMs`; a slot that could not be stated (NaN) goes first. */
-export function oldestRoundSlot(slots: readonly { name: string; mtimeMs: number }[]): string {
-  return [...slots].sort((a, b) => (Number.isNaN(a.mtimeMs) ? -Infinity : a.mtimeMs) - (Number.isNaN(b.mtimeMs) ? -Infinity : b.mtimeMs))[0]?.name ?? roundSlot(1);
+/** The file name a new round takes among `names` (the folder's entries): the number after the highest round there, so no round is overwritten. */
+export function newRoundSlot(names: readonly string[]): string {
+  let highest = 0;
+  for (const name of names) {
+    const m = /^round-(\d+)\.txt$/.exec(name);
+    if (m) highest = Math.max(highest, Number(m[1]));
+  }
+  return roundSlot(highest + 1);
 }
 
 const rule = (title: string) => `─── ${title} ───`;
