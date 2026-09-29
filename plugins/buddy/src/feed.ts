@@ -113,14 +113,18 @@ export function feedOfMemory(blocks: readonly Block[], characterId: string, voic
 
 const same = (a: string) => a.replace(/\s+/g, ' ').trim().toLowerCase();
 
+/** Whether the prompt sent is the suggestion, taken as it was: the same words, spacing and case aside; a blank prompt never is. */
+export function isTaken(suggestion: string, prompt: string): boolean {
+  const p = same(prompt);
+  return p !== '' && same(suggestion) === p;
+}
+
 /**
  * Your prompt `prompt` was sent: every suggestion not yet answered is taken
- * when the prompt is that suggestion (spacing and case aside), passed over
- * otherwise.
+ * when the prompt is that suggestion (isTaken), passed over otherwise.
  */
 export function answerSuggestions(feed: readonly FeedEntry[], prompt: string): FeedEntry[] {
-  const p = same(prompt);
-  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: p !== '' && same(e.text) === p } : e));
+  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: isTaken(e.text, prompt) } : e));
 }
 
 export type FeedStats = {

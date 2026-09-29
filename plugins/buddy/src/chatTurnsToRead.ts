@@ -38,6 +38,8 @@ export const TURN_ANSWER_TAIL = 3200;
 export const LINES_PER_TURN_MAX = 3;
 /** The `from` of a remembered compaction: its turn's answer is the summary. */
 export const COMPACTION = 'compaction';
+/** The `from` of a turn the user began with the buddy's own suggestion, sent unedited: the user's choice, the buddy's words. */
+export const TAKEN_SUGGESTION = 'taken-suggestion';
 /** The store key prefix a session's chatTurnsToRead was kept under before 1.0.0. */
 export const CHAT_TURNS_TO_READ_KEY_PREFIX = 'chatTurnsToRead:';
 /** How long one chatTurnsToRead write may take before it is abandoned and later reads and writes go ahead; a read is bounded by its caller's deadline. */
@@ -195,7 +197,11 @@ const UNKNOWN_ORIGINS: readonly string[] = ['unknown', 'unclassified'];
  */
 function turnLines(t: Turn, k: number, prev?: TurnStats): string[] {
   if (t.from === COMPACTION) return [`Turn ${k}. The main chat was compacted: Claude now holds only this summary of everything before it:`, t.answer || '(no summary)'];
-  const asked = t.from === undefined ? 'The user asked Claude:' : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:' : `Claude was sent, not by the user (${t.from}):`;
+  const asked =
+    t.from === undefined ? 'The user asked Claude:'
+    : t.from === TAKEN_SUGGESTION ? 'The user sent Claude your own suggested prompt, unedited:'
+    : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:'
+    : `Claude was sent, not by the user (${t.from}):`;
   return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.did ? [`Claude did: ${t.did.join('; ')}`] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), 'Claude answered:', t.answer || '(no text)'];
 }
 

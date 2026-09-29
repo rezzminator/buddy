@@ -57,7 +57,7 @@
     "suggestNextPrompt": {
       "type": "boolean",
       "title": "The buddy suggests your next prompt (uses tokens)",
-      "description": "After every answered turn, the same short call on model proposes your next prompt, in your words, as the grey suggestion in the prompt box. Claude Code's own suggestion is held back and shown only when the buddy has none. Off: Claude Code's own suggestion shows as usual.",
+      "description": "After every answered turn, the same short call on model proposes your next prompt, as you would type it, as the grey suggestion in the prompt box. Claude Code's own suggestion is held back and shown only when the buddy has none. Off: Claude Code's own suggestion shows as usual.",
       "default": true
     },
     "chatTurnsToRead": {

@@ -320,8 +320,10 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   names what you
   most deeply want from the chat (carried from turn to turn, forgotten at
   `/clear`), judges Claude's last move against it, and writes the prompt you
-  should send next, in your own words: it shows as the prompt box's dim
-  suggestion, Tab to take it. The verdict is `RIGHT` (the proper way: the
+  should send next, as you would type it: an ask, an instruction or a
+  decision, never a report of what you did. It shows as the prompt box's
+  dim suggestion, Tab to take it; sent unedited, Claude is told it is the
+  buddy's suggestion, so a claim in it is checked, not trusted. The verdict is `RIGHT` (the proper way: the
   suggestion says yes and moves on, the bubble keeps the comment),
   `SHORTCUT` (the fast or easy way that costs later, such as "done" claimed
   without evidence: a yellow warning in the bubble, the suggestion asks for

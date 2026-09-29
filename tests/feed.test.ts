@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  answerSuggestions, feedOfMemory, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
+  answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
   type FeedEntry,
 } from '../plugins/buddy/src/feed.ts';
 
@@ -49,6 +49,11 @@ describe('the feed', () => {
     f = answerSuggestions(f, 'no, wait');
     expect(f.map((e) => e.taken)).toEqual([true, false]);
     expect(answerSuggestions(pushEntry([], { at, kind: 'suggest', text: 'a' }), '   ')[0]!.taken).toBe(false);
+  });
+  test('a prompt is a suggestion taken when it is that suggestion, spacing and case aside; an edit or a blank is not', () => {
+    expect(isTaken('Run  the tests', ' run the tests\n')).toBe(true);
+    expect(isTaken('run the tests', 'run the tests now')).toBe(false);
+    expect(isTaken('', '  ')).toBe(false);
   });
   test('its stats: counts per kind, the suggestions taken, the mean call time, the tokens', () => {
     let f: FeedEntry[] = [];

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
   cleanAnswer, cleanPrompt,
-  NOTES_MAX, NOTE_MAX_CHARS, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, memoryStats, render, storeKey, type Block, type Exchange,
+  NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, memoryStats, render, storeKey, type Block, type Exchange,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
 
 const qa = (question: string, answer?: string): Exchange => (answer === undefined ? { kind: 'question', question } : { kind: 'question', question, answer });
@@ -117,6 +117,10 @@ describe('render', () => {
         'Turn 2. The user asked Claude:\ncommit the lockfile\nClaude answered:\nCommitted.\n- The user asked you: still there?\n  You gave no answer.',
       ].join('\n\n'),
     );
+  });
+  test("a turn the user sent with the buddy's own suggestion, unedited: filed as the buddy's words the user chose", () => {
+    const b = addTurn([], 't1', { prompt: 'token saved, run the proof', answer: 'No file there.', from: TAKEN_SUGGESTION }, 4);
+    expect(render(b, 'cat', 4)).toContain('Turn 1. The user sent Claude your own suggested prompt, unedited:\ntoken saved, run the proof\n');
   });
   test('a suggestion alone, a comment alone', () => {
     let b = addTurn([], 't1', turn('go'), 4);

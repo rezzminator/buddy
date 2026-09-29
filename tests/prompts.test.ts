@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ASKED_PROMPT_MAX_CHARS, ASKED_PROMPT_RULE, CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, DESIRE_MAX_CHARS, JUST_ENDED, MEMORY_LINE, VERDICTS, lostThread, memoryRule, oneLine, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
+  ASKED_PROMPT_MAX_CHARS, ASKED_PROMPT_RULE, CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, DESIRE_MAX_CHARS, JUST_ENDED, MEMORY_LINE, TAKEN_SUGGESTION_CONTEXT, VERDICTS, lostThread, memoryRule, oneLine, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
@@ -70,6 +70,10 @@ describe('the character rule', () => {
     expect(CHARACTER_RULE).toMatch(/HOW.*never WHAT/);
     expect(CHARACTER_RULE).toMatch(/repeat/);
   });
+  test("states as fact only what the chat shows or what is generally true: a guess about the chat's own state is asked, or named as the check that settles it", () => {
+    expect(CHARACTER_RULE).toContain('State as fact only what the chat shows or what is generally true');
+    expect(CHARACTER_RULE).toContain("ask a guess about this chat's own state (a file, a process, what someone did) as a question, or name the check that settles it");
+  });
   test('comes right after the persona: questions and the end-of-turn call, whatever it is asked for', () => {
     expect(oneLineSystem('You are X.', 4).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
     for (const wants of [{ commentAfterEachTurn: true, suggestNextPrompt: true }, { commentAfterEachTurn: true, suggestNextPrompt: false }, { commentAfterEachTurn: false, suggestNextPrompt: true }]) {
@@ -99,11 +103,25 @@ describe('the end-of-turn call: the character and the suggestion combined', () =
     expect(s).toContain('a destructive or irreversible step');
     expect(s).toContain('For WRONG, scream it');
     expect(s).toContain('SUGGEST_NEXT_PROMPT: the prompt the user should send Claude next');
-    expect(s).toContain("in the user's own words");
     expect(s).toContain('After RIGHT, say yes');
     expect(s).toContain('after WRONG, stop Claude');
     expect(s).toContain('SUGGEST_NEXT_PROMPT: NONE');
     expect(s).not.toContain('you named the user');
+  });
+  test("the suggestion asks, instructs or decides: every fact in it already in the chat, never the user's report of what they did", () => {
+    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true });
+    expect(s).not.toContain("in the user's own words");
+    expect(s).toContain('It asks, instructs or decides, and every fact in it is already in the chat');
+    expect(s).toContain('the user may send it with one key, unread, so it never reports what the user did, ran, saw or saved');
+    expect(s).toContain("When the next step is the user's own");
+    expect(s).toContain('suggest what they would ask Claude about it');
+    expect(ASKED_PROMPT_RULE).not.toContain("in the user's own words");
+    expect(ASKED_PROMPT_RULE).toContain('it asks, instructs or decides, stating no fact the chat has not shown');
+  });
+  test("a taken suggestion's context tells Claude its claims are the buddy's guess, to check", () => {
+    expect(TAKEN_SUGGESTION_CONTEXT).toContain("the buddy's suggestion");
+    expect(TAKEN_SUGGESTION_CONTEXT).toContain('sent by the user unedited');
+    expect(TAKEN_SUGGESTION_CONTEXT).toContain("the buddy's guess, not the user's report: check it before acting on it");
   });
   test("the last turn's desire is carried, kept unless the chat shows it changed; never without the second brain", () => {
     const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true }, 'ship buddy 1.1 with a second brain');

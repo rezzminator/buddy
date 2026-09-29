@@ -146,7 +146,7 @@ Every failure to look is a line where the missing rows would be, and every entry
 | --- | --- |
 | [`hooks/drawer.tsx`](../../plugins/buddy/hooks/drawer.tsx) | `DrawerView`, `DrawerActs`, `MenuState`, `SHORTCUTS`, `openIdea`, `drawDrawer`; `guide`, `thread`, `personality` inside it |
 | [`src/command.ts`](../../plugins/buddy/src/command.ts) | `DRAWER_KEYS` |
-| [`src/feed.ts`](../../plugins/buddy/src/feed.ts) | `FeedEntry`, `pushEntry`, `markRead`, `pruneToMemory`, `feedOfMemory`, `answerSuggestions`, `statsOf` |
+| [`src/feed.ts`](../../plugins/buddy/src/feed.ts) | `FeedEntry`, `pushEntry`, `markRead`, `pruneToMemory`, `feedOfMemory`, `answerSuggestions`, `isTaken`, `statsOf` |
 | [`src/menu.ts`](../../plugins/buddy/src/menu.ts) | `Menu`, `Item`, `Originals`, `buildMenu`, `itemKey`, `allItems`, `findItem`, `currentKeyOf`, `rowLabel`, `listWidth`, `previewOf` |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `toggleDrawer`, `drawDrawerBand`, `drawerView`, `scrollDrawerToEnd`, `openPersonality`, `showTalk`, `stepCharacter`, `pickItem`, `changeFeed`, `seedFeed`, `save`, `findOriginals`, `restoreOriginal` |
 | [`src/original.ts`](../../plugins/buddy/src/original.ts) | `originalLabel` |

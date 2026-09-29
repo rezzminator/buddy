@@ -9,12 +9,12 @@ import { frameAt, type Character, type Pose } from '../src/character.ts';
 import { DRAWER_KEYS, USAGE, parseCommand, type Action } from '../src/command.ts';
 import { allItems, buildMenu, currentKeyOf, findItem, type Item, type Originals } from '../src/menu.ts';
 import {
-  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, storeKey,
+  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, TAKEN_SUGGESTION, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, storeKey,
   type Block, type Exchange, type Notes, type Stored,
 } from '../src/chatTurnsToRead.ts';
 import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, didOf } from '../src/did.ts';
-import { answerSuggestions, feedOfMemory, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
+import { answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
 import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, freeRoundSlot, oldestRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
@@ -22,7 +22,7 @@ import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  ASKED_PROMPT_MAX_CHARS, NO_PROMPTS, QUESTION_MAX_TOKENS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
+  ASKED_PROMPT_MAX_CHARS, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
@@ -112,6 +112,10 @@ type State = {
   harnessSuggestion: string | null;
   /** The buddy gave up on this turn's suggestNextPrompt: the engine's own suggestion passes. */
   suggestNextPromptGaveUp: boolean;
+  /** The buddy's own suggestion now dim in the prompt box; cleared by the user's next prompt, or by another suggestion shown. */
+  shownSuggestion: string | null;
+  /** The prompt of a suggestion taken unedited, as it entered: the turn it begins is filed as the buddy's words the user chose. */
+  takenPrompt: string | null;
   /** What the user most deeply wants, as the last end-of-turn call named it: carried to the next one, forgotten at /clear. */
   desire: string | null;
   /** The turn (turnGen) whose verdict the bubble warned or screamed: its comment never covers it. */
@@ -857,12 +861,34 @@ function onTurnStepped(st: State, $: EngineInterface, e: TurnStepInput, r: TurnS
   }
 }
 
-/** A prompt that entered the session (`r`, next(e)'s result) joins the ledger, with its origin; a dropped one never does. */
-function onPromptSubmit(st: State, $: EngineInterface, e: PromptSubmitInput, r: PromptSubmitResult): void {
+/**
+ * A prompt of the user's answers the buddy's suggestion in the box: taken
+ * when it is that suggestion, unedited (isTaken). Another's prompt (a peer, a
+ * notification) leaves the box as it is.
+ */
+function takeSuggestion(st: State, $: EngineInterface, e: PromptSubmitInput): boolean {
+  try {
+    const shown = st.shownSuggestion;
+    // Validated here: an origin the engine left out is not presumed the user's.
+    if (shown === null || !isUserOrigin(e.origin?.kind ?? 'unclassified')) return false;
+    st.shownSuggestion = null;
+    return isTaken(shown, e.text);
+  } catch (error) {
+    log($, 'matching the prompt to the suggestion', error);
+    return false;
+  }
+}
+
+/** A prompt that entered the session (`r`, next(e)'s result) joins the ledger, with its origin; a dropped one never does. `taken`: it is the buddy's suggestion, unedited (takeSuggestion). */
+function onPromptSubmit(st: State, $: EngineInterface, e: PromptSubmitInput, r: PromptSubmitResult, taken: boolean): void {
   try {
     if (typeof r.drop === 'string') return;
     // Validated here: an origin the engine left out is not presumed the user's.
     st.prompts = submitPrompt(st.prompts, r.text, e.origin?.kind ?? 'unclassified', e.turnId);
+    if (taken) {
+      st.takenPrompt = r.text;
+      lg($, 'info', 'suggestNextPrompt.taken', { length: r.text.length });
+    }
   } catch (error) {
     log($, 'remembering the prompt', error);
   }
@@ -909,7 +935,11 @@ function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): Ended |
     st.lastMainEndAt = Date.now();
     const ended = endPromptTurn(st.prompts, e.turnId);
     st.prompts = ended.ledger;
-    return { prompt: ended.prompt, ...(ended.from === undefined ? {} : { from: ended.from }), tally };
+    // The turn a taken suggestion began: the user's choice, the buddy's words.
+    const taken = ended.from === undefined && st.takenPrompt !== null && ended.prompt === st.takenPrompt;
+    if (taken) st.takenPrompt = null;
+    const from = taken ? TAKEN_SUGGESTION : ended.from;
+    return { prompt: ended.prompt, ...(from === undefined ? {} : { from }), tally };
   } catch (error) {
     log($, 'the end of a turn', error);
     return null;
@@ -978,6 +1008,8 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
   if (st.harnessSuggestion !== null) lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-stale' });
   st.harnessSuggestion = null;
   st.suggestNextPromptGaveUp = true;
+  st.shownSuggestion = null;
+  st.takenPrompt = null;
   st.desire = null;
   if (st.b) endTurn(st.b, false, 0);
   feedAdd(st, $, { at: Date.now(), kind: 'clear', text: reason });
@@ -1302,6 +1334,7 @@ async function showSuggestNextPrompt(st: State, $: EngineInterface, gen: number,
     return null;
   }
   const { isShown } = await $.prompt.suggest({ text });
+  if (isShown) st.shownSuggestion = text;
   roundEvent(st, $, eventLine(Date.now(), `OUT · prompt-box suggestion (the buddy's)${isShown ? '' : ' (not shown)'}: ${JSON.stringify(text)}`));
   // Not shown because a turn started while it was proposed: stale, not the engine's refusal.
   lg($, 'info', 'suggestNextPrompt.outcome', { outcome: suggestNextPromptOutcome(isShown, st.mainTurn !== undefined), length: text.length, ...fields });
@@ -1848,6 +1881,7 @@ async function putAskedPrompt(st: State, $: EngineInterface, c: Character, asked
       return;
     }
     const { isShown } = await $.prompt.suggest({ text: asked.prompt });
+    if (isShown) st.shownSuggestion = asked.prompt;
     roundEvent(st, $, eventLine(Date.now(), `OUT · prompt-box suggestion (asked of the buddy)${isShown ? '' : ' (not shown)'}: ${JSON.stringify(asked.prompt)}`));
     lg($, 'info', 'ask.prompt.outcome', { outcome: isShown ? 'shown' : 'not-shown', length: asked.prompt.length });
   } catch (error) {
@@ -2001,6 +2035,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     turnGen: 0,
     harnessSuggestion: null,
     suggestNextPromptGaveUp: false,
+    shownSuggestion: null,
+    takenPrompt: null,
     desire: null,
     loudGen: -1,
     inheritFailed: new Set(),
@@ -2064,10 +2100,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return r;
   });
 
-  // What entered, once it did: a prompt a lower hook dropped starts no turn and is never filed.
+  // What entered, once it did: a prompt a lower hook dropped starts no turn and is never filed. The buddy's suggestion sent unedited carries, for Claude alone, whose words it holds.
   on('prompt.submit', async ($, e, next) => {
-    const r = await next(e);
-    onPromptSubmit(st, $, e, r);
+    const taken = takeSuggestion(st, $, e);
+    const r = await next(taken ? { ...e, context: [...(e.context ?? []), TAKEN_SUGGESTION_CONTEXT] } : e);
+    onPromptSubmit(st, $, e, r, taken);
     return r;
   });
 
@@ -2114,7 +2151,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
     } catch (error) {
       log($, 'a prompt.suggest hook', error);
     }
-    return next(e);
+    const r = await next(e);
+    // Whatever shows replaces the buddy's own in the box; the buddy's own call marks it again once shown.
+    if (r.isShown) st.shownSuggestion = null;
+    return r;
   });
 
   on('command.run', { command: COMMAND }, async ($, e) => {

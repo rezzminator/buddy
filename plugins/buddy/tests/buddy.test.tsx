@@ -2,7 +2,7 @@ import type { On } from 'claude-code';
 import { describe, expect, mock, test } from 'claude-code/testing';
 import { SHORTCUTS, guideRows } from '../hooks/drawer.tsx';
 import { roll } from '../src/hatch.ts';
-import { CHARACTER_RULE, JUST_ENDED, memoryRule } from '../src/prompts.ts';
+import { CHARACTER_RULE, JUST_ENDED, TAKEN_SUGGESTION_CONTEXT, memoryRule } from '../src/prompts.ts';
 
 // Run with `claude plugin test plugins/buddy` (CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1).
 // The plugin loads from this folder; `on` here sits beneath it and answers
@@ -77,6 +77,8 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
   /** The texts that reached the prompt box's suggestion beneath the plugin, and who proposed each. */
   const suggested: string[] = [];
   const origins: string[] = [];
+  /** Every prompt as it reached the engine beneath the plugin, with the context attached on the way down. */
+  const submitted: { text: string; context?: readonly string[] }[] = [];
   on('ui.open', async (_$, e) => {
     opens.push(e);
     return { value: { isPlaced: true as const } };
@@ -99,7 +101,10 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
   });
   /** Prompts a hook beneath the plugin drops: the engine never enters them. */
   const submit = { drop: new Set<string>() };
-  on('prompt.submit', async (_$, e) => (submit.drop.has(e.text) ? { drop: 'dropped beneath' } : { text: e.text }));
+  on('prompt.submit', async (_$, e) => {
+    submitted.push(e.context === undefined ? { text: e.text } : { text: e.text, context: e.context });
+    return submit.drop.has(e.text) ? { drop: 'dropped beneath' } : { text: e.text };
+  });
   on('turn.start', async (_$, e) => ({ turnId: e.turnId }));
   on('prompt.suggest', async (_$, e) => {
     suggested.push(e.text);
@@ -202,7 +207,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     const { delayMs: _d, error: _e, ...answer } = a;
     return { value: { usage, ...answer } } as never;
   });
-  return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins, submit };
+  return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins, submit, submitted };
 }
 
 /** A prompt without its turns' numbers lines: for a test of what is filed, not of the numbers. */
@@ -1399,6 +1404,47 @@ function ring(w: { files: Record<string, string> }, id: string): any[] {
   // Every exchange of `id` in the stored timeline, oldest first, whatever turn it was filed under.
   return ((memory(w) as { blocks: { characters: Record<string, unknown[]> }[] } | undefined)?.blocks ?? []).flatMap((b) => b.characters[id] ?? []);
 }
+
+describe('a taken suggestion', () => {
+  test("sent unedited, a peer's message between: Claude reads that its claims are the buddy's, and the buddy files it as its own words the user chose", async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: token saved, run the proof' }, { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Hm.\nSUGGEST_NEXT_PROMPT: NONE' }] });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'make the proof', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Save a token first.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['token saved, run the proof']);
+    // Not the user's: it leaves the suggestion in the box.
+    await $.prompt.submit({ text: 'hello from a peer', origin: { kind: 'peer' } } as never);
+    expect(w.submitted.at(-1)).toEqual({ text: 'hello from a peer' });
+    await prompt($, 'token saved,  run the proof', 't2');
+    expect(w.submitted.at(-1)).toEqual({ text: 'token saved,  run the proof', context: [TAKEN_SUGGESTION_CONTEXT] });
+    await $.turn.complete({ reason: 'answer', answer: 'No file there.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(2);
+    // Filed cleaned, as every prompt is.
+    expect(w.completes[1]!.prompt).toContain('The user sent Claude your own suggested prompt, unedited:\ntoken saved, run the proof\n');
+    expect(records(w).filter((r) => r.event === 'suggestNextPrompt.taken')).toHaveLength(1);
+    await ui.unmount();
+  });
+  test("edited, it is the user's own: no context, filed as asked, and the next prompt is nobody's suggestion", async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: run the tests' } });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'build it', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Built.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.suggested).toEqual(['run the tests']);
+    await prompt($, 'run the tests now', 't2');
+    expect(w.submitted.at(-1)).toEqual({ text: 'run the tests now' });
+    // The box's suggestion was answered: the same words typed later are the user's.
+    await $.turn.complete({ reason: 'answer', answer: 'Green.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.completes[1]!.prompt).toContain('The user asked Claude:\nrun the tests now\n');
+    expect(records(w).filter((r) => r.event === 'suggestNextPrompt.taken')).toHaveLength(0);
+    await ui.unmount();
+  });
+});
 
 describe('the second brain: one call, the character and the suggestion combined', () => {
   const judged = (verdict: string, why: string, next: string, comment = 'Fixy likes that.') => ({

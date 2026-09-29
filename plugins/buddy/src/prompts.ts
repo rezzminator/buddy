@@ -13,7 +13,7 @@ export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character
 /** A question asking for a prompt gets one, on a line of its own the plugin puts in the prompt box. */
 export const ASKED_PROMPT_RULE =
   'When the user asks you to write, suggest or put a prompt in their prompt box, add a second line: ' +
-  'SUGGEST_NEXT_PROMPT: that prompt, in the user\'s own words as they would type it to the assistant. Never write that line otherwise.';
+  'SUGGEST_NEXT_PROMPT: that prompt, as the user would type it to the assistant: it asks, instructs or decides, stating no fact the chat has not shown. Never write that line otherwise.';
 /** A question's output cap. The model's thinking counts against it, so it is far above the one line the rules ask for: a cap that cut the thinking would cut the answer, or leave none. */
 export const QUESTION_MAX_TOKENS = 2048;
 /** The end-of-turn call's output cap, a COMMENT_AFTER_EACH_TURN and the second brain's four lines, as high as a question's for the same reason. */
@@ -65,6 +65,7 @@ export const CHARACTER_RULE =
   'Become this character completely, in voice and in attitude; stay in it for every word. ' +
   'Say ONE thing that is actually useful and that both the user and the assistant in the recent turns have missed: ' +
   'a risk, a gap, a wrong assumption, or a better next step. ' +
+  "State as fact only what the chat shows or what is generally true; ask a guess about this chat's own state (a file, a process, what someone did) as a question, or name the check that settles it. " +
   'The character decides HOW it is said, never WHAT is true. ' +
   'Never repeat what the chat already said.';
 
@@ -143,7 +144,8 @@ export const DESIRE_MAX_CHARS = 160;
  * the user most deeply wants (`desire`, the one named at the last turn's end,
  * kept unless the chat shows it changed, so it holds from turn to turn);
  * VERDICT on Claude's last move against it; WHY, in character, screamed for
- * WRONG; and SUGGEST_NEXT_PROMPT, following the verdict, in the user's own words.
+ * WRONG; and SUGGEST_NEXT_PROMPT, following the verdict, as the user would
+ * type it: an ask, an instruction or a decision, never the user's report.
  * MEMORY last, always: the buddy's own notes, rewritten.
  */
 export function turnSystem(persona: string, wants: TurnWants, desire: string | null = null): string {
@@ -164,7 +166,9 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
   }
   if (wants.suggestNextPrompt) {
     lines.push(
-      "SUGGEST_NEXT_PROMPT: the prompt the user should send Claude next, in the user's own words as they would type it into the prompt box: not in character, no quotes, at most 20 words. " +
+      'SUGGEST_NEXT_PROMPT: the prompt the user should send Claude next, as they would type it into the prompt box: not in character, no quotes, at most 20 words. ' +
+        'It asks, instructs or decides, and every fact in it is already in the chat: the user may send it with one key, unread, so it never reports what the user did, ran, saw or saved. ' +
+        "When the next step is the user's own (a key to make, a check only they can run), suggest what they would ask Claude about it. " +
         'After RIGHT, say yes and move to the next step; after SHORTCUT, ask for the proper way; after WRONG, stop Claude and name what to do instead. ' +
         'Write SUGGEST_NEXT_PROMPT: NONE only when the work is plainly finished and nothing follows.',
     );
@@ -260,6 +264,15 @@ export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string
 export function endsConversation(reason: string): boolean {
   return reason === 'clear' || reason === 'resume';
 }
+
+/**
+ * What Claude reads beside a prompt that is the buddy's suggestion, sent
+ * unedited (prompt.submit's `context`, never shown to the user): the user
+ * chose it, but its claims are the buddy's.
+ */
+export const TAKEN_SUGGESTION_CONTEXT =
+  "This prompt is the buddy's suggestion, a plugin's guess at the user's next prompt, sent by the user unedited. " +
+  "Any claim in it about what the user did, ran, saw or saved is the buddy's guess, not the user's report: check it before acting on it.";
 
 /** The end-of-turn prompt's last line when the memory holds the turn just ended. */
 export const JUST_ENDED = 'The turn that just ended is the last one above.';

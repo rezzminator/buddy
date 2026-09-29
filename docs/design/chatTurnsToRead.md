@@ -134,7 +134,7 @@ Claude answered:
 Committed.
 ```
 
-A question that got no answer reads `You gave no answer.` under it; a turn whose prompt was not the user's reads `Claude was sent, not by the user ({origin}):`, or `Claude was sent, from an unknown origin:` when its origin was never seen.
+A question that got no answer reads `You gave no answer.` under it; a turn the user began by sending the buddy's own suggestion unedited reads `The user sent Claude your own suggested prompt, unedited:` (`TAKEN_SUGGESTION`), so its claims are never taken for the user's; a turn whose prompt was not the user's reads `Claude was sent, not by the user ({origin}):`, or `Claude was sent, from an unknown origin:` when its origin was never seen.
 
 | Call | What it gets |
 | --- | --- |
