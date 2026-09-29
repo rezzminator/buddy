@@ -7,7 +7,7 @@ declare module 'claude-code' {
       feed: {
         id: number;
         at: number;
-        kind: 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'suggest' | 'line' | 'failed' | 'clear';
+        kind: 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'memory' | 'line' | 'failed' | 'clear';
         text: string;
         who?: string;
         color?: string;
@@ -16,9 +16,12 @@ declare module 'claude-code' {
         taken?: boolean;
         turnId?: string;
         read?: boolean;
+        numbers?: string;
+        verdict?: 'RIGHT' | 'SHORTCUT' | 'WRONG';
+        desire?: string;
       }[];
     };
   }
 }
 
-export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'suggest' | 'line' | 'failed' | 'clear';
+export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'memory' | 'line' | 'failed' | 'clear';

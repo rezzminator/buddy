@@ -1,6 +1,7 @@
 // The plugin's own log: one JSON line per record, `{ts, level, event,
-// session?, character?, ...fields}`, added to a file capped at LOG_CAP bytes
-// with one rotation (`{file}.1`). No `$` here: the adapter hands in the file
+// session?, character?, ...fields}`, added to a file that, past LOG_CAP
+// bytes, is archived whole to the next free `{file}.N` (1, 2, 3, …), none ever
+// overwritten, so no record is dropped. No `$` here: the adapter hands in the file
 // I/O on each flush (a hook's `$` is never kept), so a test drives it from
 // memory. Writing never throws into a hook: a failed write goes to the fallback
 // (the adapter's `$.ui.log`).
@@ -27,6 +28,7 @@ export function notice(text: string): string {
 
 export type LogLevel = 'error' | 'info' | 'debug';
 export const LOG_LEVELS: readonly LogLevel[] = ['error', 'info', 'debug'];
+/** The file's size past which it is archived whole to the next free `{file}.N`: it bounds what each flush reads and writes back, never what is kept. */
 export const LOG_CAP = 1_000_000;
 /** A throttled debug event is written at most once per this many milliseconds. */
 export const THROTTLE_MS = 1000;
@@ -39,6 +41,8 @@ const RANK: Record<LogLevel, number> = { error: 0, info: 1, debug: 2 };
 export type LogIO = {
   /** The file's text; undefined when it does not exist. */
   read: (path: string) => Promise<string | undefined>;
+  /** Whether the file exists, without reading it. */
+  exists: (path: string) => Promise<boolean>;
   /** Replaces the file's text, creating it and its folders. */
   write: (path: string, text: string) => Promise<void>;
   /** Where a record goes when the file cannot take it, and why. */
@@ -157,23 +161,30 @@ export class Logger {
     }
   }
 
-  /** Adds `add` to the file, rotating it past the cap; resolves with the text that went in. */
+  /** Adds `add` to the file; past the cap the file is first archived whole to the next free `{file}.N`. Resolves with `add`, whole. */
   private async put(io: LogIO, file: string, add: string): Promise<string> {
     const current = (await io.read(file)) ?? '';
-    if (current.length + add.length <= this.cap) {
+    if (current === '' || current.length + add.length <= this.cap) {
       await io.write(file, current + add);
       return add;
     }
-    const kept = add.length > this.cap ? add.slice(add.length - this.cap) : add;
-    await io.write(`${file}.1`, current);
-    await io.write(file, kept);
-    return kept;
+    await io.write(`${file}.${(await this.newestArchive(io, file)) + 1}`, current);
+    await io.write(file, add);
+    return add;
   }
 
-  /** Whether `text` is in the file, or in `.1` when another writer rotated it since. */
+  /** The highest N with a `{file}.N`, 0 when none: archives are numbered from 1 with no gap. */
+  private async newestArchive(io: LogIO, file: string): Promise<number> {
+    let n = 0;
+    while (await io.exists(`${file}.${n + 1}`)) n++;
+    return n;
+  }
+
+  /** Whether `text` is in the file, or in the newest archive when another writer archived it since. */
   private async landed(io: LogIO, file: string, text: string): Promise<boolean> {
     if (((await io.read(file)) ?? '').includes(text)) return true;
-    return ((await io.read(`${file}.1`)) ?? '').includes(text);
+    const n = await this.newestArchive(io, file);
+    return n > 0 && ((await io.read(`${file}.${n}`)) ?? '').includes(text);
   }
 }
 

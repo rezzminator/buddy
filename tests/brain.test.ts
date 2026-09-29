@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ANSWER_MS, COMPLETE_DEADLINE_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
+  ANSWER_MS, COMPLETE_DEADLINE_MS, LAST_BASH_MAX, BUBBLE_MS, ERROR_MS, MODEL_MIN_MS, REST_LINE_CHANCE, SLEEP_IDLE_MS, TOOL_LINE_CHANCE, WAKE_LINE_CHANCE, WORKING_LINE_CHANCE, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
   failAnswer, farewell, holdsAnswer, sayLine, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { raw } from './fixtures.ts';
+
+type Brain = ReturnType<typeof createBrain>;
 
 function char(over: Record<string, unknown> = {}): Character {
   const v = validateCharacter(raw(over));
@@ -12,6 +14,8 @@ function char(over: Record<string, unknown> = {}): Character {
   return v.character;
 }
 const never = () => 0.99;
+/** Every chance taken: a line nobody asked for is said. */
+const always = () => 0;
 const DAY = 12;
 const NIGHT = 3;
 
@@ -50,14 +54,19 @@ describe('brain', () => {
   });
   test('reactions: pose, line, confetti, and the turn tally', () => {
     const b = createBrain(char({ lines: { testPass: ['Green!'] } }), true);
-    expect(react(b, { tool: 'Bash', isError: false, denied: false, output: '4 passed', command: 'npm test' }, never)).toBe('testPass');
+    expect(react(b, { tool: 'Bash', isError: false, denied: false, output: '4 passed', command: 'npm test' }, always)).toBe('testPass');
     expect(currentPose(b)).toBe('yay');
     expect(b.talk?.text).toBe('Green!');
     expect(b.confetti).not.toBeNull();
-    expect(react(b, { tool: 'Edit', isError: false, denied: true, output: '', command: '' }, never)).toBe('toolFail');
+    expect(react(b, { tool: 'Edit', isError: false, denied: true, output: '', command: '' }, always)).toBe('toolFail');
     expect(currentPose(b)).toBe('oops');
     expect(react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never)).toBeNull();
     expect(b.turn).toEqual({ tools: ['Bash', 'Edit', 'Read'], failures: 1, lastBash: 'npm test', actions: [] });
+    const long = `node -e "${'x'.repeat(1500)}"`;
+    react(b, { tool: 'Bash', isError: false, denied: false, output: '', command: long }, never);
+    expect(b.turn.lastBash).toBe(long);
+    react(b, { tool: 'Bash', isError: false, denied: false, output: '', command: 'y'.repeat(LAST_BASH_MAX + 500) }, never);
+    expect(b.turn.lastBash).toBe('y'.repeat(LAST_BASH_MAX));
     ticks(b, 2000 / 200);
     expect(b.confetti).toBeNull();
   });
@@ -71,6 +80,7 @@ describe('brain', () => {
     expect(currentPose(b)).toBe('thinking');
     answer(b, 'Forty-two.');
     expect(b.talk).toMatchObject({ text: 'Forty-two.', pose: null, until: b.now + ANSWER_MS });
+    ticks(b, MODEL_MIN_MS / 200);
     failAnswer(b, 'api-error');
     expect(b.talk?.text).toBe("Fixy couldn't answer: api-error");
     expect(farewell(b, never)).toBe('Until next time.');
@@ -86,7 +96,7 @@ describe('brain', () => {
     const x = b.motion.x;
     ticks(b, 5, NIGHT);
     expect(b.motion.x).toBe(x);
-    expect(wake(b, never)).toBe(true);
+    expect(wake(b, always)).toBe(true);
     expect(b.sleeping).toBe(false);
     expect(b.talk?.text).toBe('Hi from Fixy.');
   });
@@ -106,10 +116,10 @@ describe('brain', () => {
     expect(woken((b) => pet(b, never))).toEqual({ sleeping: false, said: 1 });
     expect(woken((b) => beginQuestion(b, never))).toEqual({ sleeping: false, said: 0 });
     expect(woken((b) => refuseQuestion(b))).toEqual({ sleeping: false, said: 0 });
-    expect(woken((b) => react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, never))).toEqual({ sleeping: false, said: 1 });
+    expect(woken((b) => react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, always))).toEqual({ sleeping: false, said: 1 });
     expect(woken((b) => wake(b, never, { silent: true }))).toEqual({ sleeping: false, said: 0 });
     // Woken by nothing that speaks, the wake line is the one shown.
-    expect(woken((b) => wake(b, never))).toEqual({ sleeping: false, said: 1 });
+    expect(woken((b) => wake(b, always))).toEqual({ sleeping: false, said: 1 });
   });
 
   test('work: working pose, no walking, no sleep', () => {
@@ -166,14 +176,14 @@ describe('brain', () => {
 });
 
 describe('a held answer', () => {
-  test('a reaction during it waits, and is said once the answer ends', () => {
+  test('a reaction during it is dropped outright: never queued, never said once the answer ends', () => {
     const b = createBrain(char(), false);
     answer(b, 'My own answer.');
-    react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, () => 0);
+    react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, always);
     expect(b.talk?.text).toBe('My own answer.');
-    for (let i = 0; i < 400 && b.talk?.text === 'My own answer.'; i++) tick(b, 12, () => 0);
-    expect(b.talk?.text).not.toBe('My own answer.');
-    expect(b.talk?.pose).toBe('oops');
+    expect(b.said).toEqual([]);
+    ticks(b, ANSWER_MS / 300);
+    expect(b.talk).toBeNull();
   });
   test('an answer belongs to the character asked: after a switch it is dropped, never said by the new one', () => {
     const b = createBrain(char({ id: 'asker', name: 'Asker' }), true);
@@ -208,16 +218,16 @@ describe('holdsAnswer', () => {
     b.talk = { text: 'a canned line', pose: null, until: b.now + BUBBLE_MS };
     expect(holdsAnswer(b)).toBe(false);
   });
-  test('a commentAfterEachTurn, or its failure, never holds against the next turn\'s commentAfterEachTurn, yet a line nobody asked for waits behind it', () => {
+  test('a commentAfterEachTurn, or its failure, holds the bubble like any model bubble: a canned line is dropped, the next turn\'s waits its turn', () => {
     const b = createBrain(char(), false);
     expect(answer(b, 'Turn one.', 'yay', undefined, true)).toBe(true);
-    expect(holdsAnswer(b)).toBe(false);
-    sayLine(b, 'toolFail', 'oops', BUBBLE_MS, () => 0);
+    expect(holdsAnswer(b)).toBe(true);
+    sayLine(b, 'toolFail', 'oops', BUBBLE_MS, always);
     expect(b.talk?.text).toBe('Turn one.');
-    expect(b.after?.event).toBe('toolFail');
-    failAnswer(b, 'timeout', undefined, true);
-    expect(holdsAnswer(b)).toBe(false);
-    answer(b, 'A /buddy answer.');
+    expect(failAnswer(b, 'timeout', undefined, true)).toBe(true);
+    expect(b.talk?.text).toBe('Turn one.');
+    ticks(b, Math.ceil(MODEL_MIN_MS / 300));
+    expect(b.talk?.text).toBe("Fixy couldn't answer: timeout");
     expect(holdsAnswer(b)).toBe(true);
   });
 });
@@ -242,15 +252,14 @@ describe('a pending question', () => {
     beginQuestion(b, never);
     ticks(b, 120_000 / 200);
     expect(b.talk).toMatchObject({ text: 'Hmm.', pose: 'thinking' });
-    react(b, { tool: 'Edit', isError: true, denied: false, output: '', command: '' }, never);
+    react(b, { tool: 'Edit', isError: true, denied: false, output: '', command: '' }, always);
     expect(b.talk?.text).toBe('Hmm.');
     endQuestion(b);
     answer(b, 'Done.');
     ticks(b, ANSWER_MS / 200);
-    // The reaction held back by the thinking line and the answer comes after them; the thinking line never again.
-    expect(b.talk?.text).toBe('Ouch.');
-    ticks(b, BUBBLE_MS / 200);
+    // The reaction the thinking line kept out is dropped, never said after the answer; the thinking line never again.
     expect(b.talk).toBeNull();
+    expect(b.said).toEqual([]);
   });
   test('a pet or a refusal covers it for its own time, then it comes back; a switched-in character never says it', () => {
     const b = createBrain(char({ lines }), true);
@@ -283,5 +292,126 @@ describe('isMainLoop', () => {
     expect(isMainLoop(undefined)).toBe(true);
     expect(isMainLoop('a1b2')).toBe(false);
     expect(isMainLoop('')).toBe(false);
+  });
+});
+
+describe('a model bubble', () => {
+  test('a canned line stays 10 s, a model bubble 15 s, an error 10 s; a newer model bubble waits until the current one has had 10 s', () => {
+    expect({ BUBBLE_MS, ANSWER_MS, ERROR_MS, MODEL_MIN_MS }).toEqual({ BUBBLE_MS: 10_000, ANSWER_MS: 15_000, ERROR_MS: 10_000, MODEL_MIN_MS: 10_000 });
+  });
+  const says: [string, (b: Brain) => boolean][] = [
+    ['a /buddy answer', (b) => answer(b, 'Model words.')],
+    ['a turn comment', (b) => answer(b, 'Model words.', 'yay', undefined, true)],
+    ['a verdict', (b) => answer(b, 'Model words.', null, undefined, true, 'warn')],
+    ['a steer', (b) => answer(b, 'Model words.', null, undefined, true, undefined, 'claude')],
+    ['a failed call', (b) => failAnswer(b, 'timeout', undefined, true)],
+  ];
+  for (const [name, say] of says) {
+    test(`${name} stays its whole time: no canned line of any event, turn start or end, working band, render pass or tool call replaces it, and none is said after it`, () => {
+      const b = createBrain(char(), true);
+      expect(say(b)).toBe(true);
+      const text = b.talk!.text;
+      expect(holdsAnswer(b)).toBe(true);
+      for (const event of ['greeting', 'petted', 'toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake'] as const) sayLine(b, event, null, BUBBLE_MS, always);
+      react(b, { tool: 'Bash', isError: false, denied: false, output: '4 passed', command: 'npm test' }, always);
+      react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, always);
+      pet(b, always);
+      b.sleeping = true;
+      wake(b, always);
+      endTurn(b, true, 0);
+      observeBand(b, { cols: 90, maxRows: 8, isWorking: true }, always);
+      observeBand(b, { cols: 30, maxRows: 2, isWorking: false }, always);
+      expect(JSON.stringify(sceneOf(b))).toContain(text.slice(0, 8));
+      expect(b.talk?.text).toBe(text);
+      expect(b.said).toEqual([]);
+      ticks(b, ANSWER_MS / 200 - 1);
+      expect(b.talk?.text).toBe(text);
+      ticks(b, 1);
+      expect(b.talk).toBeNull();
+      expect(b.said).toEqual([]);
+    });
+  }
+  test('alone it lasts its full 15 s; newer ones wait in a FIFO of 2, the oldest pending dropped, each shown once the current one has had 10 s', () => {
+    const b = createBrain(char(), true);
+    answer(b, 'A');
+    answer(b, 'B', null, undefined, true);
+    answer(b, 'C', null, undefined, true, undefined, 'claude');
+    answer(b, 'D');
+    expect(b.talk?.text).toBe('A');
+    ticks(b, MODEL_MIN_MS / 200 - 1);
+    expect(b.talk?.text).toBe('A');
+    ticks(b, 1);
+    expect(b.talk).toMatchObject({ text: 'C', to: 'claude' });
+    ticks(b, MODEL_MIN_MS / 200 - 1);
+    expect(b.talk?.text).toBe('C');
+    ticks(b, 1);
+    expect(b.talk?.text).toBe('D');
+    ticks(b, ANSWER_MS / 200 - 1);
+    expect(b.talk?.text).toBe('D');
+    ticks(b, 1);
+    expect(b.talk).toBeNull();
+    // One that comes once the current one has had its 10 s replaces it at once.
+    answer(b, 'E');
+    ticks(b, MODEL_MIN_MS / 200);
+    answer(b, 'F');
+    expect(b.talk?.text).toBe('F');
+  });
+  test('only the thinking line, a character switch or an error replace it sooner; a switch drops the ones waiting', () => {
+    const b = createBrain(char(), true);
+    answer(b, 'G');
+    beginQuestion(b, never);
+    expect(b.talk?.pose).toBe('thinking');
+    // The question's own answer replaces its thinking line; a turn's bubble waits behind it.
+    answer(b, 'a turn comment', null, undefined, true);
+    expect(b.talk?.pose).toBe('thinking');
+    answer(b, 'the answer');
+    endQuestion(b);
+    expect(b.talk?.text).toBe('a turn comment');
+    ticks(b, MODEL_MIN_MS / 200);
+    expect(b.talk?.text).toBe('the answer');
+    answer(b, 'H');
+    setCharacter(b, b.character, 'bad file', never);
+    expect(b.talk?.text).toBe('bad file');
+    ticks(b, ERROR_MS / 200);
+    expect(b.talk).toBeNull();
+    answer(b, 'I');
+    setCharacter(b, char({ id: 'other', name: 'Other', lines: { greeting: ['Other here.'] } }), undefined, never);
+    expect(b.talk?.text).toBe('Other here.');
+  });
+});
+
+describe('lines nobody asked for, a third as often', () => {
+  const pass = { tool: 'Bash', isError: false, denied: false, output: '4 passed', command: 'npm test' };
+  test('the chances', () => {
+    expect({ REST_LINE_CHANCE, WORKING_LINE_CHANCE, TOOL_LINE_CHANCE, WAKE_LINE_CHANCE }).toEqual({ REST_LINE_CHANCE: 0.08, WORKING_LINE_CHANCE: 0.08, TOOL_LINE_CHANCE: 1 / 3, WAKE_LINE_CHANCE: 1 / 3 });
+  });
+  test('a tool reaction says its words only below TOOL_LINE_CHANCE; its pose and confetti come every time', () => {
+    const quiet = createBrain(char({ lines: { testPass: ['Green!'] } }), true);
+    expect(react(quiet, pass, () => TOOL_LINE_CHANCE)).toBe('testPass');
+    expect(quiet.talk).toBeNull();
+    expect(quiet.said).toEqual([]);
+    expect(currentPose(quiet)).toBe('yay');
+    expect(quiet.confetti).not.toBeNull();
+    ticks(quiet, BUBBLE_MS / 200);
+    expect(currentPose(quiet)).not.toBe('yay');
+    const loud = createBrain(char({ lines: { testPass: ['Green!'] } }), true);
+    react(loud, pass, () => TOOL_LINE_CHANCE - 0.01);
+    expect(loud.talk).toMatchObject({ text: 'Green!', pose: 'yay' });
+    expect(loud.confetti).not.toBeNull();
+  });
+  test('work starting says a line only below WORKING_LINE_CHANCE, waking only below WAKE_LINE_CHANCE', () => {
+    const working = (r: number) => {
+      const b = createBrain(char(), true);
+      observeBand(b, { cols: 90, maxRows: 8, isWorking: true }, () => r);
+      return b.said.length;
+    };
+    expect([working(WORKING_LINE_CHANCE), working(WORKING_LINE_CHANCE - 0.01)]).toEqual([0, 1]);
+    const woken = (r: number) => {
+      const b = createBrain(char(), true);
+      b.sleeping = true;
+      wake(b, () => r);
+      return { sleeping: b.sleeping, said: b.said.length };
+    };
+    expect([woken(WAKE_LINE_CHANCE), woken(WAKE_LINE_CHANCE - 0.01)]).toEqual([{ sleeping: false, said: 0 }, { sleeping: false, said: 1 }]);
   });
 });

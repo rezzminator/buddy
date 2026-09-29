@@ -1,6 +1,9 @@
-import { clockOf, seconds, short, statsOf, wrapText, type FeedEntry } from '../src/feed.ts';
+import { clockOf, seconds, short, statsOf, wrapText, type FeedEntry, type TurnEnding } from '../src/feed.ts';
 import { findItem, listWidth, previewOf, rowLabel, type Menu } from '../src/menu.ts';
 import type { Soul } from '../src/original.ts';
+
+/** What a turn row says of a turn the buddy never read, by how it ended; `unanswered` when that was not kept. */
+const UNREAD: Record<TurnEnding | 'unanswered', string> = { interrupted: 'interrupted', error: 'ended by an error', refusal: 'refused', unanswered: 'unanswered' };
 
 // The drawer /buddy opens: the band above the prompt opened full width into
 // two tabs, talk (the buddy and its whole thread with you, src/feed.ts) and
@@ -105,6 +108,12 @@ function speaker(e: FeedEntry, v: DrawerView): { glyph: string; label: string; c
       return { glyph: '↳', label: `${name} answered`, color: ink, text: '', bold: true };
     case 'comment':
       return { glyph: '◆', label: `${name} commented`, color: ink, text: '', bold: false };
+    case 'verdict':
+      if (e.verdict === 'WRONG') return { glyph: '✗', label: `${name}: WRONG`, color: 'red', text: 'red', bold: true };
+      if (e.verdict === 'SHORTCUT') return { glyph: '!', label: `${name}: shortcut`, color: 'yellow', text: 'yellow', bold: false };
+      return { glyph: '✓', label: `${name}: right call`, color: 'green', text: 'green', bold: false };
+    case 'memory':
+      return { glyph: '✎', label: `${name}'s notes`, color: ink, text: '', bold: false };
     case 'suggest':
       return { glyph: '✦', label: `${name} suggested`, color: 'magenta', text: 'magenta', bold: false };
     case 'failed':
@@ -159,10 +168,17 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
   const drawn = messages.map((e) => {
     if (e.kind === 'clear') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  new conversation`, '') };
     if (e.kind === 'compact') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text) };
-    if (e.kind === 'you') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, e.read === false ? `  · interrupted, ${v.name} never read it` : '') };
+    if (e.kind === 'you') {
+      // The turn's numbers in brief once it ended, and whether the buddy never read it.
+      const notes = [e.numbers ?? '', e.read === false ? `${UNREAD[e.ended ?? 'unanswered']}, ${v.name} never read it` : ''].filter(Boolean);
+      return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, notes.length > 0 ? `  · ${notes.join(' · ')}` : '') };
+    }
     const who = speaker(e, v);
-    const lines = wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);
-    const tall = Math.max(1, lines.length);
+    // Its notes one bullet each; anything else as it was said.
+    const lines = e.kind === 'memory' ? e.text.split('\n').flatMap((n) => wrapText(`• ${n}`, textW)) : wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);
+    // A verdict says, under its why, what it judged against.
+    const wants = e.kind === 'verdict' && e.desire ? wrapText(`wants: ${e.desire}`, textW) : [];
+    const tall = Math.max(1, lines.length + wants.length);
     const end = e.kind !== 'suggest'
       ? null
       : e.taken === true
@@ -181,7 +197,8 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
           </Text>
         </Box>
         <Box flexDirection="column" flexGrow={1}>
-          {lines.map((l) => (who.text ? <Text color={who.text} italic={e.kind === 'suggest'}>{l}</Text> : <Text bold={who.bold}>{l}</Text>))}
+          {lines.map((l) => (who.text ? <Text color={who.text} italic={e.kind === 'suggest'} bold={e.kind === 'verdict' && who.bold}>{l}</Text> : <Text bold={who.bold}>{l}</Text>))}
+          {wants.map((l) => <Text dimColor>{l}</Text>)}
         </Box>
         <Box width={DRAWER_MARK} flexShrink={0} justifyContent="flex-end">{end}</Box>
       </Box>

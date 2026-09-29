@@ -1,15 +1,18 @@
 // The feed: what passed between you and the buddy in this session, in order,
 // for the drawer /buddy opens: your prompts to Claude (the context each buddy
 // line answers), the main chat's compactions, your questions and its answers,
-// its comment after each turn, each next prompt it suggested and whether you
-// sent it, the canned lines it said on its own, and every failure, said as
+// its comment after each turn, its second brain's verdict on Claude's last
+// move with what you most deeply want, each next prompt it suggested and
+// whether you sent it, each rewrite of its own notes (one per line), the canned lines it said on its own, and every failure, said as
 // one. Texts are kept whole. It spans exactly what the buddy remembers
 // (src/chatTurnsToRead.ts): the same last turns, nothing before a /clear. No
 // I/O: the adapter keeps the feed in $.state and draws it.
 
 import { COMPACTION, type Block } from './chatTurnsToRead.ts';
+import type { TurnCut, Verdict } from './prompts.ts';
+import { statsBrief } from './stats.ts';
 
-export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'suggest' | 'line' | 'failed' | 'clear';
+export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'memory' | 'line' | 'failed' | 'clear';
 
 /**
  * One entry. `who` and `color`: the character that said it (its name and
@@ -19,7 +22,13 @@ export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'sugge
  * `turnId`: the main turn a `you` entry started, or a `compact` entry's id.
  * `read`: whether the buddy filed that turn into its memory (true), or it
  * ended unanswered and the buddy never read it (false); absent while it runs.
+ * `ended`: how an unread turn ended: interrupted, or by an API error or a refusal.
+ * `numbers`: a `you` entry's turn in brief, once it ended (stats.ts statsBrief).
+ * `verdict` and `desire`: a `verdict` entry's judgement (its text the why)
+ * and the deepest desire it judged against, when named.
  */
+/** How a main turn ended without an answer: the user interrupted it, or an API error or a refusal ended it. */
+export type TurnEnding = 'interrupted' | TurnCut;
 export type FeedEntry = {
   id: number;
   at: number;
@@ -32,6 +41,10 @@ export type FeedEntry = {
   taken?: boolean;
   turnId?: string;
   read?: boolean;
+  ended?: TurnEnding;
+  numbers?: string;
+  verdict?: Verdict;
+  desire?: string;
 };
 
 export type NewEntry = Omit<FeedEntry, 'id'>;
@@ -43,8 +56,13 @@ export function pushEntry(feed: readonly FeedEntry[], entry: NewEntry): FeedEntr
 }
 
 /** The `you` entry of turn `turnId` marked read or not by the buddy. */
-export function markRead(feed: readonly FeedEntry[], turnId: string, read: boolean): FeedEntry[] {
-  return feed.map((e) => (e.kind === 'you' && e.turnId === turnId ? { ...e, read } : e));
+export function markRead(feed: readonly FeedEntry[], turnId: string, read: boolean, ended?: TurnEnding): FeedEntry[] {
+  return feed.map((e) => (e.kind === 'you' && e.turnId === turnId ? { ...e, read, ...(ended === undefined ? {} : { ended }) } : e));
+}
+
+/** The `you` entry of turn `turnId` with its turn's numbers in brief; '' leaves it as it is. */
+export function markNumbers(feed: readonly FeedEntry[], turnId: string, numbers: string): FeedEntry[] {
+  return numbers ? feed.map((e) => (e.kind === 'you' && e.turnId === turnId ? { ...e, numbers } : e)) : [...feed];
 }
 
 /**
@@ -80,7 +98,10 @@ export function feedOfMemory(blocks: readonly Block[], characterId: string, voic
     const when = b.at ?? at;
     if (b.turn) {
       if (b.turn.from === COMPACTION) f = pushEntry(f, { at: when, kind: 'compact', text: b.turn.answer, turnId: b.turnId, read: true });
-      else f = pushEntry(answerSuggestions(f, b.turn.prompt), { at: when, kind: 'you', text: b.turn.prompt, turnId: b.turnId, read: true });
+      else {
+        const ended: TurnEnding | undefined = b.turn.interrupted ? 'interrupted' : b.turn.ended;
+        f = pushEntry(answerSuggestions(f, b.turn.prompt), { at: when, kind: 'you', text: b.turn.prompt, turnId: b.turnId, read: ended === undefined, ...(ended === undefined ? {} : { ended }), ...(b.turn.stats ? { numbers: statsBrief(b.turn.stats) } : {}) });
+      }
     }
     for (const x of b.characters[characterId] ?? []) {
       if (x.kind === 'question') {
@@ -99,14 +120,18 @@ export function feedOfMemory(blocks: readonly Block[], characterId: string, voic
 
 const same = (a: string) => a.replace(/\s+/g, ' ').trim().toLowerCase();
 
+/** Whether the prompt sent is the suggestion, taken as it was: the same words, spacing and case aside; a blank prompt never is. */
+export function isTaken(suggestion: string, prompt: string): boolean {
+  const p = same(prompt);
+  return p !== '' && same(suggestion) === p;
+}
+
 /**
  * Your prompt `prompt` was sent: every suggestion not yet answered is taken
- * when the prompt is that suggestion (spacing and case aside), passed over
- * otherwise.
+ * when the prompt is that suggestion (isTaken), passed over otherwise.
  */
 export function answerSuggestions(feed: readonly FeedEntry[], prompt: string): FeedEntry[] {
-  const p = same(prompt);
-  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: p !== '' && same(e.text) === p } : e));
+  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: isTaken(e.text, prompt) } : e));
 }
 
 export type FeedStats = {

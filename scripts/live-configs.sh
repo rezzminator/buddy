@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Live configuration proof: five real Claude Code sessions (the main chat on
-# Haiku) with this checkout loaded by --plugin-dir, two user turns each, the
+# Haiku) with this checkout loaded by --plugin-dir, two user turns each (S1 three), the
 # buddy options pinned per session (model opus, effort low, logLevel debug,
 # logFile in the session's folder, always), every turn measured:
 #   S1 defaults (commentAfterEachTurn, suggestNextPrompt, chatTurnsToRead 4): after each turn commentAfterEachTurn
 #      shows in the bubble and suggestNextPrompt in the prompt box; a /buddy question is
-#      answered, and a second one referring to it is answered from chatTurnsToRead
+#      answered, and a second one referring to it is answered from chatTurnsToRead; a third
+#      turn ends on a step only the user can take, and its suggestion never reports it done
 #   S2 commentAfterEachTurn false: no commentAfterEachTurn after a turn, suggestNextPrompt still shown
 #   S3 suggestNextPrompt false, chatTurnsToRead 1: commentAfterEachTurn shows; no suggestNextPrompt; the chat's
 #      memory.json holds only the last turn, and a question about the turn before it is answered as out of memory;
@@ -17,7 +18,8 @@
 #      the duck is drawn with a bubble naming the error
 # Per turn, from the plugin log and the transcript: the turn's end to
 # commentAfterEachTurn in the log (commentAfterEachTurn.outcome ts minus the transcript's reply), the plugin's own
-# ms on commentAfterEachTurn.outcome and suggestNextPrompt.outcome, tokens, both outcomes, and every
+# ms on commentAfterEachTurn.outcome and suggestNextPrompt.outcome, tokens (verdict.outcome's when
+# commentAfterEachTurn is off), both outcomes, and every
 # error record; the pane is sampled once after commentAfterEachTurn to match the bubble.
 # Up to three sessions run at once, each on its own tmux socket and folder.
 # Writes /tmp/buddy/configs-{timestamp}/report.md and report.json; exits 1
@@ -55,6 +57,12 @@ stored() { local s; s=$(memory_file); [ -n "$s" ] && jq -r --arg f "$1" '[.block
 # The transcript's reply holding $1: its timestamp, or nothing.
 reply_ts() { local f; f=$(transcript); [ -n "$f" ] && jq -r --arg m "$1" 'select(.type=="assistant") | select(any(.message.content[]?; .type=="text" and (.text|contains($m)))) | .timestamp' "$f" 2>/dev/null | tail -1; }
 squash() { tr -s ' \n' '  ' | sed 's/^ //; s/ $//'; }
+# A suggestion reporting S1T3's user-only step as done (the token made or saved), once its future and conditional clauses
+# ("I'll tell you when it's saved", "if my line ran") are cut: the user may send it unread, so it must only ask or instruct.
+reported() { perl -pe "s/\\b(when|once|after|until|if|i'll|i will)\\b[^,.;?]*//gi" <<<"$1" | grep -q -i -E "$REPORTED"; }
+REPORTED="(saved|made|created|generated|copied|pasted)( it| the token| a token| my token)?([^a-z]|$)|(token|it|file)( is|'s| was)? (saved|there|ready|done)|^(ok,? )?(done|did it|i did)"
+# The suggestNextPrompt filed after the turn whose prompt holds $1: NONE when its end-of-turn exchange has none, nothing when no exchange was filed.
+suggestion_after() { local s; s=$(memory_file); [ -n "$s" ] && jq -r --arg m "$1" '[.blocks[]? | select(.turn and (.turn.prompt | contains($m))) | .characters[]?[]? | select(.kind == "endOfTurn") | .suggestNextPrompt // "NONE"] | last // empty' "$s" 2>/dev/null; }
 
 # One turn's metrics row from the log records since line $2 (node: JSON and ISO dates).
 metrics() {
@@ -70,10 +78,9 @@ const lastWithUsage = (e) => recs.filter((r) => r.event === e && typeof r.inTok 
 // A refused ask made no call and carries no usage: the ask is the last one that did.
 const lastAsked = () => recs.filter((r) => r.event === 'ask.outcome' && r.outcome !== 'refused').at(-1) ?? null;
 const q = last('commentAfterEachTurn.outcome'), s = last('suggestNextPrompt.outcome'), a = lastAsked(), p = last('turn.prompt') ?? last('ask.prompt');
-// A call that writes no commentAfterEachTurn (off) logs its usage on suggestNextPrompt.outcome: on such a
-// turn a later harness-shown/harness-not-shown record can follow it with no usage, so this
-// takes the latest suggestNextPrompt.outcome record that actually carries it, not just the last one.
-const call = q ?? a ?? lastWithUsage('suggestNextPrompt.outcome');
+// A call that writes no commentAfterEachTurn (off) logs its usage on verdict.outcome; the latest one
+// that carries it (a stale one may carry none).
+const call = q ?? a ?? lastWithUsage('verdict.outcome');
 const end = endTs ? Date.parse(endTs) : NaN;
 const n = (v) => (typeof v === 'number' ? v : null);
 console.log(JSON.stringify({
@@ -241,15 +248,33 @@ run_session() {
       && [ -n "$r1" ] && grep -q 'IN · tool call Bash' "$r1" && grep -q '      command: ls' "$r1" && grep -q '  LOG info turn.call' "$r1" && grep -q 'OUT · bubble' "$r1" \
       && grep -q 'the turn ended (answer), as the buddy filed it' "$r1" && grep -q 'BUDDY CALL 1 · end-of-turn call' "$r1" && grep -q '─── IN: system ───' "$r1" \
       && [ -n "$r2" ] && grep -q '/buddy question' "$r2" && grep -q 'turn before my last one' "$r2" && grep -q '─── OUT: answered' "$r2" \
-      && check PASS "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2")" \
-      || check FAIL "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$ROUNDS: $n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$ROUNDS" | head -4 | tr '\n' ' ')"
+      && grep -q '^Numbers: ' "$r2" && grep -q 'The turn that just ended is the last one above.' "$r2" \
+      && check PASS "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2"): $(grep -m1 '^Numbers: ' "$r2" | cut -c1-160)" \
+      || check FAIL "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "numbers line in T2's round: $([ -n "$r2" ] && grep -c '^Numbers: ' "$r2" || echo unread); $ROUNDS: $n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$ROUNDS" | head -4 | tr '\n' ' ')"
   fi
   if [ "$S" = S1 ]; then
+    # Each turn's numbers, counted as it ran: filed with the turn in memory.json, and one turn.numbers record per turn.
+    local mf st1 nrec
+    mf=$(memory_file)
+    st1=$([ -n "$mf" ] && jq -c '[.blocks[]? | select(.turn and (.turn.prompt | contains("S1T1"))) | .turn.stats][0] // empty' "$mf" 2>&1)
+    nrec=$(count turn.numbers 0)
+    if [ -n "$st1" ] && jq -e '.ms > 0 and .requests >= 2 and (.tools.Bash // 0) >= 1 and .tokens.out > 0 and (.model | length) > 0 and .context.window > 0 and has("usd")' <<<"$st1" > /dev/null 2>&1 && [ "$nrec" -ge 2 ]; then
+      check PASS "each turn's numbers in memory.json and the log" "T1 $st1; turn.numbers x$nrec"
+    else
+      check FAIL "each turn's numbers in memory.json and the log" "${mf:-no memory.json}: ${st1:-no numbers filed with S1T1}; turn.numbers x$nrec"
+    fi
     local a1 a2
     ask "remember the word tangerine" "ask1"; a1=$(stored question)
     [ "$(row_of outcome)" = answered ] && check PASS "/buddy question answered" "$a1" || check FAIL "/buddy question answered" "$ASK_OUT / $(row_of outcome) / bubble $(row_of bubble)"
     ask "what word did I ask you to remember?" "ask2"; a2=$(stored question)
     [ "$(row_of outcome)" = answered ] && grep -q -i tangerine <<<"$a2 $(row_of bubble)" && check PASS "a second question is answered from chatTurnsToRead" "$a2" || check FAIL "a second question is answered from chatTurnsToRead" "$ASK_OUT / $(row_of outcome) / ${a2:-nothing stored} / bubble $(row_of bubble)"
+    # A turn that ends on a step only the user can take: the suggestion asks or instructs, never reports that step done.
+    local sug
+    turn "${S}T3" "Reply with exactly: ${S}T3 Your step now: make a token with claude setup-token in your own terminal, save it to ~/.config/demo/token, then tell me."
+    sug=$(suggestion_after "${S}T3" | squash)
+    if [ -z "$sug" ]; then check FAIL "after a user-only step, the suggestion claims nothing done" "no end-of-turn exchange filed for ${S}T3 in ${mf:-no memory.json}"
+    elif reported "$sug"; then check FAIL "after a user-only step, the suggestion claims nothing done" "it reports the user's step: $sug"
+    else check PASS "after a user-only step, the suggestion claims nothing done" "$sug"; fi
   fi
 }
 

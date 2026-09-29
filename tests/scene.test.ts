@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { CONFETTI_ROWS } from '../plugins/buddy/src/particles.ts';
-import { BUBBLE_FRAME_ROWS, MOODS, bubbleWidth, buildScene, type Scene, type SceneInput } from '../plugins/buddy/src/scene.ts';
+import { BUBBLE_FRAME_ROWS, BUBBLE_INK, MOODS, TONE_COLOR, bubbleWidth, buildScene, type Scene, type SceneInput } from '../plugins/buddy/src/scene.ts';
 import { raw } from './fixtures.ts';
 
 const v = validateCharacter(raw({ poses: { idle: [['(o)', '/|\\'], ['   ', '(o)']], walkRight: [['a'], ['b']] } }));
@@ -139,5 +139,30 @@ describe('the band never draws past maxRows', () => {
       expect(height(s)).toBeLessThanOrEqual(maxRows);
       if (bubble) expect(s && (s.bubble !== null || s.effects.length > 0)).toBe(true);
     }
+  });
+});
+
+describe('a loud bubble', () => {
+  test('beside him it carries its tone; above him, with no room beside, its words take the tone\'s ink', () => {
+    expect(TONE_COLOR).toEqual({ warn: 'yellow', alarm: 'red' });
+    expect(buildScene({ ...base, bubble: 'STOP!', bubbleTone: 'alarm' })!.bubble).toMatchObject({ text: 'STOP!', tone: 'alarm' });
+    expect(buildScene({ ...base, bubble: 'Hi.' })!.bubble).not.toHaveProperty('tone');
+    const above = buildScene({ ...base, cols: 30, bubble: 'careful now', bubbleTone: 'warn' })!;
+    expect(above.bubble).toBeNull();
+    expect(above.effects.flat().filter((g) => g.text.includes('careful')).map((g) => g.color)).toEqual(['yellow']);
+  });
+});
+
+describe('a bubble\'s ink', () => {
+  test('its words take the ink of whom they are addressed to, blue to the user, yellow to Claude; beside him its tone stays for the frame', () => {
+    expect(BUBBLE_INK).toEqual({ user: 'blue', claude: 'yellow' });
+    expect(buildScene({ ...base, bubble: 'run the tests', bubbleTo: 'claude' })!.bubble).toMatchObject({ text: 'run the tests', to: 'claude' });
+    expect(buildScene({ ...base, bubble: 'Hi.' })!.bubble).not.toHaveProperty('to');
+    expect(buildScene({ ...base, bubble: 'careful', bubbleTone: 'warn', bubbleTo: 'user' })!.bubble).toMatchObject({ tone: 'warn', to: 'user' });
+  });
+  test('above him, with no frame to carry a tone, a plain bubble\'s words take its addressee\'s ink, the user\'s when it names none', () => {
+    const inkOf = (s: Scene, word: string) => s.effects.flat().filter((g) => g.text.includes(word)).map((g) => g.color);
+    expect(inkOf(buildScene({ ...base, cols: 30, bubble: 'run the tests', bubbleTo: 'claude' })!, 'tests')).toEqual(['yellow']);
+    expect(inkOf(buildScene({ ...base, cols: 30, bubble: 'hello there' })!, 'hello')).toEqual(['blue']);
   });
 });

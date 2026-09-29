@@ -1,16 +1,32 @@
 import { describe, expect, test } from 'vitest';
-import { DID_FILES_MAX, DID_MAX, DID_TEXT_CAP, actionOf, didOf, type Action } from '../plugins/buddy/src/did.ts';
+import {
+  DID_FILES_MAX, DID_LINE_CAP, DID_MAX, DID_TEXT_CAP, FAIL_REASON_CAP, actionOf, denialReason, didOf, failureReason, redact, type Action, type Failure,
+} from '../plugins/buddy/src/did.ts';
 
-const did = (...calls: [Record<string, unknown> & { tool: string }, boolean?][]): string[] =>
-  didOf(calls.map(([c, failed]) => actionOf(c, failed === true)).filter((a): a is Action => a !== null));
+const did = (...calls: [Record<string, unknown> & { tool: string }, (boolean | Failure)?][]): string[] =>
+  didOf(calls.map(([c, f]) => actionOf(c, f === true ? { kind: 'failed', reason: '' } : f || null)).filter((a): a is Action => a !== null));
 
 describe('a step', () => {
   test('a shell command is its description, never its output; failed marked', () => {
     expect(did([{ tool: 'Bash', command: 'npm test', description: 'Run the unit tests' }, true])).toEqual(['Run the unit tests (failed)']);
   });
-  test('an undescribed command without its cds, paths cut to their last part, at most 50', () => {
+  test('an undescribed command without its cds, paths cut to their last part, at most 72', () => {
     expect(did([{ tool: 'Bash', command: 'cd /Users/x/repo && cat /Users/x/repo/src/a.ts' }])).toEqual(['ran cat a.ts']);
-    expect(did([{ tool: 'Bash', command: `echo ${'y'.repeat(80)}` }])[0]).toHaveLength(54);
+    expect(did([{ tool: 'Bash', command: `echo ${'y'.repeat(80)}` }])[0]).toBe(`ran echo ${'y'.repeat(66)}…`);
+  });
+  test('a path is cut to its last part, never glued to the word before it; a URL stays whole', () => {
+    const ran = (command: string): string | undefined => did([{ tool: 'Bash', command }])[0];
+    expect(ran('npx vitest run plugins/buddy/test/buddy.test.tsx')).toBe('ran npx vitest run buddy.test.tsx');
+    expect(ran('cat /Users/x/a/b.ts')).toBe('ran cat b.ts');
+    expect(ran('git -C ~/work/repo status')).toBe('ran git -C repo status');
+    expect(ran('curl -s https://example.com/api/v1')).toBe('ran curl -s https://example.com/api/v1');
+  });
+  test('background work says so; a foreground call is unchanged', () => {
+    expect(did([{ tool: 'Bash', command: 'npm run dev', description: 'Start the dev server', run_in_background: true }])).toEqual(['Start the dev server (in the background, reports back later)']);
+    expect(did([{ tool: 'Bash', command: 'npm run dev', description: 'Start the dev server', run_in_background: false }])).toEqual(['Start the dev server']);
+    expect(did([{ tool: 'Agent', description: 'Audit the diff', run_in_background: true }])).toEqual(['agent in the background (reports back later): Audit the diff']);
+    expect(did([{ tool: 'Task', run_in_background: true }])).toEqual(['ran an agent in the background']);
+    expect(did([{ tool: 'Agent', description: 'Audit the diff' }])).toEqual(['agent: Audit the diff']);
   });
   test('a file tool by its verb and the file name; an agent, a skill, the web, an MCP tool by what they did', () => {
     expect(did(
@@ -23,7 +39,55 @@ describe('a step', () => {
   });
   test('bookkeeping says nothing of the work: dropped', () => {
     expect(did([{ tool: 'ToolSearch', query: 'x' }], [{ tool: 'TaskStop', task_id: '1' }], [{ tool: 'Monitor' }])).toEqual([]);
-    expect(actionOf({ tool: 'Read' }, false)).toBeNull();
+    expect(actionOf({ tool: 'Read' }, null)).toBeNull();
+  });
+});
+
+describe('a failed or denied step', () => {
+  test('a failed command says why: the error line, after the exit code', () => {
+    const reason = failureReason("Exit code 1\n\nsome log\nError: ENOENT: no such file, open 'x.json'");
+    expect(reason).toBe("exit 1: Error: ENOENT: no such file, open 'x.json'");
+    expect(did([{ tool: 'Bash', command: 'npm test', description: 'Run the unit tests' }, { kind: 'failed', reason }])[0])
+      .toMatch(/ \(failed: exit 1: Error: ENOENT: no such file, open 'x\.json'\)$/);
+  });
+  test('without an error line the last line; colors gone, one-spaced, cut to FAIL_REASON_CAP', () => {
+    expect(failureReason('\u001b[31mstarting\u001b[0m\n  done   with 3   warnings  \n')).toBe('done with 3 warnings');
+    expect(failureReason('Exit code 2')).toBe('exit 2');
+    expect(failureReason('')).toBe('');
+    const long = failureReason(`Error: ${'x'.repeat(200)}`);
+    expect(long).toHaveLength(FAIL_REASON_CAP);
+    expect(long.endsWith('…')).toBe(true);
+  });
+  test('a denial is not a failure', () => {
+    expect(did([{ tool: 'Bash', command: 'rm -rf x', description: 'Remove x' }, { kind: 'denied', reason: denialReason('User rejected') }])).toEqual(['Remove x (denied: User rejected)']);
+    expect(did([{ tool: 'Bash', command: 'rm -rf x', description: 'Remove x' }, { kind: 'denied', reason: '' }])).toEqual(['Remove x (denied)']);
+  });
+  test('a failed or denied file tool is a step of its own, never gathered under the verb', () => {
+    expect(did(
+      [{ tool: 'Edit', file_path: '/r/a.ts' }, { kind: 'failed', reason: 'String to replace not found in file.' }],
+      [{ tool: 'Edit', file_path: '/r/b.ts' }],
+      [{ tool: 'Read', file_path: '/r/x.ts' }, { kind: 'denied', reason: 'no' }],
+      [{ tool: 'Write', file_path: '/r/c.ts' }, true],
+      [{ tool: 'Grep', pattern: 'foo' }, true],
+    )).toEqual(['edit a.ts (failed: String to replace not found in file.)', 'edited b.ts', 'read x.ts (denied: no)', 'write c.ts (failed)', 'search foo (failed)']);
+  });
+  test('the same step twice in a row is one only when its failure matches too', () => {
+    const bash = { tool: 'Bash', command: 'a', description: 'Run it' };
+    expect(did([bash, { kind: 'failed', reason: 'one' }], [bash, { kind: 'failed', reason: 'two' }], [bash, { kind: 'failed', reason: 'two' }])).toEqual(['Run it (failed: one)', 'Run it (failed: two)']);
+    expect(did([bash, true], [bash])).toEqual(['Run it (failed)', 'Run it']);
+  });
+  test('a secret in a reason is redacted', () => {
+    expect(failureReason('Error: auth failed for sk-ant-abcdef123456')).toBe('Error: auth failed for [redacted]');
+    expect(denialReason('bad TOKEN=hunter2 given')).toBe('bad TOKEN=[redacted] given');
+    expect(redact('ghp_abcdefghijklmnopqrstuvwxyz0123 xoxb-1-2-abc AKIAABCDEFGHIJKLMNOP eyJhbGciOiJIUzI1.eyJzdWIi.sig password: pw api_key=k')).toBe(
+      '[redacted] [redacted] [redacted] [redacted] password: [redacted] api_key=[redacted]',
+    );
+  });
+  test('the failure marker survives the step cap whole', () => {
+    const d = did([{ tool: 'Bash', command: 'a', description: 'z'.repeat(200) }, { kind: 'failed', reason: 'boom' }])[0];
+    expect(d).toBe(`${'z'.repeat(DID_TEXT_CAP - 1)}… (failed: boom)`);
+    const worst = did([{ tool: 'Bash', command: 'a', description: 'z'.repeat(200) }, { kind: 'denied', reason: denialReason('d'.repeat(300)) }])[0]!;
+    expect(worst.length).toBeLessThanOrEqual(DID_LINE_CAP);
   });
 });
 

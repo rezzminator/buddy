@@ -60,12 +60,12 @@ Every text is whole: no entry is cut and the feed has no length cap, so the tab 
 
 | Section | Opened by |
 | --- | --- |
-| `{hh:mm}  you → Claude: {prompt}` | a main turn's start; `· interrupted, {name} never read it` when the turn ended unanswered and was not filed (`markRead`) |
+| `{hh:mm}  you → Claude: {prompt}` | a main turn's start; once it ends, its numbers in brief, `· 4m12s · 104 tools · $0.42` (`markNumbers`, `statsBrief`); `· interrupted, {name} never read it` when the turn ended unanswered, `ended by an error` or `refused` in its place when an API error or a refusal ended it (`markRead`, and `feedOfMemory` from the memory's marks) |
 | `{hh:mm}  chat compacted · {name} read its summary: {summary}` | a compaction of the main chat, filed into the memory as a turn |
 | `{hh:mm}  new conversation` | `/clear` |
 
-Under each section, in order: your questions and the buddy's answers, its `commentAfterEachTurn`, its `suggestNextPrompt`, marked at its right `✓ you sent it` once your next prompt was that idea, `not sent` once it was passed over, and the newest open one `ctrl+x u uses it`, its canned lines, and every failure.
-An interrupted turn stays inside the window but does not count toward it, as the memory never holds it.
+Under each section, in order: your questions and the buddy's answers, its `commentAfterEachTurn`, its second brain's verdict (`✓ {name}: right call` in green, `! {name}: shortcut` in yellow, `✗ {name}: WRONG` in red and bold, its why, and under it `wants: {desire}` dim), each rewrite of its own notes (`✎ {name}'s notes`, a bullet per note), its `suggestNextPrompt`, marked at its right `✓ you sent it` once your next prompt was that idea, `not sent` once it was passed over, and the newest open one `ctrl+x u uses it`, its canned lines, and every failure.
+A turn the buddy never read (interrupted, or ended by an error or a refusal) stays inside the window but does not count toward it.
 The feed lives in `$.state` for the session, so a plugin reload keeps it; where it is gone (a resume, a restart) and the memory is not, it is drawn back from the memory (`feedOfMemory`, `seedFeed`).
 The tab's hint names the window: `everything {name} remembers: your last {n} turns with Claude`.
 
@@ -146,7 +146,7 @@ Every failure to look is a line where the missing rows would be, and every entry
 | --- | --- |
 | [`hooks/drawer.tsx`](../../plugins/buddy/hooks/drawer.tsx) | `DrawerView`, `DrawerActs`, `MenuState`, `SHORTCUTS`, `openIdea`, `drawDrawer`; `guide`, `thread`, `personality` inside it |
 | [`src/command.ts`](../../plugins/buddy/src/command.ts) | `DRAWER_KEYS` |
-| [`src/feed.ts`](../../plugins/buddy/src/feed.ts) | `FeedEntry`, `pushEntry`, `markRead`, `pruneToMemory`, `feedOfMemory`, `answerSuggestions`, `statsOf` |
+| [`src/feed.ts`](../../plugins/buddy/src/feed.ts) | `FeedEntry`, `pushEntry`, `markRead`, `pruneToMemory`, `feedOfMemory`, `answerSuggestions`, `isTaken`, `statsOf` |
 | [`src/menu.ts`](../../plugins/buddy/src/menu.ts) | `Menu`, `Item`, `Originals`, `buildMenu`, `itemKey`, `allItems`, `findItem`, `currentKeyOf`, `rowLabel`, `listWidth`, `previewOf` |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `toggleDrawer`, `drawDrawerBand`, `drawerView`, `scrollDrawerToEnd`, `openPersonality`, `showTalk`, `stepCharacter`, `pickItem`, `changeFeed`, `seedFeed`, `save`, `findOriginals`, `restoreOriginal` |
 | [`src/original.ts`](../../plugins/buddy/src/original.ts) | `originalLabel` |

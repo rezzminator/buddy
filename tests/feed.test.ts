@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  answerSuggestions, feedOfMemory, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
+  answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
   type FeedEntry,
 } from '../plugins/buddy/src/feed.ts';
 
@@ -41,6 +41,15 @@ describe('the feed', () => {
     expect(f.find((e) => e.kind === 'suggest')!.taken).toBe(true);
     expect(f.filter((e) => e.kind === 'you').every((e) => e.read === true)).toBe(true);
   });
+  test('drawn back from the memory, a turn interrupted or ended by an error or a refusal stays marked unread, with how it ended', () => {
+    const f = feedOfMemory([
+      { turnId: 't1', turn: { prompt: 'a', answer: '', interrupted: true }, characters: {} },
+      { turnId: 't2', turn: { prompt: 'b', answer: '', ended: 'error' }, characters: {} },
+      { turnId: 't3', turn: { prompt: 'c', answer: '', ended: 'refusal' }, characters: {} },
+      { turnId: 't4', turn: { prompt: 'd', answer: 'Done.' }, characters: {} },
+    ], 'cat', {}, 1);
+    expect(f.map((e) => [e.text, e.read, e.ended])).toEqual([['a', false, 'interrupted'], ['b', false, 'error'], ['c', false, 'refusal'], ['d', true, undefined]]);
+  });
   test('a prompt answers every open suggestion: taken when it is that suggestion, spacing and case aside; one answered stays', () => {
     let f = pushEntry([], { at, kind: 'suggest', text: 'Run  the tests' });
     f = answerSuggestions(f, ' run the tests');
@@ -49,6 +58,11 @@ describe('the feed', () => {
     f = answerSuggestions(f, 'no, wait');
     expect(f.map((e) => e.taken)).toEqual([true, false]);
     expect(answerSuggestions(pushEntry([], { at, kind: 'suggest', text: 'a' }), '   ')[0]!.taken).toBe(false);
+  });
+  test('a prompt is a suggestion taken when it is that suggestion, spacing and case aside; an edit or a blank is not', () => {
+    expect(isTaken('Run  the tests', ' run the tests\n')).toBe(true);
+    expect(isTaken('run the tests', 'run the tests now')).toBe(false);
+    expect(isTaken('', '  ')).toBe(false);
   });
   test('its stats: counts per kind, the suggestions taken, the mean call time, the tokens', () => {
     let f: FeedEntry[] = [];
@@ -72,3 +86,18 @@ describe('the words the panels draw', () => {
     expect(wrapText('a\n\nb', 5)).toEqual(['a', '', 'b']);
   });
 });
+
+describe("a turn's numbers in the feed", () => {
+  test('set on its own `you` entry once it ended; an empty brief changes nothing', () => {
+    let f = pushEntry([], { at: 1, kind: 'you', text: 'one', turnId: 't1' });
+    f = pushEntry(f, { at: 2, kind: 'you', text: 'two', turnId: 't2' });
+    const marked = markNumbers(f, 't2', '12s · 3 tools · $0.05');
+    expect(marked.map((e) => e.numbers)).toEqual([undefined, '12s · 3 tools · $0.05']);
+    expect(markNumbers(marked, 't1', '')).toEqual(marked);
+  });
+  test('drawn back from the memory with each remembered turn', () => {
+    const f = feedOfMemory([{ turnId: 't1', turn: { prompt: 'go', answer: 'Went.', stats: { ms: 12_000, tools: { Read: 3 } } }, characters: {} }], 'cat', {}, 5);
+    expect(f[0]).toMatchObject({ kind: 'you', text: 'go', numbers: '12s · 3 tools' });
+  });
+});
+

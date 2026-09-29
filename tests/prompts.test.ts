@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ASKED_PROMPT_MAX_CHARS, ASKED_PROMPT_RULE, CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, lostThread, memoryRule, oneLine, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
+  ASKED_PROMPT_MAX_CHARS, ASKED_PROMPT_RULE, CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, DESIRE_MAX_CHARS, JUST_ENDED, MEMORY_LINE, TAKEN_SUGGESTION_CONTEXT, VERDICTS, lostThread, memoryRule, oneLine, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem, isOwnPrompt,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
@@ -16,9 +16,11 @@ describe('prompts', () => {
     expect(oneLineSystem('You are X.', 4)).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${memoryRule(4)}\n\n${ONE_LINE_RULE} ${ASKED_PROMPT_RULE}`);
     expect(questionPrompt('hi')).toBe('The user asks you directly: hi');
   });
-  test('the turn prompt counts tools and caps the command', () => {
+  test('the turn prompt counts tools and keeps the start and end of a long command', () => {
     const p = turnPrompt({ tools: ['Bash', 'Read', 'Bash'], failures: 1, lastBash: 'x'.repeat(200), actions: [] });
-    expect(p).toContain(`Tools used: Bash x2, Read. Failures: 1. Last shell command: ${'x'.repeat(120)}.`);
+    expect(p).toContain(`Tools used: Bash x2, Read. Failures: 1. Last shell command: ${'x'.repeat(200)}.`);
+    const long = `rsync -a src/ dst/ && ${'y'.repeat(600)} | grep -vE '(daemon|bg-spare)'`;
+    expect(turnPrompt({ tools: ['Bash'], failures: 0, lastBash: long, actions: [] })).toContain(`Last shell command: ${long.slice(0, 240)} … ${long.slice(-120)}.`);
     expect(turnPrompt({ tools: [], failures: 0, lastBash: '', actions: [] })).toBe('In the turn that just ended: Tools used: none. Failures: 0. Last shell command: none.');
   });
   test('oneLine takes the first non-empty line, unquoted, capped', () => {
@@ -38,6 +40,11 @@ describe('chatTurnsToRead in the prompts', () => {
     const tp = turnPrompt({ tools: ['Read'], failures: 0, lastBash: '', actions: [] }, chatTurnsToRead);
     expect(tp).toBe(`${chatTurnsToRead}\n\nIn the turn that just ended: Tools used: Read. Failures: 0. Last shell command: none.`);
   });
+  test('a memory holding the turn just ended is pointed to, never repeated; an empty one still gets what the turn did', () => {
+    const t = { tools: ['Read'], failures: 0, lastBash: '', actions: [] };
+    expect(turnPrompt(t, chatTurnsToRead, true)).toBe(`${chatTurnsToRead}\n\n${JUST_ENDED}`);
+    expect(turnPrompt(t, '', true)).toBe('In the turn that just ended: Tools used: Read. Failures: 0. Last shell command: none.');
+  });
   test('nothing remembered: the question alone', () => {
     expect(questionPrompt('hi', '')).toBe('The user asks you directly: hi');
   });
@@ -52,7 +59,7 @@ describe('the memory rule', () => {
   });
   test('a question is told its reach; a comment is not asked anything', () => {
     expect(oneLineSystem('You are X.', 7)).toContain(memoryRule(7));
-    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true })).not.toContain('short-term memory');
+    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false })).not.toContain('short-term memory');
   });
 });
 
@@ -65,50 +72,114 @@ describe('the character rule', () => {
     expect(CHARACTER_RULE).toMatch(/HOW.*never WHAT/);
     expect(CHARACTER_RULE).toMatch(/repeat/);
   });
-  test('comes right after the persona: questions and commentAfterEachTurn', () => {
-    expect(oneLineSystem('You are X.', 4).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
-    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true }).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
-    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: false }).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
+  test("states as fact only what the chat shows or what is generally true: a guess about the chat's own state is asked, or named as the check that settles it", () => {
+    expect(CHARACTER_RULE).toContain('State as fact only what the chat shows or what is generally true');
+    expect(CHARACTER_RULE).toContain("ask a guess about this chat's own state (a file, a process, what someone did) as a question, or name the check that settles it");
   });
-  test('a suggestNextPrompt alone is the user\'s own words, not the character\'s: no rule', () => {
-    expect(turnSystem('You are X.', { commentAfterEachTurn: false, suggestNextPrompt: true })).not.toContain(CHARACTER_RULE);
+  test('comes right after the persona: questions and the end-of-turn call, whatever it is asked for', () => {
+    expect(oneLineSystem('You are X.', 4).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
+    for (const wants of [{ commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false }, { commentAfterEachTurn: true, suggestNextPrompt: false, promptToMainChat: false }, { commentAfterEachTurn: false, suggestNextPrompt: true, promptToMainChat: false }]) {
+      expect(turnSystem('You are X.', wants).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
+    }
   });
 });
 
-describe('the end-of-turn call', () => {
-  test('the system: the persona, then commentAfterEachTurn in character and suggestNextPrompt in the user\'s own words, NONE only when finished', () => {
-    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true });
-    expect(s.startsWith('You are X.\n\n')).toBe(true);
-    expect(s).toContain('COMMENT_AFTER_EACH_TURN:');
-    expect(s).toContain('at most 20 words');
-    expect(s).toContain('SUGGEST_NEXT_PROMPT:');
-    expect(s).toContain('the prompt the user is most likely to send Claude next');
-    expect(s).toContain("in the user's own words");
-    expect(s).toContain('at most 15 words');
+describe('the end-of-turn call: the character and the suggestion combined', () => {
+  test('the system asks only for what is wanted: the comment alone, the second brain alone, or both', () => {
+    const commentOnly = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: false, promptToMainChat: false });
+    expect(commentOnly).toContain('COMMENT_AFTER_EACH_TURN: your own reaction to the turn, in character, one line, at most 20 words.');
+    for (const tag of ['DESIRE:', 'VERDICT:', 'WHY:', 'SUGGEST_NEXT_PROMPT:', 'second brain']) expect(commentOnly).not.toContain(tag);
+    const brainOnly = turnSystem('You are X.', { commentAfterEachTurn: false, suggestNextPrompt: true, promptToMainChat: false });
+    for (const tag of ['DESIRE:', 'VERDICT:', 'WHY:', 'SUGGEST_NEXT_PROMPT:', "the user's second brain"]) expect(brainOnly).toContain(tag);
+    expect(brainOnly).not.toContain('COMMENT_AFTER_EACH_TURN:');
+    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false })).toContain('Do not use tools.');
+  });
+  test('both: the judgement first, then the comment knowing it, then the suggestion that follows the verdict', () => {
+    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false });
+    const at = ['DESIRE:', 'VERDICT:', 'WHY:', 'COMMENT_AFTER_EACH_TURN:', 'SUGGEST_NEXT_PROMPT:'].map((t) => s.indexOf(t));
+    expect(at.every((n, i) => n >= 0 && (i === 0 || n > at[i - 1]!))).toBe(true);
+    expect(s).toContain('knowing your verdict, never repeating WHY');
+    expect(s).toContain('DESIRE: what the user most deeply wants');
+    expect(s).toContain('VERDICT: RIGHT, SHORTCUT or WRONG');
+    expect(s).toContain('"done" claimed without evidence');
+    expect(s).toContain('a destructive or irreversible step');
+    expect(s).toContain('For WRONG, scream it');
+    expect(s).toContain('SUGGEST_NEXT_PROMPT: the prompt the user should send Claude next');
+    expect(s).toContain('After RIGHT, say yes');
+    expect(s).toContain('after WRONG, stop Claude');
     expect(s).toContain('SUGGEST_NEXT_PROMPT: NONE');
-    expect(s).toContain('Do not use tools.');
+    expect(s).not.toContain('you named the user');
   });
-  test('the system asks only for what is wanted', () => {
-    const commentOnly = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: false });
-    expect(commentOnly).toContain('COMMENT_AFTER_EACH_TURN:');
-    expect(commentOnly).not.toContain('SUGGEST_NEXT_PROMPT:');
-    const suggestOnly = turnSystem('You are X.', { commentAfterEachTurn: false, suggestNextPrompt: true });
-    expect(suggestOnly).toContain('SUGGEST_NEXT_PROMPT:');
-    expect(suggestOnly).not.toContain('COMMENT_AFTER_EACH_TURN:');
+  test("the suggestion asks, instructs or decides: every fact in it already in the chat, never the user's report of what they did", () => {
+    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false });
+    expect(s).not.toContain("in the user's own words");
+    expect(s).toContain('It asks, instructs or decides, and every fact in it is already in the chat');
+    expect(s).toContain('the user may send it with one key, unread, so it never reports what the user did, ran, saw or saved');
+    expect(s).toContain("When the next step is the user's own");
+    expect(s).toContain('suggest what they would ask Claude about it');
+    expect(ASKED_PROMPT_RULE).not.toContain("in the user's own words");
+    expect(ASKED_PROMPT_RULE).toContain('it asks, instructs or decides, stating no fact the chat has not shown');
   });
-  test('parseTurnReply: the tagged lines, in any case, bullets tolerated', () => {
-    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: "Tests are green!"\nSUGGEST_NEXT_PROMPT: commit this')).toEqual({ commentAfterEachTurn: 'Tests are green!', suggestNextPrompt: 'commit this' });
-    expect(parseTurnReply('  - comment_after_each_turn: Nice.\n * suggest_next_prompt:  run   the tests ')).toEqual({ commentAfterEachTurn: 'Nice.', suggestNextPrompt: 'run the tests' });
-    expect(parseTurnReply('SUGGEST_NEXT_PROMPT: add a test\nCOMMENT_AFTER_EACH_TURN: Onward.')).toEqual({ commentAfterEachTurn: 'Onward.', suggestNextPrompt: 'add a test' });
+  test("a taken suggestion's context tells Claude its claims are the buddy's guess, to check", () => {
+    expect(TAKEN_SUGGESTION_CONTEXT).toContain("the buddy's suggestion");
+    expect(TAKEN_SUGGESTION_CONTEXT).toContain('sent by the user unedited');
+    expect(TAKEN_SUGGESTION_CONTEXT).toContain("the buddy's guess, not the user's report: check it before acting on it");
   });
-  test('parseTurnReply: SUGGEST_NEXT_PROMPT NONE, empty or past the cap is no suggestNextPrompt; an empty COMMENT_AFTER_EACH_TURN is no commentAfterEachTurn', () => {
-    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Done and dusted.\nSUGGEST_NEXT_PROMPT: NONE')).toEqual({ commentAfterEachTurn: 'Done and dusted.', suggestNextPrompt: null });
-    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN:\nSUGGEST_NEXT_PROMPT:')).toEqual({ commentAfterEachTurn: null, suggestNextPrompt: null });
-    expect(parseTurnReply(`SUGGEST_NEXT_PROMPT: ${'y'.repeat(SUGGEST_NEXT_PROMPT_MAX_CHARS + 1)}`)).toEqual({ commentAfterEachTurn: null, suggestNextPrompt: null });
+  test("the last turn's desire is carried, kept unless the chat shows it changed; never without the second brain", () => {
+    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false }, 'ship buddy 1.1 with a second brain');
+    expect(s).toContain("At the last turn's end you named the user's deepest desire: ship buddy 1.1 with a second brain");
+    expect(s).toContain("Keep it while the user's work still serves it; when the user turns to other work, name what that work is for.");
+    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: false, promptToMainChat: false }, 'ship it')).not.toContain('ship it');
   });
-  test('parseTurnReply: an untagged reply is the commentAfterEachTurn alone', () => {
-    expect(parseTurnReply('\n  Quack, that went well.\nmore')).toEqual({ commentAfterEachTurn: 'Quack, that went well.', suggestNextPrompt: null });
-    expect(parseTurnReply('')).toEqual({ commentAfterEachTurn: null, suggestNextPrompt: null });
+  test('parseTurnReply: every line, in any order and case, bullets tolerated', () => {
+    expect(parseTurnReply('DESIRE: a release nobody has to roll back\nVERDICT: SHORTCUT\nWHY: called it done without running the suite.\nCOMMENT_AFTER_EACH_TURN: "Tests are green?"\nSUGGEST_NEXT_PROMPT: run the full suite before we call it done')).toEqual({
+      commentAfterEachTurn: 'Tests are green?', desire: 'a release nobody has to roll back', verdict: 'SHORTCUT', why: 'called it done without running the suite.', suggestNextPrompt: 'run the full suite before we call it done', promptToMainChat: null, memory: null,
+    });
+    expect(parseTurnReply(' - why: DELETING MAIN?!\n * verdict: wrong.\nsuggest_next_prompt:  stop, restore  main\ndesire: keep main safe\n  - comment_after_each_turn: Nice.')).toEqual({
+      commentAfterEachTurn: 'Nice.', desire: 'keep main safe', verdict: 'WRONG', why: 'DELETING MAIN?!', suggestNextPrompt: 'stop, restore main', promptToMainChat: null, memory: null,
+    });
+  });
+  test('parseTurnReply: an unknown verdict, an empty line, NONE, or a line past its cap is none; an untagged reply is the comment alone', () => {
+    const none = { commentAfterEachTurn: null, desire: null, verdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, memory: null };
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN:\nVERDICT: MAYBE\nWHY:\nSUGGEST_NEXT_PROMPT: NONE')).toEqual(none);
+    expect(parseTurnReply(`DESIRE: ${'d'.repeat(DESIRE_MAX_CHARS + 1)}\nSUGGEST_NEXT_PROMPT: ${'y'.repeat(SUGGEST_NEXT_PROMPT_MAX_CHARS + 1)}`)).toEqual(none);
+    expect(parseTurnReply('\n  Quack, that went well.\nmore')).toEqual({ ...none, commentAfterEachTurn: 'Quack, that went well.' });
+    expect(parseTurnReply('')).toEqual(none);
+    expect(VERDICTS).toEqual(['RIGHT', 'SHORTCUT', 'WRONG']);
+  });
+  test('MEMORY: asked for last in every end-of-turn system, whatever else is wanted: the whole memory, rewritten, up to NOTES_MAX lines', () => {
+    for (const wants of [{ commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false }, { commentAfterEachTurn: true, suggestNextPrompt: false, promptToMainChat: false }, { commentAfterEachTurn: false, suggestNextPrompt: true, promptToMainChat: false }]) {
+      const s = turnSystem('You are X.', wants);
+      expect(s).toContain(MEMORY_LINE);
+      expect(s.indexOf('MEMORY:')).toBeGreaterThan(s.lastIndexOf('COMMENT_AFTER_EACH_TURN:'));
+      expect(s.indexOf('MEMORY:')).toBeGreaterThan(s.lastIndexOf('SUGGEST_NEXT_PROMPT:'));
+    }
+    expect(MEMORY_LINE).toContain('Write up to 8 MEMORY lines');
+    expect(MEMORY_LINE).toContain('each on a line of its own shaped MEMORY: kind: note, never a list under one MEMORY line');
+    for (const kind of ['rule:', 'open:', 'fact:', 'doubt:']) expect(MEMORY_LINE).toContain(kind);
+    expect(MEMORY_LINE).toContain("Copy a note word for word unless a turn in view changes it; a user's rule beats any doubt of yours.");
+    expect(MEMORY_LINE).toContain('MEMORY: NONE');
+  });
+  test('parseTurnReply: every MEMORY line is a note, cleaned; NONE alone forgets them; no MEMORY line keeps them (null)', () => {
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hi.\nMEMORY: Wants main safe.\n- memory: - Tests before tags.\nMEMORY: Wants main safe.').memory).toEqual(['Wants main safe.', 'Tests before tags.']);
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hi.\nMEMORY: NONE').memory).toEqual([]);
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hi.').memory).toBeNull();
+    expect(parseTurnReply(Array.from({ length: 8 }, (_, i) => `MEMORY: note ${i}.`).join('\n')).memory).toHaveLength(8);
+  });
+  test('the rules the audit asked for: nothing invented, no remade point, how not whether, no poll, no secret, a deletion alone', () => {
+    expect(CHARACTER_RULE).toContain('When the chat shows nothing missed, say so, or react to what did happen: never invent a miss.');
+    expect(CHARACTER_RULE).toContain('nor remake a point of your own (your earlier lines and notes are your views, not evidence) unless this turn brings new evidence for it');
+    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false }, 'ship it');
+    expect(s).toContain("Judge how Claude carried out the ask, never the ask itself: doing what the user ordered, or what your own suggestion they sent asked, the proper way, is RIGHT; a step Claude only proposes, awaiting the user's go, is not taken yet.");
+    expect(s).toContain('Never ask whether work Claude left running (a background command or agent, a push, a review) has finished: it reports back by itself');
+    expect(s).toContain('Safety first: never suggest searching for, printing, copying or checking a secret (a password, token or key)');
+    expect(s).toContain('a deletion is a prompt of its own, naming exactly what it deletes, never bundled with other work');
+    expect(memoryRule(4)).toContain("Asked about the main chat's past beyond it");
+  });
+  test('parseTurnReply: a list under a bare MEMORY line is the notes; a bare MEMORY line alone keeps them (a format slip never forgets)', () => {
+    expect(parseTurnReply('VERDICT: RIGHT\nMEMORY:\n- rule: Quit nothing first.\n- fact: Fix installed.\n\nWHY: ok').memory).toEqual(['rule: Quit nothing first.', 'fact: Fix installed.']);
+    expect(parseTurnReply('VERDICT: RIGHT\nMEMORY:\nWHY: ok').memory).toBeNull();
+    expect(parseTurnReply('VERDICT: RIGHT\nMEMORY: \nMEMORY: NONE').memory).toEqual([]);
   });
   test('one short call: 120 tokens, 30 s', () => {
     expect(TURN_MAX_TOKENS).toBe(2048);
@@ -126,7 +197,7 @@ describe('the end-of-turn call', () => {
     expect(suggestNextPromptText('none.')).toBeNull();
     expect(suggestNextPromptText('"None"')).toBeNull();
     expect(suggestNextPromptText('None of the tests ran, rerun them')).toBe('None of the tests ran, rerun them');
-    expect(SUGGEST_NEXT_PROMPT_MAX_CHARS).toBe(160);
+    expect(SUGGEST_NEXT_PROMPT_MAX_CHARS).toBe(200);
     expect(suggestNextPromptText('y'.repeat(SUGGEST_NEXT_PROMPT_MAX_CHARS))).toHaveLength(SUGGEST_NEXT_PROMPT_MAX_CHARS);
     expect(suggestNextPromptText('y'.repeat(SUGGEST_NEXT_PROMPT_MAX_CHARS + 1))).toBeNull();
   });
@@ -134,7 +205,7 @@ describe('the end-of-turn call', () => {
 import { createBrain, endTurn } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter } from '../plugins/buddy/src/character.ts';
 import {
-  NO_PROMPTS, RETRY_MIN_MS, endPromptTurn, endsConversation, isUserOrigin, requestTimeoutMs, retriesEmpty, skipReason, startPromptTurn, submitPrompt, turnMay, type TurnGate,
+  NO_PROMPTS, RETRY_MIN_MS, deliverPrompts, endPromptTurn, endsConversation, isUserOrigin, requestTimeoutMs, retriesEmpty, skipReason, startPromptTurn, submitPrompt, turnMay, type TurnGate,
 } from '../plugins/buddy/src/prompts.ts';
 import { raw } from './fixtures.ts';
 
@@ -212,6 +283,40 @@ describe('the prompt ledger', () => {
     l = startPromptTurn(l, 't3', 'again');
     expect(endPromptTurn(l, 't3').from).toBe('unknown');
   });
+  test('a user prompt typed over a running turn records that turn; one entered idle records none', () => {
+    const l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    expect(submitPrompt(l, 'P2', 'composer', 't1').entered).toEqual([{ text: 'P2', over: 't1' }]);
+    expect(submitPrompt(NO_PROMPTS, 'P1', 'composer').entered[0]).not.toHaveProperty('over');
+  });
+  test('a turn\'s next request delivers the prompts typed over it, in order, and only those; with no started entry it leaves them waiting', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    l = submitPrompt(l, 'A', 'composer', 't1');
+    l = submitPrompt(l, 'idle', 'composer');
+    l = submitPrompt(l, 'C', 'composer', 'tX');
+    l = submitPrompt(l, 'B', 'composer', 't1');
+    // tX has no started entry: nothing moves.
+    expect(deliverPrompts(l, 'tX')).toEqual(l);
+    let d = deliverPrompts(l, 't1');
+    expect(d.entered).toEqual([{ text: 'idle' }, { text: 'C', over: 'tX' }]);
+    d = deliverPrompts(submitPrompt(d, 'D', 'composer', 't1'), 't1');
+    const ended = endPromptTurn(d, 't1');
+    expect(ended).toMatchObject({ prompt: 'P1', added: ['A', 'B', 'D'] });
+    expect(ended.from).toBeUndefined();
+  });
+  test('a turn nothing was delivered into ends with no added prompts', () => {
+    const l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    expect(endPromptTurn(deliverPrompts(l, 't1'), 't1')).not.toHaveProperty('added');
+  });
+  test('a typed-over prompt never delivered still starts its own turn; a delivered one starts none', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    l = submitPrompt(l, 'P2', 'composer', 't1');
+    l = startPromptTurn(endPromptTurn(l, 't1').ledger, 't2', 'P2');
+    expect(filed(endPromptTurn(l, 't2'))).toEqual({ prompt: 'P2', from: undefined });
+    let d = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    d = deliverPrompts(submitPrompt(d, 'P2', 'composer', 't1'), 't1');
+    d = startPromptTurn(endPromptTurn(d, 't1').ledger, 't2', 'P2');
+    expect(endPromptTurn(d, 't2').from).toBe('unknown');
+  });
   test('/clear and a resume start a fresh conversation; an exit does not matter', () => {
     expect(endsConversation('clear')).toBe(true);
     expect(endsConversation('resume')).toBe(true);
@@ -221,13 +326,13 @@ describe('the prompt ledger', () => {
 });
 
 describe('the end-of-turn gate', () => {
-  const g: TurnGate = { answered: true, hidden: false, interactive: true, bandSeen: true, commentAfterEachTurn: true, suggestNextPrompt: true };
+  const g: TurnGate = { answered: true, hidden: false, interactive: true, bandSeen: true, commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false, mainChatPromptArmed: false };
   test('commentAfterEachTurn only once the band has drawn; suggestNextPrompt regardless', () => {
-    expect(turnMay(g)).toEqual({ commentAfterEachTurn: true, suggestNextPrompt: true });
-    expect(turnMay({ ...g, bandSeen: false })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: true });
-    expect(turnMay({ ...g, answered: false })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: false });
-    expect(turnMay({ ...g, interactive: false })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: false });
-    expect(turnMay({ ...g, hidden: true })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: false });
+    expect(turnMay(g)).toEqual({ commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false });
+    expect(turnMay({ ...g, bandSeen: false })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: true, promptToMainChat: false });
+    expect(turnMay({ ...g, answered: false })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: false });
+    expect(turnMay({ ...g, interactive: false })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: false });
+    expect(turnMay({ ...g, hidden: true })).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: false });
   });
   test('each skip names why', () => {
     expect(skipReason({ ...g, answered: false })).toBe('not an answered turn');
@@ -267,5 +372,78 @@ describe('an empty reply to a question', () => {
     expect(retriesEmpty({ isAnswered: true, text: 'Quack.' }, 89_000)).toBe(false);
     expect(retriesEmpty({ isAnswered: false, reason: 'aborted' }, 89_000)).toBe(false);
     expect(retriesEmpty({ isAnswered: false, reason: 'api-error' }, 89_000)).toBe(false);
+  });
+});
+
+import { BUDDY_PROMPT_CONTEXT, PROMPT_TO_MAIN_CHAT_MAX_CHARS, originOf } from '../plugins/buddy/src/prompts.ts';
+import { BUDDY_PROMPT } from '../plugins/buddy/src/chatTurnsToRead.ts';
+
+describe('promptToMainChat: a prompt the buddy sends Claude itself', () => {
+  const LINE =
+    "PROMPT_TO_MAIN_CHAT: a prompt you send Claude yourself, right now, before the user reads on. Send one only on evidence inside this turn that the user's own ask is unmet or unproven: a step marked failed, or failed test runs, that the answer passes over or contradicts (a step marked failed ended in an error, so a result the answer draws from it is unproven, unless the error was the point, such as a crash reproduced or a test watched failing); a conclusion the answer states (done, installed, verified, none left, all pass) that rests on less than it names, such as a check of some of the items or a change made in one of the places; an instruction in the ask (a stop, a condition, an order) Claude did not follow; a part of the ask the answer never addresses. Your own doubts are never a reason: a better method, a risk that might bite, a hypothesis to test, a tidy-up, a gap Claude named while leaving its conclusion open: those go in SUGGEST_NEXT_PROMPT. Plain words, not in character, at most 40 words: name the evidence, then the one fix or check it needs; it reaches Claude as yours, never as the user's. Write PROMPT_TO_MAIN_CHAT: NONE otherwise.";
+  /** The line with suggestNextPrompt off: no SUGGEST_NEXT_PROMPT to route to. */
+  const LINE_ALONE = LINE.replace('those go in SUGGEST_NEXT_PROMPT.', 'those never go here.');
+  const ADDENDUM = ' After a PROMPT_TO_MAIN_CHAT of yours, write SUGGEST_NEXT_PROMPT: NONE: Claude is about to act on it.';
+  test('off, no end-of-turn system prompt asks for or mentions PROMPT_TO_MAIN_CHAT', () => {
+    for (const c of [false, true]) for (const g of [false, true]) for (const d of [null, 'a release nobody rolls back']) {
+      expect(turnSystem('You are X.', { commentAfterEachTurn: c, suggestNextPrompt: g, promptToMainChat: false }, d)).not.toContain('PROMPT_TO_MAIN_CHAT');
+    }
+  });
+  test('on, its line is asked for verbatim, after the comment and before the suggestion', () => {
+    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: true });
+    expect(s).toContain(`\n${LINE}\n`);
+    const at = ['DESIRE:', 'VERDICT:', 'WHY:', 'COMMENT_AFTER_EACH_TURN:', 'PROMPT_TO_MAIN_CHAT: a prompt', 'SUGGEST_NEXT_PROMPT: the prompt', 'MEMORY:'].map((t) => s.indexOf(t));
+    expect(at.every((n, i) => n >= 0 && (i === 0 || n > at[i - 1]!))).toBe(true);
+  });
+  test('on with suggestNextPrompt off: the judgement and the second brain still come, no suggestion line, no addendum', () => {
+    const s = turnSystem('You are X.', { commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: true }, 'ship it');
+    for (const tag of ['DESIRE:', 'VERDICT:', 'WHY:', "the user's second brain", "deepest desire: ship it", LINE_ALONE]) expect(s).toContain(tag);
+    expect(s).not.toContain('SUGGEST_NEXT_PROMPT');
+    expect(s).not.toContain('COMMENT_AFTER_EACH_TURN');
+  });
+  test("the suggestion's addendum only when both are wanted", () => {
+    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: true })).toContain(`Write SUGGEST_NEXT_PROMPT: NONE when the work is finished, or waiting on such a report with nothing for the user to decide.${ADDENDUM}\n`);
+    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false })).not.toContain(ADDENDUM);
+  });
+  test('the reply line: its text, unquoted and one-spaced; NONE, an empty line, none at all or past its cap is null', () => {
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hm.\nPROMPT_TO_MAIN_CHAT: "run the   tests: you said they pass"\nSUGGEST_NEXT_PROMPT: NONE').promptToMainChat).toBe('run the tests: you said they pass');
+    expect(parseTurnReply(' - prompt_to_main_chat: check the diff').promptToMainChat).toBe('check the diff');
+    expect(parseTurnReply('PROMPT_TO_MAIN_CHAT: NONE').promptToMainChat).toBeNull();
+    expect(parseTurnReply('PROMPT_TO_MAIN_CHAT:\nCOMMENT_AFTER_EACH_TURN: Hm.').promptToMainChat).toBeNull();
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hm.').promptToMainChat).toBeNull();
+    expect(parseTurnReply('Quack.').promptToMainChat).toBeNull();
+    expect(PROMPT_TO_MAIN_CHAT_MAX_CHARS).toBe(400);
+    expect(parseTurnReply(`PROMPT_TO_MAIN_CHAT: ${'x'.repeat(400)}`).promptToMainChat).toBe('x'.repeat(400));
+    expect(parseTurnReply(`PROMPT_TO_MAIN_CHAT: ${'x'.repeat(401)}`).promptToMainChat).toBeNull();
+  });
+  test('the gate: only armed (a prompt of the user\'s since the last one sent), and only where a call is made', () => {
+    const g: TurnGate = { answered: true, hidden: false, interactive: true, bandSeen: true, commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: true, mainChatPromptArmed: true };
+    expect(turnMay(g)).toEqual({ commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: true });
+    expect(turnMay({ ...g, mainChatPromptArmed: false }).promptToMainChat).toBe(false);
+    expect(turnMay({ ...g, promptToMainChat: false }).promptToMainChat).toBe(false);
+    expect(turnMay({ ...g, answered: false }).promptToMainChat).toBe(false);
+    expect(turnMay({ ...g, hidden: true }).promptToMainChat).toBe(false);
+    expect(turnMay({ ...g, interactive: false }).promptToMainChat).toBe(false);
+    expect(skipReason({ ...g, mainChatPromptArmed: false })).toBe('promptToMainChat unarmed until the user prompts');
+    expect(skipReason({ ...g, promptToMainChat: false })).toBe('commentAfterEachTurn and suggestNextPrompt off');
+  });
+  test("this plugin's own prompt is BUDDY_PROMPT; another plugin's, or any other, goes by its kind", () => {
+    expect(originOf({ kind: 'plugin', name: 'buddy' }, 'buddy')).toBe(BUDDY_PROMPT);
+    expect(originOf({ kind: 'plugin', name: 'another' }, 'buddy')).toBe('plugin');
+    expect(originOf({ kind: 'composer' }, 'buddy')).toBe('composer');
+    expect(originOf(undefined, 'buddy')).toBe('unclassified');
+  });
+  test("the buddy's own prompt is known by its origin, or, where the engine leaves a plugin's origin out, as the text it just sent from no user", () => {
+    expect(isOwnPrompt({ kind: 'plugin', name: 'buddy' }, 'buddy', 'anything', undefined)).toBe(true);
+    expect(isOwnPrompt(undefined, 'buddy', 'Re-run  the tests\n', 'Re-run the tests')).toBe(true);
+    expect(isOwnPrompt({ kind: 'composer' }, 'buddy', 'Re-run the tests', 'Re-run the tests')).toBe(false);
+    expect(isOwnPrompt(undefined, 'buddy', 'Something else', 'Re-run the tests')).toBe(false);
+    expect(isOwnPrompt(undefined, 'buddy', 'Re-run the tests', undefined)).toBe(false);
+    expect(isOwnPrompt({ kind: 'plugin', name: 'another' }, 'buddy', 'x', undefined)).toBe(false);
+  });
+  test('what Claude reads beside it, verbatim', () => {
+    expect(BUDDY_PROMPT_CONTEXT).toBe(
+      "This prompt was sent by the buddy plugin, not by the user: a second model that watches this chat and judged your last turn. The user did not write it and may not have read it. Treat it as a reviewer's note: check what it claims, act on what holds up, and say plainly what does not.",
+    );
   });
 });

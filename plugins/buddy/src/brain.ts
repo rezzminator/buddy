@@ -6,27 +6,44 @@ import { type AmbiguousCharacterWidth } from './width.ts';
 import { lostThread, stillThinking, type TurnSummary } from './prompts.ts';
 import type { Action } from './did.ts';
 import { REACTIONS, classifyToolCall, type Outcome, type ToolCall } from './reactions.ts';
-import { buildScene, type Scene } from './scene.ts';
+import { buildScene, type Addressee, type Scene, type Tone } from './scene.ts';
 
 // The buddy's state and every transition, with no I/O: the adapter feeds it
 // events and the clock, and draws what `sceneOf` returns. Time is the clock's,
 // advanced by one period per tick, so a test drives it exactly.
 
-export const BUBBLE_MS = 6000;
+/** A canned line's time in the bubble. */
+export const BUBBLE_MS = 10000;
+/** A model bubble's time in the bubble, when no newer one waits. */
 export const ANSWER_MS = 15000;
 export const ERROR_MS = 10000;
+/** How long a model bubble shows before a newer one waiting may replace it. */
+export const MODEL_MIN_MS = 10000;
+/** Model bubbles waiting for the bubble at most: past it the oldest waiting is dropped. */
+export const MAX_QUEUED = 2;
 /** A /buddy question's deadline, on `model`: a safety net so the bubble always ends. */
 export const COMPLETE_DEADLINE_MS = 90_000;
 export const SLEEP_IDLE_MS = 60000;
-export const REST_LINE_CHANCE = 0.25;
-export const WORKING_LINE_CHANCE = 0.25;
+export const REST_LINE_CHANCE = 0.08;
+export const WORKING_LINE_CHANCE = 0.08;
+/** A tool reaction's words; its pose and confetti come every time. */
+export const TOOL_LINE_CHANCE = 1 / 3;
+export const WAKE_LINE_CHANCE = 1 / 3;
 
-/** `held`: an answer, a failure or a refusal; no canned line replaces it before `until`. */
-/** Lines nobody asked for: they never cover a held answer. */
+/** Lines nobody asked for: the thinking line or a refusal keeps them out, dropped, never said later. */
 const AMBIENT: ReadonlySet<LineEvent> = new Set(['toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake']);
 
-/** `turn`: the commentAfterEachTurn (or why there is none), held against lines nobody asked for, never against the next turn's commentAfterEachTurn. */
-export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean; turn?: boolean };
+/**
+ * What the bubble says. `held`: a model bubble, the thinking line or a refusal.
+ * `model`: words a model call wrote (or its failure), shown since `shownAt`: no
+ * canned line replaces it before `until`, a newer model bubble not before
+ * MODEL_MIN_MS. `turn`: said at a turn's end, waiting behind a pending
+ * question's thinking line rather than replacing it. `tone`: how loud, for the
+ * frame. `to`: whom its words address, the user when absent.
+ */
+export type Talk = { text: string; pose: Pose | null; until: number; held?: boolean; model?: boolean; shownAt?: number; turn?: boolean; tone?: Tone; to?: Addressee };
+/** A model bubble waiting for the bubble: its time starts when shown. */
+export type Queued = Omit<Talk, 'until' | 'shownAt'>;
 
 export type Brain = {
   character: Character;
@@ -48,8 +65,10 @@ export type Brain = {
   lastCommentAfterEachTurnAt: number | null;
   /** The pose last drawn: a new pose starts at its first frame. */
   lastPose: Pose | null;
-  /** The latest line nobody asked for that came while an answer held the bubble: said once it ends. */
-  after: { event: LineEvent; pose: Pose | null; ms: number } | null;
+  /** Model bubbles waiting, oldest first, at most MAX_QUEUED: each shown once the current one has had MODEL_MIN_MS. */
+  queued: Queued[];
+  /** A tool reaction's pose whose words were not said: drawn until `until`. */
+  posed: { pose: Pose; until: number } | null;
   /** Canned lines said since the adapter last took them, with who said them: its chatTurnsToRead records the shown ones. The thinking filler is never among them. */
   said: { id: string; text: string }[];
   /** East Asian ambiguous-width characters take two columns (the ambiguousCharacterWidth option). */
@@ -79,7 +98,8 @@ export function createBrain(character: Character, walkOverPromptBar: boolean, am
     lastPose: null,
     said: [],
     ambiguousCharacterWidth,
-    after: null,
+    queued: [],
+    posed: null,
     pending: null,
   };
 }
@@ -98,20 +118,21 @@ export function speak(b: Brain, text: string, pose: Pose | null, ms: number): vo
 }
 
 export function sayLine(b: Brain, event: LineEvent, pose: Pose | null, ms: number, rand: () => number): void {
-  // An answer the user asked for stays up; lines nobody asked for wait their turn.
-  if (AMBIENT.has(event) && b.talk?.held && b.now < b.talk.until) {
-    b.after = { event, pose, ms };
-    return;
-  }
+  // A model bubble stays its whole time: a canned line of any event is dropped, never said later.
+  if (b.talk?.model && b.now < b.talk.until) return;
+  // The thinking line or a refusal keeps out lines nobody asked for, dropped the same.
+  if (AMBIENT.has(event) && holdsAnswer(b)) return;
   const line = pickLine(poolFor(b.character, event), b.lastLines[event], rand);
   b.lastLines[event] = line;
   b.said.push({ id: b.character.id, text: line });
   speak(b, line, pose, ms);
 }
 
-/** Switches character; an error shows for ERROR_MS, else the new one greets. */
+/** Switches character; an error shows for ERROR_MS, else the new one greets. The old one's bubble and those waiting go. */
 export function setCharacter(b: Brain, c: Character, error: string | undefined, rand: () => number): void {
   b.character = c;
+  b.talk = null;
+  b.queued = [];
   b.lastLines = {};
   b.motion = { ...b.motion, x: Math.min(b.motion.x, maxX(b.cols, c.width)) };
   if (error) speak(b, error, null, ERROR_MS);
@@ -135,7 +156,7 @@ export function wake(b: Brain, rand: () => number, opts: { silent?: boolean } = 
   b.lastActivity = b.now;
   if (!b.sleeping) return false;
   b.sleeping = false;
-  if (!opts.silent) sayLine(b, 'wake', null, BUBBLE_MS, rand);
+  if (!opts.silent && rand() < WAKE_LINE_CHANCE) sayLine(b, 'wake', null, BUBBLE_MS, rand);
   return true;
 }
 
@@ -145,17 +166,17 @@ export function tick(b: Brain, hour: number, rand: () => number): void {
   if (b.talk && b.now >= b.talk.until) {
     // A pending question's thinking line comes back once whatever covered it ends, while its asker is drawn.
     b.talk = b.pending && isAsker(b, b.pending.askerId) ? b.pending.talk : null;
-    const next = b.after;
-    b.after = null;
-    if (next) sayLine(b, next.event, next.pose, next.ms, rand);
   }
+  const next = b.queued[0];
+  if (next && mayShow(b, next)) show(b, b.queued.shift()!);
+  if (b.posed && b.now >= b.posed.until) b.posed = null;
   if (b.confetti && b.now - b.confetti.start >= CONFETTI_MS) b.confetti = null;
   if (b.working) b.lastActivity = b.now;
   if (!b.sleeping && !b.talk && !b.working && isSleepHour(hour) && b.now - b.lastActivity >= SLEEP_IDLE_MS) b.sleeping = true;
   const m = b.character.motion;
   const r = tickMotion(
     b.motion,
-    { now: b.now, cols: b.cols, width: b.character.width, walkOverPromptBar: walks(b), still: b.talk !== null || b.working || b.sleeping, restChance: m.restChance, restTicks: m.restTicks },
+    { now: b.now, cols: b.cols, width: b.character.width, walkOverPromptBar: walks(b), still: b.talk !== null || b.posed !== null || b.working || b.sleeping, restChance: m.restChance, restTicks: m.restTicks },
     rand,
   );
   b.motion = r.state;
@@ -175,6 +196,7 @@ export function observeBand(b: Brain, band: { cols: number; maxRows: number; isW
 
 export function currentPose(b: Brain): Pose {
   if (b.talk?.pose) return b.talk.pose;
+  if (b.posed) return b.posed.pose;
   if (b.sleeping) return 'sleep';
   if (b.working) return 'working';
   if (b.talk) return 'idle';
@@ -183,17 +205,21 @@ export function currentPose(b: Brain): Pose {
   return 'idle';
 }
 
-/** A finished tool call: counted for the turn, its step (`action`, actionOf) kept, and reacted to per REACTIONS. */
+/** How much of the turn's last shell command is kept: its start and end are what the prompt shows. */
+export const LAST_BASH_MAX = 2000;
+
+/** A finished tool call: counted for the turn, its step (`action`, actionOf) kept, and reacted to per REACTIONS: its pose and confetti every time, its words at TOOL_LINE_CHANCE. */
 export function react(b: Brain, call: ToolCall & { command: string; action?: Action | null }, rand: () => number): Outcome | null {
   const outcome = classifyToolCall(call);
   wake(b, rand, { silent: outcome !== null });
   b.turn.tools.push(call.tool);
   if (call.isError || call.denied) b.turn.failures++;
-  if (call.tool === 'Bash' && call.command) b.turn.lastBash = call.command.slice(0, 120);
+  if (call.tool === 'Bash' && call.command) b.turn.lastBash = call.command.slice(0, LAST_BASH_MAX);
   if (call.action) b.turn.actions.push(call.action);
   if (!outcome) return null;
   const r = REACTIONS[outcome];
-  sayLine(b, r.line, r.pose, BUBBLE_MS, rand);
+  b.posed = { pose: r.pose, until: b.now + BUBBLE_MS };
+  if (rand() < TOOL_LINE_CHANCE) sayLine(b, r.line, r.pose, BUBBLE_MS, rand);
   if (r.confetti) b.confetti = { seed: Math.floor(rand() * 2 ** 31), start: b.now };
   return outcome;
 }
@@ -242,29 +268,57 @@ function isAsker(b: Brain, askerId: string | undefined): boolean {
 }
 
 /**
- * The answer in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now.
- * `turn`: the commentAfterEachTurn, which the next turn's commentAfterEachTurn may replace (holdsAnswer ignores it).
+ * Whether model bubble `q` may take the bubble now: it is free, its talk ended,
+ * a model bubble there has had MODEL_MIN_MS, or a canned line holds it. The
+ * thinking line or a refusal gives way only to a question's own answer (not
+ * `turn`).
  */
-export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string, turn = false): boolean {
-  if (!isAsker(b, askerId)) return false;
-  b.talk = { text, pose, until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}) };
-  return true;
+function mayShow(b: Brain, q: Queued): boolean {
+  const t = b.talk;
+  if (!t || b.now >= t.until) return true;
+  if (t.model) return b.now - (t.shownAt ?? b.now) >= MODEL_MIN_MS;
+  return !t.held || !q.turn;
 }
 
-/** The failure in the bubble; false, and nothing said, when `askerId` was asked and another character is drawn now. `turn` as in `answer`. */
-export function failAnswer(b: Brain, reason: string, askerId?: string, turn = false): boolean {
-  if (!isAsker(b, askerId)) return false;
-  b.talk = { text: lostThread(b.character.name, reason), pose: 'oops', until: b.now + ANSWER_MS, held: true, ...(turn ? { turn } : {}) };
-  return true;
+function show(b: Brain, q: Queued): void {
+  b.talk = { ...q, until: b.now + ANSWER_MS, shownAt: b.now };
+}
+
+/** A model bubble shown now when it may be, else waiting its turn behind the ones before it, the oldest waiting dropped past MAX_QUEUED. */
+function offer(b: Brain, q: Queued): void {
+  if (b.queued.length === 0 && mayShow(b, q)) {
+    show(b, q);
+    return;
+  }
+  b.queued.push(q);
+  if (b.queued.length > MAX_QUEUED) b.queued.shift();
+  // A question's answer frees the thinking line for the one waiting first: they keep their order.
+  if (mayShow(b, q) || mayShow(b, b.queued[0]!)) show(b, b.queued.shift()!);
 }
 
 /**
- * A /buddy answer, its failure, a refusal or the thinking line holds the
- * bubble: a commentAfterEachTurn must not replace it yet. The commentAfterEachTurn
- * itself holds only against lines nobody asked for (`sayLine`).
+ * The answer in the bubble, at once or once the one before it had its time
+ * (offer); false, and nothing said, when `askerId` was asked and another
+ * character is drawn now. `turn`: said at a turn's end, waiting behind a
+ * pending question's thinking line. `tone`: how loud, absent for a plain
+ * bubble. `to`: whom its words address, the user when absent.
  */
+export function answer(b: Brain, text: string, pose: Pose | null = null, askerId?: string, turn = false, tone?: Tone, to?: Addressee): boolean {
+  if (!isAsker(b, askerId)) return false;
+  offer(b, { text, pose, held: true, model: true, ...(turn ? { turn } : {}), ...(tone ? { tone } : {}), ...(to ? { to } : {}) });
+  return true;
+}
+
+/** The failure in the bubble, as `answer` says it; false, and nothing said, when `askerId` was asked and another character is drawn now. `turn` as in `answer`. */
+export function failAnswer(b: Brain, reason: string, askerId?: string, turn = false): boolean {
+  if (!isAsker(b, askerId)) return false;
+  offer(b, { text: lostThread(b.character.name, reason), pose: 'oops', held: true, model: true, ...(turn ? { turn } : {}) });
+  return true;
+}
+
+/** A model bubble, a refusal or the thinking line holds the bubble: lines nobody asked for are dropped (`sayLine`). */
 export function holdsAnswer(b: Brain): boolean {
-  return b.talk?.held === true && b.talk.turn !== true && b.now < b.talk.until;
+  return b.talk?.held === true && b.now < b.talk.until;
 }
 
 /** A /buddy question refused because the last one is still waiting. */
@@ -318,6 +372,8 @@ export function sceneOf(b: Brain): Scene | null {
     cols: b.cols,
     maxRows: b.maxRows,
     bubble: b.talk?.text ?? null,
+    ...(b.talk?.tone ? { bubbleTone: b.talk.tone } : {}),
+    ...(b.talk?.to ? { bubbleTo: b.talk.to } : {}),
     confetti: b.confetti ? { seed: b.confetti.seed, tick: Math.floor((b.now - b.confetti.start) / CONFETTI_TICK_MS) } : null,
     sleeping: b.sleeping,
     zTick: b.motion.stillFrame,

@@ -12,7 +12,7 @@ env:
   # The Claude Code the README says buddy is tested on; function hooks are early
   # access, so CI runs that engine and a bump is deliberate.
   # scripts/release-check.sh fails when this and the README's "tested on" differ.
-  CLAUDE_CODE_VERSION: "2.1.283"
+  CLAUDE_CODE_VERSION: "2.1.284"
 
 jobs:
   check:
