@@ -41,6 +41,21 @@ describe('the timeline', () => {
     b = addTurn(b, 't2', turn('two'), 2);
     expect(b.map((x) => x.turnId)).toEqual(['t1', 't2']);
   });
+  test('a turn interrupted before any answer, then sent again as it was, is remembered once: the resend takes its place, keeping its steps and exchanges', () => {
+    let b = addTurn([], 't0', turn('zero'), 4);
+    b = addTurn(b, 't1', { prompt: 'fix the build', answer: '', did: ['Read the log'], interrupted: true }, 4);
+    b = addExchange(b, 'cat', qa('what broke?', 'the linker'), 't1');
+    b = addTurn(b, 't2', { prompt: 'fix the build', answer: 'Fixed.', did: ['Edit ld.conf'] }, 4);
+    expect(b.map((x) => x.turnId)).toEqual(['t0', 't2']);
+    expect(b[1]!.turn).toEqual({ prompt: 'fix the build', answer: 'Fixed.', did: ['Read the log', 'Edit ld.conf'] });
+    expect(b[1]!.characters.cat).toEqual([qa('what broke?', 'the linker')]);
+  });
+  test('an interrupted turn stays its own when it answered something, when the next prompt differs, or when it came from elsewhere', () => {
+    const cut = (answer: string) => addTurn([], 't1', { prompt: 'fix the build', answer, interrupted: true }, 4);
+    expect(addTurn(cut('Half done.'), 't2', turn('fix the build'), 4).map((x) => x.turnId)).toEqual(['t1', 't2']);
+    expect(addTurn(cut(''), 't2', turn('fix the tests'), 4).map((x) => x.turnId)).toEqual(['t1', 't2']);
+    expect(addTurn(cut(''), 't2', { prompt: 'fix the build', answer: 'Done.', from: 'task-notification' }, 4).map((x) => x.turnId)).toEqual(['t1', 't2']);
+  });
   test('an exchange is filed under the turn it came after; one whose turn is gone is dropped', () => {
     let b = addTurn([], 't1', turn('one'), 4);
     b = addTurn(b, 't2', turn('two'), 4);

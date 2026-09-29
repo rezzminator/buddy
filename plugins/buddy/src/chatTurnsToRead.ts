@@ -203,10 +203,15 @@ function cappedTurn(t: Turn): Turn {
   return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }), ...(t.interrupted === true ? { interrupted: true } : {}), ...(added.length > 0 ? { added } : {}) };
 }
 
-/** The timeline with the answered turn `turnId` added last, at `at`, kept to its last `n` blocks: a turnless first block goes once `n` turns follow it. */
+/** The timeline with the answered turn `turnId` added last, at `at`, kept to its last `n` blocks: a turnless first block goes once `n` turns follow it. A turn sent again as it was after one interrupted before any answer takes that one's place, its steps first and its exchanges kept, so one ask holds one of the `n`. */
 export function addTurn(blocks: readonly Block[], turnId: string, turn: Turn, n: number, at?: number): Block[] {
-  const full = cleanPrompt(turn.prompt).length + cleanAnswer(turn.answer).length;
-  return [...blocks, { turnId, turn: cappedTurn(turn), ...(at === undefined ? {} : { at }), full, characters: {} }].slice(-Math.max(1, n));
+  const last = blocks.at(-1);
+  const resent = last?.turn?.interrupted === true && cleanAnswer(last.turn.answer) === '' && last.turn.from === turn.from && cleanPrompt(last.turn.prompt) === cleanPrompt(turn.prompt);
+  const kept = resent ? blocks.slice(0, -1) : blocks;
+  const did = resent ? [...(last!.turn!.did ?? []), ...(turn.did ?? [])] : turn.did;
+  const t: Turn = did === undefined ? turn : { ...turn, did };
+  const full = cleanPrompt(t.prompt).length + cleanAnswer(t.answer).length;
+  return [...kept, { turnId, turn: cappedTurn(t), ...(at === undefined ? {} : { at }), full, characters: resent ? last!.characters : {} }].slice(-Math.max(1, n));
 }
 
 /** The timeline with the main chat's compaction `id` added last as a turn of its own, its summary the answer, kept to `n` blocks like any turn. */
