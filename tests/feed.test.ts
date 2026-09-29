@@ -41,6 +41,15 @@ describe('the feed', () => {
     expect(f.find((e) => e.kind === 'suggest')!.taken).toBe(true);
     expect(f.filter((e) => e.kind === 'you').every((e) => e.read === true)).toBe(true);
   });
+  test('drawn back from the memory, a turn interrupted or ended by an error or a refusal stays marked unread, with how it ended', () => {
+    const f = feedOfMemory([
+      { turnId: 't1', turn: { prompt: 'a', answer: '', interrupted: true }, characters: {} },
+      { turnId: 't2', turn: { prompt: 'b', answer: '', ended: 'error' }, characters: {} },
+      { turnId: 't3', turn: { prompt: 'c', answer: '', ended: 'refusal' }, characters: {} },
+      { turnId: 't4', turn: { prompt: 'd', answer: 'Done.' }, characters: {} },
+    ], 'cat', {}, 1);
+    expect(f.map((e) => [e.text, e.read, e.ended])).toEqual([['a', false, 'interrupted'], ['b', false, 'error'], ['c', false, 'refusal'], ['d', true, undefined]]);
+  });
   test('a prompt answers every open suggestion: taken when it is that suggestion, spacing and case aside; one answered stays', () => {
     let f = pushEntry([], { at, kind: 'suggest', text: 'Run  the tests' });
     f = answerSuggestions(f, ' run the tests');

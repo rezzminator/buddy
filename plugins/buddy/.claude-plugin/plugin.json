@@ -69,7 +69,7 @@
     "chatTurnsToRead": {
       "type": "number",
       "title": "How many recent chat turns the buddy remembers (1 to 10)",
-      "description": "The buddy's memory: your chat's latest answered turns (your prompt and Claude's answer), each with what the buddy showed after it (its commentAfterEachTurn and suggestNextPrompt) and your /buddy questions with its answers. Every buddy call reads it; the buddy knows it remembers only this far and says so when asked about anything older. Kept per session and per character. More turns, more tokens per call.",
+      "description": "The buddy's memory: your chat's latest turns (your prompt and Claude's answer), each with what the buddy showed after it (its commentAfterEachTurn and suggestNextPrompt) and your /buddy questions with its answers. Every buddy call reads it; the buddy knows it remembers only this far and says so when asked about anything older. Kept per session and per character. More turns, more tokens per call.",
       "default": 4
     },
     "logLevel": {

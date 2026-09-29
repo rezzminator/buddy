@@ -219,10 +219,13 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
  * not place it, or `unknown` when no submission of it was seen. `stats`: its
  * numbers (src/stats.ts), counted as it ran; absent for a compaction, or a
  * turn remembered before they were kept. `interrupted`: the user interrupted
- * the turn, its answer what Claude said before that. `added`: the prompts the
+ * the turn, its answer what Claude said before that. `ended`: an API error or
+ * a refusal ended it, its answer what Claude said before that. `added`: the prompts the
  * user typed while it ran that Claude Code delivered into it, oldest first.
  */
-export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats; interrupted?: true; added?: string[] };
+/** How a turn that was not answered or interrupted ended (Claude Code's `turn.complete` reasons). */
+export type TurnCut = 'error' | 'refusal';
+export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats; interrupted?: true; ended?: TurnCut; added?: string[] };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];

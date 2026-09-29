@@ -14,7 +14,7 @@ import {
 } from '../src/chatTurnsToRead.ts';
 import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, denialReason, didOf, failureReason, type Action as Step, type Failure } from '../src/did.ts';
-import { answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
+import { answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
 import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
@@ -1208,7 +1208,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     wake(st.b, Math.random);
     // A turn ended, however: an earlier turn's call still running is stale, its commentAfterEachTurn and suggestNextPrompt never shown.
     const gen = ++st.turnGen;
-    // An answered turn is filed into the chatTurnsToRead, and an interrupted one as interrupted (what Claude said before it its answer; it still makes no call), a prompt not the user's under its origin; a headless session (nobody at the prompt) files none, never pushing an interactive session's memory out of the store.
+    // Every turn is filed into the chatTurnsToRead with its steps: an answered one as it is, one interrupted, or ended by an API error or a refusal, marked so (what Claude said before it its answer; it makes no call), a prompt not the user's under its origin; a headless session (nobody at the prompt) files none, never pushing an interactive session's memory out of the store.
     const answered = e.reason === 'answer' && !e.isAborted;
     // A turn read back after a hot reload takes its steps from the transcript: the buddy heard only the calls after the reload.
     const did = didOf(ended.lostSteps?.length ? ended.lostSteps : st.b.turn.actions);
@@ -1217,9 +1217,11 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     const added = ended.added ? { added: ended.added } : {};
     // Its numbers, counted as it ran, once the session's usage is read: filed with the turn, and on its row in the drawer.
     const stats = ended.tally ? turnStats(st, $, ended.tally, e) : Promise.resolve(undefined);
-    if ((answered || e.isAborted) && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from, ...added, ...(answered ? {} : { interrupted: true as const }) }, stats);
+    const how: TurnEnding | undefined = answered ? undefined : e.isAborted || e.reason === 'aborted' ? 'interrupted' : e.reason === 'error' || e.reason === 'refusal' ? e.reason : undefined;
+    const cut = how === 'interrupted' ? { interrupted: true as const } : how ? { ended: how } : {};
+    if (st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from, ...added, ...cut }, stats);
     // The drawer says whether the buddy read the turn: one interrupted is remembered, but never read by a call.
-    changeFeed(st, $, 'the turn read', (f) => markRead(f, e.turnId, answered && st.interactive));
+    changeFeed(st, $, 'the turn read', (f) => markRead(f, e.turnId, answered && st.interactive, how));
     stats.then((s) => {
       if (s) changeFeed(st, $, 'the turn numbers', (f) => markNumbers(f, e.turnId, statsBrief(s)));
     }).catch((error) => log($, "showing the turn's numbers", error));

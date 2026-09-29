@@ -324,6 +324,31 @@ describe('a task notification keeps its report', () => {
   });
 });
 
+describe('a turn an error or a refusal ended', () => {
+  test('its answer is said to be what Claude answered before the error or the refusal ended it, its steps kept', () => {
+    const errored = render(addTurn([], 't1', { prompt: 'add a bulk tier', answer: '', did: ['Edit inventory.py'], ended: 'error' }, 4), 'fixy', 4);
+    expect(errored).toContain('Edit inventory.py');
+    expect(errored).toContain('Claude answered, before an error ended the turn:\n(no text)');
+    const refused = render(addTurn([], 't1', { prompt: 'go', answer: 'I can', ended: 'refusal' }, 4), 'fixy', 4);
+    expect(refused).toContain('Claude answered, before the model refused and ended the turn:\nI can');
+    expect(refused).not.toContain('Claude answered:');
+  });
+  test('sent again as it was after it ended with no answer, it is remembered once, its steps first', () => {
+    let b = addTurn([], 't1', { prompt: 'add a bulk tier', answer: '', did: ['Edit inventory.py'], ended: 'error' }, 4);
+    b = addTurn(b, 't2', { prompt: 'add a bulk tier', answer: 'Done.', did: ['Run the tests'] }, 4);
+    expect(b.map((x) => x.turnId)).toEqual(['t2']);
+    expect(b[0]!.turn).toEqual({ prompt: 'add a bulk tier', answer: 'Done.', did: ['Edit inventory.py', 'Run the tests'] });
+  });
+  test('kept through the store; any other value is malformed', () => {
+    const blocks = addTurn([], 't1', { prompt: 'go', answer: '', ended: 'refusal' }, 4);
+    const back = chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks })));
+    expect(back.error).toBeUndefined();
+    expect(back.blocks[0]!.turn).toMatchObject({ prompt: 'go', ended: 'refusal' });
+    const bad = chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a', ended: 'crash' }, characters: {} }] });
+    expect(bad.error).toMatch(/1 malformed entry/);
+  });
+});
+
 describe('an interrupted turn', () => {
   test('its answer is said to be what Claude answered before the user interrupted, empty or not', () => {
     const blocks = addTurn([], 't1', { prompt: 'refactor it', answer: 'Starting on the', interrupted: true }, 4);

@@ -1443,6 +1443,22 @@ describe('suggestNextPrompt', () => {
     const blocks = (memory(w) as any).blocks;
     expect(blocks.at(-1)).toMatchObject({ turnId: 't1', turn: { prompt: 'refactor the store', answer: 'Starting on the', interrupted: true } });
   });
+  test('a turn an API error or a refusal ended is remembered with its steps and how it ended, and makes no call', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok' }) as never);
+    await $.session.start(START);
+    await prompt($, 'add a bulk tier', 't1');
+    await $.tool.call({ tool: 'Bash', command: 'npm test', description: 'Run the tests' } as never);
+    await $.turn.complete({ reason: 'error', answer: '', turnId: 't1' } as never);
+    await prompt($, 'why not?', 't2');
+    await $.turn.complete({ reason: 'refusal', refusal: { category: null, explanation: null }, answer: '', turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.completes).toEqual([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blocks = (memory(w) as any).blocks;
+    expect(blocks.at(-2)).toMatchObject({ turnId: 't1', turn: { prompt: 'add a bulk tier', did: ['Run the tests'], ended: 'error' } });
+    expect(blocks.at(-1)).toMatchObject({ turnId: 't2', turn: { prompt: 'why not?', ended: 'refusal' } });
+  });
   test('an interrupted turn in a headless session files nothing', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start({ ...START, isInteractive: false });
@@ -2378,6 +2394,22 @@ describe('memory: whole messages, compactions, retries, and the drawer spanning 
     expect(records(w).filter((r) => r.event === 'chatTurnsToRead.retry')).toMatchObject([{ outcome: 'skipped', reason: 'the next turn started' }]);
   });
 
+  test('the drawer names how a turn it never read ended: an API error or a refusal, not an interruption', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Noted.\nSUGGEST_NEXT_PROMPT: NONE' } });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 140, maxRows: 40 });
+    await $.turn.start({ text: 'task one', turnId: 't1' } as never);
+    await $.turn.complete({ reason: 'error', answer: '', isAborted: false, turnId: 't1' } as never);
+    await $.turn.start({ text: 'task two', turnId: 't2' } as never);
+    await $.turn.complete({ reason: 'refusal', refusal: { category: null, explanation: null }, answer: '', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    await $.command.run(run(''));
+    await w.clock.settle();
+    const drawn = JSON.stringify(await ui.drawn());
+    expect(drawn).toContain('ended by an error, Fixy never read it');
+    expect(drawn).toContain('refused, Fixy never read it');
+    expect(drawn).not.toContain('interrupted, Fixy');
+  });
   test('the drawer spans exactly what the buddy remembers: the last 4 turns it read; an interrupted one is marked', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Noted.\nSUGGEST_NEXT_PROMPT: NONE' } });
     await $.session.start(START);

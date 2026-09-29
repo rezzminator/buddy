@@ -1,6 +1,9 @@
-import { clockOf, seconds, short, statsOf, wrapText, type FeedEntry } from '../src/feed.ts';
+import { clockOf, seconds, short, statsOf, wrapText, type FeedEntry, type TurnEnding } from '../src/feed.ts';
 import { findItem, listWidth, previewOf, rowLabel, type Menu } from '../src/menu.ts';
 import type { Soul } from '../src/original.ts';
+
+/** What a turn row says of a turn the buddy never read, by how it ended; `unanswered` when that was not kept. */
+const UNREAD: Record<TurnEnding | 'unanswered', string> = { interrupted: 'interrupted', error: 'ended by an error', refusal: 'refused', unanswered: 'unanswered' };
 
 // The drawer /buddy opens: the band above the prompt opened full width into
 // two tabs, talk (the buddy and its whole thread with you, src/feed.ts) and
@@ -167,7 +170,7 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
     if (e.kind === 'compact') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text) };
     if (e.kind === 'you') {
       // The turn's numbers in brief once it ended, and whether the buddy never read it.
-      const notes = [e.numbers ?? '', e.read === false ? `interrupted, ${v.name} never read it` : ''].filter(Boolean);
+      const notes = [e.numbers ?? '', e.read === false ? `${UNREAD[e.ended ?? 'unanswered']}, ${v.name} never read it` : ''].filter(Boolean);
       return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, notes.length > 0 ? `  · ${notes.join(' · ')}` : '') };
     }
     const who = speaker(e, v);
