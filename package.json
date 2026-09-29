@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back \u2014 or bring back your /buddy",
   "type": "module",

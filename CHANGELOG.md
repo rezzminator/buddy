@@ -4,12 +4,13 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-29
+
 ### Added
 - The buddy's second brain behind `suggestNextPrompt`: the end-of-turn call's prompt now combines the character's with the suggestion's, still one call. It names what you most deeply want from the chat (carried to the next turn, forgotten at `/clear`), judges Claude's last move against it (`RIGHT`, `SHORTCUT` or `WRONG`), writes the turn's comment knowing that verdict, and writes your next prompt to match: after `RIGHT` a go-ahead, after `SHORTCUT` a request for the proper way, after `WRONG` a stop naming what to do instead. A `SHORTCUT` is warned of in yellow in the bubble and a `WRONG` screamed in red, both outranking that turn's comment; the drawer shows each verdict with what it judged against (`wants: …`), and the buddy remembers its warning with the turn. Each verdict logs `verdict.outcome`, carrying the call's usage when no comment was written.
 - The buddy's own notes: the same end-of-turn reply rewrites the buddy's memory of the chat, at most 8 one-sentence notes it keeps, edits and drops itself, each of a kind (`rule:` your standing orders, `open:` what is unfinished, `fact:` what the chat showed, `doubt:` its own unchecked suspicion) (`MEMORY:` lines; a reply without them keeps the notes, `MEMORY: NONE` forgets them). They are kept per chat and per character in the chat's `memory.json`, lead what every later question and end-of-turn call reads, show in the drawer's thread when they change, and log `notes.outcome`.
 - A suggestion you send unedited carries, for Claude alone, a note that it is the buddy's suggestion: whatever it says you did or saw is the buddy's guess, to check before acting on it. The buddy remembers that turn as its own words you chose, and logs `suggestNextPrompt.taken`.
 - The numbers of every remembered turn, counted in code as it runs and read by the buddy as one line under what Claude did: its time and the pause before it, model requests, tool calls by tool with failures, refusals and shell commands run again unchanged, subagent runs with their calls and tokens, files read, edited and written with the file edited three times or more (a shell command's own edits measured: the files it names, read before and after it runs), lines added and removed, test runs, commits and pushes, web reads, responses cut at max tokens, tokens with their cache share, the turn's cost, how full the context is after it, a rate limit past half used, and the model and effort when they change. Kept with the turn in `memory.json`; each turn's row in the drawer shows its time, tools and cost; each turn logs `turn.numbers`.
-
 - `promptToMainChat` (off by default): the buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, only on evidence inside the turn that your own ask is unmet or unproven (a failed step or test run passed over, a conclusion resting on less than it names, an instruction not followed, a part of the ask never addressed; the buddy's own doubts stay a suggestion); Claude reads it as the buddy's, never yours, and the buddy remembers what it sent and files the turn it started as its own; a reply that comes back after you prompted again sends nothing. Logs `promptToMainChat.sent` and `promptToMainChat.stale`.
 
 ### Changed
@@ -175,7 +176,8 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 - Your own characters: JSON files in the folder the `characterDir` option names, checked against `plugins/buddy/schema/character.schema.json`; an invalid one is listed with its first error, and choosing it draws the Professor with a bubble naming the error.
 - Options `character`, `characterDir`, `motion`, `questionMode` (`fork`, `complete` or `off`), `quips` (off by default), `quipModel` and `quipCooldownSec`.
 
-[Unreleased]: https://github.com/rezzminator/buddy/compare/buddy--v1.0.0...HEAD
+[Unreleased]: https://github.com/rezzminator/buddy/compare/buddy--v1.1.0...HEAD
+[1.1.0]: https://github.com/rezzminator/buddy/compare/buddy--v1.0.0...buddy--v1.1.0
 [1.0.0]: https://github.com/rezzminator/buddy/compare/buddy--v0.3.0...buddy--v1.0.0
 [0.3.0]: https://github.com/rezzminator/buddy/compare/buddy--v0.2.1...buddy--v0.3.0
 [0.2.1]: https://github.com/rezzminator/buddy/compare/buddy--v0.2.0...buddy--v0.2.1
