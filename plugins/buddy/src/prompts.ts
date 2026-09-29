@@ -7,7 +7,7 @@
 
 import type { Action } from './did.ts';
 import type { TurnStats } from './stats.ts';
-import { BUDDY_PROMPT, NOTES_MAX, cleanNotes, ends } from './chatTurnsToRead.ts';
+import { BUDDY_PROMPT, NOTES_MAX, cleanNotes, cleanPrompt, ends } from './chatTurnsToRead.ts';
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
 /** A question asking for a prompt gets one, on a line of its own the plugin puts in the prompt box. */
@@ -219,9 +219,10 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
  * not place it, or `unknown` when no submission of it was seen. `stats`: its
  * numbers (src/stats.ts), counted as it ran; absent for a compaction, or a
  * turn remembered before they were kept. `interrupted`: the user interrupted
- * the turn, its answer what Claude said before that.
+ * the turn, its answer what Claude said before that. `added`: the prompts the
+ * user typed while it ran that Claude Code delivered into it, oldest first.
  */
-export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats; interrupted?: true };
+export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats; interrupted?: true; added?: string[] };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
@@ -237,20 +238,22 @@ const PROMPTS_KEPT = 10;
 /**
  * The prompts given to the main chat, matched to the turns they start by their
  * text: `entered`, the prompts that entered (prompt.submit's result) and
- * started no turn yet, oldest first; `started`, the main turns begun
- * (turn.start), by id, with their text and whose it was (`seen` false until
- * its submission settles; `queued` when it took a waiting prompt).
+ * started no turn yet, oldest first, `over` the running turn one was typed
+ * over; `started`, the main turns begun (turn.start), by id, with their text
+ * and whose it was (`seen` false until its submission settles; `queued` when
+ * it took a waiting prompt; `added`, the prompts delivered into it).
  */
 export type PromptLedger = {
-  entered: readonly { text: string; from?: string }[];
-  started: readonly { turnId: string; text: string; from?: string; seen: boolean; queued?: boolean }[];
+  entered: readonly { text: string; from?: string; over?: string }[];
+  started: readonly { turnId: string; text: string; from?: string; seen: boolean; queued?: boolean; added?: readonly string[] }[];
 };
 export const NO_PROMPTS: PromptLedger = { entered: [], started: [] };
 
 /**
  * A prompt that entered the session, `origin` its origin's kind. One typed
- * over the running turn `turnId` waits for a turn of its own, and never
- * matches that turn; one not the user's with a `turnId` was delivered into
+ * over the running turn `turnId` waits, recording that turn: delivered into
+ * it at its next request (deliverPrompts), or else starting a turn of its
+ * own; it never matches that turn. One not the user's with a `turnId` was delivered into
  * that turn and starts none. A turn already started with this text (its
  * turn.start came first) takes its origin; so does one that took a waiting
  * prompt of the same text when this one arrives idle, since an idle prompt's
@@ -262,15 +265,31 @@ export function submitPrompt(l: PromptLedger, text: string, origin: string, turn
   const from = user ? undefined : origin;
   const i = l.started.findIndex((s) => s.turnId !== turnId && !s.seen && s.text === text);
   const j = i >= 0 || turnId !== undefined ? i : l.started.findLastIndex((s) => s.queued === true && s.text === text);
-  if (j >= 0) return { ...l, started: l.started.map((s, k) => (k === j ? { turnId: s.turnId, text: s.text, from, seen: true } : s)) };
-  return { ...l, entered: [...l.entered, { text, from }].slice(-PROMPTS_KEPT) };
+  if (j >= 0) return { ...l, started: l.started.map((s, k) => (k === j ? { turnId: s.turnId, text: s.text, from, seen: true, ...(s.added ? { added: s.added } : {}) } : s)) };
+  return { ...l, entered: [...l.entered, { text, from, ...(turnId === undefined ? {} : { over: turnId }) }].slice(-PROMPTS_KEPT) };
+}
+
+/**
+ * The main turn `turnId` is about to send a model request (turn.step), and
+ * Claude Code delivers the prompts typed over it into that request: each
+ * entered prompt `over` it joins that turn's `added`, in order. With no
+ * started entry for that turn they stay waiting.
+ */
+export function deliverPrompts(l: PromptLedger, turnId: string): PromptLedger {
+  const i = l.started.findIndex((s) => s.turnId === turnId);
+  const moved = l.entered.filter((p) => p.over === turnId).map((p) => p.text);
+  if (i < 0 || moved.length === 0) return l;
+  return {
+    entered: l.entered.filter((p) => p.over !== turnId),
+    started: l.started.map((s, k) => (k === i ? { ...s, added: [...(s.added ?? []), ...moved] } : s)),
+  };
 }
 
 /**
  * The main turn `turnId` began with `text` (turn.start): it takes the oldest
  * entered prompt of that text, and its origin. Every prompt entered before
  * that one, or all when none matches, started no turn (delivered into an
- * earlier one): dropped, never handed to a later turn.
+ * earlier one unseen): dropped, never handed to a later turn.
  */
 export function startPromptTurn(l: PromptLedger, turnId: string, text: string): PromptLedger {
   const i = l.entered.findIndex((p) => p.text === text);
@@ -281,14 +300,33 @@ export function startPromptTurn(l: PromptLedger, turnId: string, text: string): 
 /**
  * The main turn `turnId` ended, in any way: the prompt it began with and,
  * when that was not the user's, its origin (`unknown` when its submission
- * was never seen), and the ledger without it.
+ * was never seen), the prompts delivered into it (`added`, none left out),
+ * and the ledger without it.
  */
-export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string; from?: string; ledger: PromptLedger } {
+export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string; from?: string; added?: string[]; ledger: PromptLedger } {
   const turn = l.started.find((s) => s.turnId === turnId);
   const ledger = { ...l, started: l.started.filter((s) => s.turnId !== turnId) };
   if (!turn) return { prompt: '', from: 'unknown', ledger };
   const from = turn.seen ? turn.from : 'unknown';
-  return from === undefined ? { prompt: turn.text, ledger } : { prompt: turn.text, from, ledger };
+  const added = turn.added && turn.added.length > 0 ? { added: [...turn.added] } : {};
+  return from === undefined ? { prompt: turn.text, ...added, ledger } : { prompt: turn.text, from, ...added, ledger };
+}
+
+/** A transcript row the prompt a turn began with is read back from: `$.session.messages()`'s rows. */
+export type MessageRow = { role: string; text: string; toolResults?: readonly unknown[] };
+
+/** A user row the engine files for a local command's output: never a prompt. The rows carry no mark of an injected message, so it is told by its markup. */
+const LOCAL_COMMAND_OUTPUT = /^\s*<local-command-(?:caveat|stdout|stderr)>/;
+
+/**
+ * The prompt a turn began with, read back from the transcript when the
+ * ledger no longer holds it (a plugin hot reload empties it): the text of the
+ * last user row that is neither a tool result nor a local command's output
+ * and says something once its markup goes; '' when no row is one.
+ */
+export function lostPromptOf(rows: readonly MessageRow[]): string {
+  const row = rows.findLast((r) => r.role === 'user' && (r.toolResults?.length ?? 0) === 0 && !LOCAL_COMMAND_OUTPUT.test(r.text) && cleanPrompt(r.text) !== '');
+  return row?.text ?? '';
 }
 
 /** A session end that leaves the process on a fresh conversation (`/clear`, a resume): the chat's chatTurnsToRead turns, its prompts and a pending commentAfterEachTurn are the old one's. */

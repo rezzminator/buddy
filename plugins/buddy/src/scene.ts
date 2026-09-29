@@ -10,6 +10,10 @@ export type Seg = { pad: number; text: string; color: string };
 export type Tone = 'warn' | 'alarm';
 /** A tone's ink, for the bubble's frame and words. */
 export const TONE_COLOR: Record<Tone, string> = { warn: 'yellow', alarm: 'red' };
+/** Whom the bubble's words address: the user, or Claude (the buddy's own prompt to the main chat). */
+export type Addressee = 'user' | 'claude';
+/** The ink of the bubble's words, by whom they address; a tone colors only the frame. */
+export const BUBBLE_INK: Record<Addressee, string> = { user: 'blue', claude: 'yellow' };
 export type Scene = {
   color: string;
   /** The sprite's rows, all `spriteWidth` cells wide; none when the band is too narrow or too short for him but a bubble must show. */
@@ -22,8 +26,9 @@ export type Scene = {
    * The bubble beside him: `text` wrapped to its inner width (`width` less
    * BUBBLE_FRAME_COLS), a `\n` between lines, cut with `…` to the rows
    * `maxRows` leaves. `tone`: how loud it is, absent for a plain bubble.
+   * `to`: whom its words address, the user when absent.
    */
-  bubble: { text: string; width: number; side: 'left' | 'right'; tone?: Tone } | null;
+  bubble: { text: string; width: number; side: 'left' | 'right'; tone?: Tone; to?: Addressee } | null;
   /** Rows drawn above the sprite: a bubble with no room beside him (its words, full width), then confetti or the sleep drift. */
   effects: Seg[][];
   /** The hover card, placed against the sprite's Box. */
@@ -40,6 +45,8 @@ export type SceneInput = {
   bubble: string | null;
   /** The bubble's tone, absent for a plain one. */
   bubbleTone?: Tone;
+  /** Whom the bubble's words address, the user when absent. */
+  bubbleTo?: Addressee;
   confetti: { seed: number; tick: number } | null;
   sleeping: boolean;
   zTick: number;
@@ -119,9 +126,9 @@ export function buildScene(i: SceneInput): Scene | null {
   const o: WidthOptions = { ambiguousCharacterWidth: i.ambiguousCharacterWidth ?? 'narrow' };
   const sw = spriteWidth(c, o);
   const color = spriteColor(c, i.now ?? 0);
-  // A loud bubble drawn above him, with no room beside him, takes its tone's ink.
-  const words = i.bubbleTone ? TONE_COLOR[i.bubbleTone] : c.color;
-  const tone = i.bubbleTone ? { tone: i.bubbleTone } : {};
+  // A bubble drawn above him, with no room beside him, has no frame: a loud one takes its tone's ink, any other its addressee's.
+  const words = i.bubbleTone ? TONE_COLOR[i.bubbleTone] : BUBBLE_INK[i.bubbleTo ?? 'user'];
+  const tone = { ...(i.bubbleTone ? { tone: i.bubbleTone } : {}), ...(i.bubbleTo ? { to: i.bubbleTo } : {}) };
   if (i.maxRows < 1) return null;
   const bw = bubbleWidth(i.cols, sw);
   const beside = !!i.bubble && i.cols >= MIN_BUBBLE_COLS && bw >= 10 && i.maxRows > BUBBLE_FRAME_ROWS;

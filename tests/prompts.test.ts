@@ -205,7 +205,7 @@ describe('the end-of-turn call: the character and the suggestion combined', () =
 import { createBrain, endTurn } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter } from '../plugins/buddy/src/character.ts';
 import {
-  NO_PROMPTS, RETRY_MIN_MS, endPromptTurn, endsConversation, isUserOrigin, requestTimeoutMs, retriesEmpty, skipReason, startPromptTurn, submitPrompt, turnMay, type TurnGate,
+  NO_PROMPTS, RETRY_MIN_MS, deliverPrompts, endPromptTurn, endsConversation, isUserOrigin, requestTimeoutMs, retriesEmpty, skipReason, startPromptTurn, submitPrompt, turnMay, type TurnGate,
 } from '../plugins/buddy/src/prompts.ts';
 import { raw } from './fixtures.ts';
 
@@ -282,6 +282,40 @@ describe('the prompt ledger', () => {
     l = endPromptTurn(l, 't2').ledger;
     l = startPromptTurn(l, 't3', 'again');
     expect(endPromptTurn(l, 't3').from).toBe('unknown');
+  });
+  test('a user prompt typed over a running turn records that turn; one entered idle records none', () => {
+    const l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    expect(submitPrompt(l, 'P2', 'composer', 't1').entered).toEqual([{ text: 'P2', over: 't1' }]);
+    expect(submitPrompt(NO_PROMPTS, 'P1', 'composer').entered[0]).not.toHaveProperty('over');
+  });
+  test('a turn\'s next request delivers the prompts typed over it, in order, and only those; with no started entry it leaves them waiting', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    l = submitPrompt(l, 'A', 'composer', 't1');
+    l = submitPrompt(l, 'idle', 'composer');
+    l = submitPrompt(l, 'C', 'composer', 'tX');
+    l = submitPrompt(l, 'B', 'composer', 't1');
+    // tX has no started entry: nothing moves.
+    expect(deliverPrompts(l, 'tX')).toEqual(l);
+    let d = deliverPrompts(l, 't1');
+    expect(d.entered).toEqual([{ text: 'idle' }, { text: 'C', over: 'tX' }]);
+    d = deliverPrompts(submitPrompt(d, 'D', 'composer', 't1'), 't1');
+    const ended = endPromptTurn(d, 't1');
+    expect(ended).toMatchObject({ prompt: 'P1', added: ['A', 'B', 'D'] });
+    expect(ended.from).toBeUndefined();
+  });
+  test('a turn nothing was delivered into ends with no added prompts', () => {
+    const l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    expect(endPromptTurn(deliverPrompts(l, 't1'), 't1')).not.toHaveProperty('added');
+  });
+  test('a typed-over prompt never delivered still starts its own turn; a delivered one starts none', () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    l = submitPrompt(l, 'P2', 'composer', 't1');
+    l = startPromptTurn(endPromptTurn(l, 't1').ledger, 't2', 'P2');
+    expect(filed(endPromptTurn(l, 't2'))).toEqual({ prompt: 'P2', from: undefined });
+    let d = startPromptTurn(submitPrompt(NO_PROMPTS, 'P1', 'composer'), 't1', 'P1');
+    d = deliverPrompts(submitPrompt(d, 'P2', 'composer', 't1'), 't1');
+    d = startPromptTurn(endPromptTurn(d, 't1').ledger, 't2', 'P2');
+    expect(endPromptTurn(d, 't2').from).toBe('unknown');
   });
   test('/clear and a resume start a fresh conversation; an exit does not matter', () => {
     expect(endsConversation('clear')).toBe(true);

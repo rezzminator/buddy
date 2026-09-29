@@ -31,12 +31,37 @@ export const CHAT_TURNS_TO_READ_MAX = 10;
  */
 export const TURN_PROMPT_HEAD = 4800;
 export const TURN_PROMPT_TAIL = 2400;
+/** The most prompts delivered into one turn while it ran that it keeps, the newest, each cut like its prompt. */
+export const ADDED_MAX = 3;
+/** How a prompt delivered into a turn while it ran is said, in the memory and in the round file. */
+export const ADDED_LABEL = 'The user added while Claude worked:';
 /** How much of a task notification's result, the report it brought, is kept from its start and from its end. */
 export const NOTIFICATION_RESULT_HEAD = 1200;
 export const NOTIFICATION_RESULT_TAIL = 400;
 /** How much of a remembered turn's answer is kept from its start, where Claude says what came of it, and from its end, where it says what is next. */
 export const TURN_ANSWER_HEAD = 8000;
 export const TURN_ANSWER_TAIL = 3200;
+/**
+ * The story form: every remembered turn but the last one rendered is cut
+ * further, to what steers the buddy (the user's words, the start and end of
+ * Claude's answer, the buddy's own exchanges whole); the last stays as above.
+ * Benched on 189 real end-of-turn calls: 27.8% fewer input tokens, the
+ * reactions held. How much of an older turn's prompt is kept from its start
+ * and from its end, as rendered.
+ */
+export const STORY_PROMPT_HEAD = 600;
+export const STORY_PROMPT_TAIL = 200;
+/** How much of an older turn's line of a prompt added while Claude worked is kept, the label included. */
+export const STORY_ADDED_HEAD = 400;
+export const STORY_ADDED_TAIL = 100;
+/** How much of an older turn's answer is kept from its start and from its end. */
+export const STORY_ANSWER_HEAD = 500;
+export const STORY_ANSWER_TAIL = 300;
+/** How much of a compaction's summary, with the exchanges after it and without its canned lines, is kept when it is not the last turn. */
+export const STORY_COMPACTION_HEAD = 1500;
+export const STORY_COMPACTION_TAIL = 500;
+/** How many of an older turn's steps its line names, every step counted; null keeps the line as the last turn's is (didLine). */
+export const STORY_DID_STEPS: number | null = null;
 /** The most canned lines one character keeps under one turn: past it the oldest go. Questions, answers, comments and suggestions are never dropped. */
 export const LINES_PER_TURN_MAX = 3;
 /** The `from` of a remembered compaction: its turn's answer is the summary. */
@@ -170,11 +195,12 @@ function capped(x: Exchange): Exchange | null {
   return answer ? { kind: 'question', question, answer } : { kind: 'question', question };
 }
 
-/** The turn cleaned and kept to the start and end of its prompt and answer, with what it did, if anything, and its numbers; capping it again keeps it. */
+/** The turn cleaned and kept to the start and end of its prompt and answer, with what it did, if anything, its numbers, and the newest prompts delivered into it, each cut like its prompt; capping it again keeps it. */
 function cappedTurn(t: Turn): Turn {
   const turn: Turn = { prompt: ends(cleanPrompt(t.prompt), TURN_PROMPT_HEAD, TURN_PROMPT_TAIL), answer: ends(cleanAnswer(t.answer), TURN_ANSWER_HEAD, TURN_ANSWER_TAIL) };
   const did = (t.did ?? []).slice(0, DID_MAX).map((d) => (d.length > DID_LINE_CAP ? `${d.slice(0, DID_LINE_CAP - 1)}…` : d)).filter((d) => d);
-  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }), ...(t.interrupted === true ? { interrupted: true } : {}) };
+  const added = (t.added ?? []).map((a) => ends(cleanPrompt(a), TURN_PROMPT_HEAD, TURN_PROMPT_TAIL)).filter((a) => a).slice(-ADDED_MAX);
+  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }), ...(t.interrupted === true ? { interrupted: true } : {}), ...(added.length > 0 ? { added } : {}) };
 }
 
 /** The timeline with the answered turn `turnId` added last, at `at`, kept to its last `n` blocks: a turnless first block goes once `n` turns follow it. */
@@ -221,12 +247,29 @@ function dropOldLines(xs: Exchange[]): Exchange[] {
 /** Prompt origins that say nothing of whose a prompt was: no submission seen (`unknown`), or one the engine could not place. */
 const UNKNOWN_ORIGINS: readonly string[] = ['unknown', 'unclassified'];
 
+/** The step a turn with more than DID_MAX steps counts in its middle (did.ts). */
+const DID_MORE = /^… (\d+) more$/;
+
+/**
+ * A turn's steps as one line: with `keep` null, each step as kept; with a
+ * number, the count of every step, the middle ones counted included, and
+ * only the first `keep` named.
+ */
+export function didLine(did: readonly string[], keep: number | null = STORY_DID_STEPS): string {
+  if (keep === null) return `Claude did: ${did.join('; ')}`;
+  const n = did.filter((d) => !DID_MORE.test(d)).length + Number(did.map((d) => DID_MORE.exec(d)?.[1]).find((m) => m !== undefined) ?? 0);
+  return `Claude did ${n} step${n === 1 ? '' : 's'}: ${did.slice(0, keep).join('; ')}${n > keep ? '; …' : ''}`;
+}
+
 /**
  * A remembered turn's prompt, steps, numbers and answer; a prompt not the
  * user's is never shown as what the user asked, one of unknown origin never
  * said not to be. `prev`: the numbers of the turn remembered before it.
+ * `older`: a turn before the last, in the story form: its prompt, added
+ * prompts and answer cut to their start and end, its numbers only its failed
+ * tool calls, when any.
  */
-function turnLines(t: Turn, k: number, prev?: TurnStats): string[] {
+function turnLines(t: Turn, k: number, prev: TurnStats | undefined, older: boolean): string[] {
   if (t.from === COMPACTION) return [`Turn ${k}. The main chat was compacted: Claude now holds only this summary of everything before it:`, t.answer || '(no summary)'];
   const asked =
     t.from === undefined ? 'The user asked Claude:'
@@ -234,7 +277,18 @@ function turnLines(t: Turn, k: number, prev?: TurnStats): string[] {
     : t.from === BUDDY_PROMPT ? `From ${BUDDY_PROMPT_LABEL}:`
     : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:'
     : `Claude was sent, not by the user (${t.from}):`;
-  return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.did ? [`Claude did: ${t.did.join('; ')}`] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), t.interrupted ? 'Claude answered, before the user interrupted the turn:' : 'Claude answered:', t.answer || '(no text)'];
+  const answered = t.interrupted ? 'Claude answered, before the user interrupted the turn:' : 'Claude answered:';
+  if (!older) return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.added ?? []).map((a) => `${ADDED_LABEL} ${a}`), ...(t.did ? [didLine(t.did, null)] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];
+  const failed = t.stats?.failed ?? 0;
+  return [
+    `Turn ${k}. ${asked}`,
+    ends(t.prompt || '(not seen)', STORY_PROMPT_HEAD, STORY_PROMPT_TAIL),
+    ...(t.added ?? []).map((a) => ends(`${ADDED_LABEL} ${a}`, STORY_ADDED_HEAD, STORY_ADDED_TAIL)),
+    ...(t.did ? [didLine(t.did)] : []),
+    ...(failed > 0 ? [`${failed} tool call${failed === 1 ? '' : 's'} failed.`] : []),
+    answered,
+    ends(t.answer || '(no text)', STORY_ANSWER_HEAD, STORY_ANSWER_TAIL),
+  ];
 }
 
 /** The lines of one exchange, addressed to the character as "you": its first line a list item, the rest indented under it. */
@@ -265,6 +319,9 @@ export function renderNotes(notes: readonly string[]): string {
  * What `characterId` remembers, as the prompt carries it: its own `notes`
  * first, then the last `n` blocks, oldest first, each turn with that
  * character's exchanges after it, one list item each; '' when there is nothing.
+ * Every turn but the last is in the story form (turnLines); a compaction
+ * before the last turn is its summary and exchanges, canned lines left out,
+ * cut to their start and end.
  */
 export function render(blocks: readonly Block[], characterId: string, n: number, notes: readonly string[] = []): string {
   const kept = blocks.slice(-Math.max(1, n));
@@ -272,11 +329,19 @@ export function render(blocks: readonly Block[], characterId: string, n: number,
   let k = 0;
   // The numbers of the turn before, whose model and effort a turn's numbers repeat only when they changed.
   let prev: TurnStats | undefined;
-  const parts = kept.flatMap((b) => {
+  const lastTurn = kept.findLastIndex((b) => b.turn);
+  const parts = kept.flatMap((b, i) => {
+    const xs = b.characters[characterId] ?? [];
     // A text of several lines stays under its item: every line after the first indented.
-    const exchanges = (b.characters[characterId] ?? []).map((x) => exchangeLines(x).map((l, i) => `${i === 0 ? '- ' : '  '}${l.replace(/\n/g, '\n    ')}`).join('\n'));
-    const head = b.turn ? turnLines(b.turn, ++k, prev) : exchanges.length > 0 ? [hasTurns ? 'Before those turns:' : 'Before any turn of the main chat:'] : [];
+    const item = (x: Exchange): string => exchangeLines(x).map((l, j) => `${j === 0 ? '- ' : '  '}${l.replace(/\n/g, '\n    ')}`).join('\n');
+    const exchanges = xs.map(item);
+    const older = b.turn !== undefined && i < lastTurn;
+    const head = b.turn ? turnLines(b.turn, ++k, prev, older) : exchanges.length > 0 ? [hasTurns ? 'Before those turns:' : 'Before any turn of the main chat:'] : [];
     if (b.turn?.stats) prev = b.turn.stats;
+    if (older && b.turn!.from === COMPACTION) {
+      const body = [head[1]!, ...xs.filter((x) => x.kind !== 'line').map(item)].join('\n');
+      return [[head[0]!, ends(body, STORY_COMPACTION_HEAD, STORY_COMPACTION_TAIL)].join('\n')];
+    }
     return head.length > 0 ? [[...head, ...exchanges].join('\n')] : [];
   });
   const timeline = parts.length > 0 ? ['What you remember, oldest first:', ...parts].join('\n\n') : '';
@@ -307,9 +372,10 @@ function turnOf(v: unknown): Turn | null {
   if (typeof t.prompt !== 'string' || typeof t.answer !== 'string' || (t.from !== undefined && typeof t.from !== 'string')) return null;
   if (t.did !== undefined && !(Array.isArray(t.did) && t.did.every((d) => typeof d === 'string'))) return null;
   if (t.interrupted !== undefined && typeof t.interrupted !== 'boolean') return null;
+  if (t.added !== undefined && !(Array.isArray(t.added) && t.added.every((a) => typeof a === 'string'))) return null;
   const stats = t.stats === undefined ? undefined : turnStatsOf(t.stats);
   if (stats === null) return null;
-  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}), ...(stats ? { stats } : {}), ...(t.interrupted === true ? { interrupted: true } : {}) });
+  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}), ...(stats ? { stats } : {}), ...(t.interrupted === true ? { interrupted: true } : {}), ...(Array.isArray(t.added) ? { added: t.added as string[] } : {}) });
 }
 
 /** Stored notes, each character's cleaned (cleanNotes); a character whose notes are not a list of text is dropped, counted in `dropped`. */

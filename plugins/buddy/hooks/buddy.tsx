@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code';
 import type { RenderElement, EngineInterface, ModelCompleteResult, On, PluginOptions, PromptSubmitInput, PromptSubmitResult, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStartInput, TurnStepInput, TurnStepResult } from 'claude-code';
 import {
-  COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, isMainLoop, observeBand, period, pet,
+  COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, isMainLoop, observeBand, period, pet,
   currentPose, react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
@@ -22,7 +22,7 @@ import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
+  ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostPromptOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
@@ -42,7 +42,7 @@ import {
   choose, isCharacterFile, loadEntries, mergeRoster, startWarning, withEntry,
   type Entry, type LoadedFile, type Roster, type Source,
 } from '../src/roster.ts';
-import { TONE_COLOR, spriteColor, type Scene, type Tone } from '../src/scene.ts';
+import { BUBBLE_INK, TONE_COLOR, spriteColor, type Scene, type Tone } from '../src/scene.ts';
 import { validateHats, validateSpecies, type HatArt, type SpeciesTemplate } from '../src/species.ts';
 
 // The adapter: the only file touching `$`. Every decision lives in ../src/;
@@ -999,8 +999,8 @@ type Component = any;
 
 function drawBand(Box: Component, Text: Component, s: Scene) {
   const bubble = s.bubble ? (
-    <Box borderStyle="round" borderColor={s.bubble.tone ? TONE_COLOR[s.bubble.tone] : undefined} paddingX={1} width={s.bubble.width} alignSelf="flex-start">
-      <Text italic={s.bubble.tone !== 'alarm'} bold={s.bubble.tone === 'alarm'} color={s.bubble.tone ? TONE_COLOR[s.bubble.tone] : undefined} wrap="wrap">{s.bubble.text}</Text>
+    <Box key="bubble" borderStyle="round" borderColor={s.bubble.tone ? TONE_COLOR[s.bubble.tone] : undefined} paddingX={1} width={s.bubble.width} alignSelf="flex-start">
+      <Text italic={s.bubble.tone !== 'alarm'} bold={s.bubble.tone === 'alarm'} color={BUBBLE_INK[s.bubble.to ?? 'user']} wrap="wrap">{s.bubble.text}</Text>
     </Box>
   ) : null;
   const card = s.card ? (
@@ -1058,12 +1058,17 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
   }
 }
 
-/** Records the effort of a request of the running main turn, which effort inherit sends; a subagent's or a side request's leaves it. */
+/** Records the effort of a request of the running main turn, which effort inherit sends; a subagent's or a side request's leaves it. A main request carries the prompts the user typed over its turn, which Claude Code delivers into it: they join that turn (deliverPrompts); a subagent's request never delivers the main queue. */
 function onTurnStep(st: State, $: EngineInterface, e: TurnStepInput): void {
   try {
     st.mainEffort = observeEffort(st.mainEffort, e, st.mainTurn);
   } catch (error) {
     log($, "recording the main chat's effort", error);
+  }
+  try {
+    if (isMainLoop(e.agentId)) st.prompts = deliverPrompts(st.prompts, e.turnId);
+  } catch (error) {
+    log($, 'delivering the prompts typed over the turn', error);
   }
 }
 
@@ -1142,8 +1147,8 @@ function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
   }
 }
 
-/** An ended main turn as onTurnEnd hands it on: the prompt that started it, its origin when not the user's, its tally (null when its start was not seen). */
-type Ended = { prompt: string; from?: string; tally: { counts: Tally; before: Promise<UsageReading | null> } | null };
+/** An ended main turn as onTurnEnd hands it on: the prompt that started it, its origin when not the user's, the prompts delivered into it, its tally (null when its start was not seen); `lost` when the ledger held no entry for it, its prompt to be read back from the transcript (lostPrompt). */
+type Ended = { prompt: string; from?: string; added?: string[]; lost?: true; tally: { counts: Tally; before: Promise<UsageReading | null> } | null };
 
 /**
  * A main turn ended, however, before any hook beneath runs (turn.complete):
@@ -1162,16 +1167,35 @@ function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): Ended |
     const tally = st.tally?.counts.turnId === e.turnId ? st.tally : null;
     st.tally = null;
     st.lastMainEndAt = Date.now();
+    // A plugin hot reload empties the ledger: the turn running then has no entry.
+    const lost = !st.prompts.started.some((s) => s.turnId === e.turnId);
     const ended = endPromptTurn(st.prompts, e.turnId);
     st.prompts = ended.ledger;
     // The turn a taken suggestion began: the user's choice, the buddy's words.
     const taken = ended.from === undefined && st.takenPrompt !== null && ended.prompt === st.takenPrompt;
     if (taken) st.takenPrompt = null;
     const from = taken ? TAKEN_SUGGESTION : ended.from;
-    return { prompt: ended.prompt, ...(from === undefined ? {} : { from }), tally };
+    return { prompt: ended.prompt, ...(from === undefined ? {} : { from }), ...(ended.added ? { added: ended.added } : {}), ...(lost ? { lost: true as const } : {}), tally };
   } catch (error) {
     log($, 'the end of a turn', error);
     return null;
+  }
+}
+
+/**
+ * The prompt of the main turn `turnId` the ledger lost, read back from the
+ * transcript (lostPromptOf): logged either way, found or none there; a failed
+ * read is said and logged as a failure, and gives ''.
+ */
+async function lostPrompt($: EngineInterface, turnId: string): Promise<string> {
+  try {
+    const rows = await $.session.messages();
+    const prompt = lostPromptOf(rows);
+    lg($, 'info', 'prompt.backfill', { turnId, outcome: prompt ? 'found' : 'none', rows: rows.length });
+    return prompt;
+  } catch (error) {
+    log($, 'reading the transcript for a lost prompt', error, { turnId });
+    return '';
   }
 }
 
@@ -1187,15 +1211,17 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     const answered = e.reason === 'answer' && !e.isAborted;
     const did = didOf(st.b.turn.actions);
     const from = ended.from === undefined ? {} : { from: ended.from };
+    // The prompts the user typed while it ran, delivered into it: read with it, never as a turn of their own.
+    const added = ended.added ? { added: ended.added } : {};
     // Its numbers, counted as it ran, once the session's usage is read: filed with the turn, and on its row in the drawer.
     const stats = ended.tally ? turnStats(st, $, ended.tally, e) : Promise.resolve(undefined);
-    if ((answered || e.isAborted) && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from, ...(answered ? {} : { interrupted: true as const }) }, stats);
+    if ((answered || e.isAborted) && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from, ...added, ...(answered ? {} : { interrupted: true as const }) }, stats);
     // The drawer says whether the buddy read the turn: one interrupted is remembered, but never read by a call.
     changeFeed(st, $, 'the turn read', (f) => markRead(f, e.turnId, answered && st.interactive));
     stats.then((s) => {
       if (s) changeFeed(st, $, 'the turn numbers', (f) => markNumbers(f, e.turnId, statsBrief(s)));
     }).catch((error) => log($, "showing the turn's numbers", error));
-    roundEvent(st, $, turnEndSection(Date.now(), { turnId: e.turnId, reason: e.isAborted ? 'aborted' : e.reason, prompt: ended.prompt, answer: typeof e.answer === 'string' ? e.answer : '', did, ...from }));
+    roundEvent(st, $, turnEndSection(Date.now(), { turnId: e.turnId, reason: e.isAborted ? 'aborted' : e.reason, prompt: ended.prompt, answer: typeof e.answer === 'string' ? e.answer : '', did, ...from, ...added }));
     const gate: TurnGate = {
       answered,
       hidden: st.hidden,
@@ -1502,26 +1528,44 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
  * The buddy's own prompt to the main chat (promptToMainChat), `text`, once its
  * turn's exchange is filed: disarmed first, so the turn it starts never sends
  * another until a prompt of the user's re-arms it; submitted as this plugin's,
- * never awaited, a refusal logged.
+ * never awaited, a refusal logged; once it entered, shown (showSentPrompt).
  */
 function sendPromptToMainChat(st: State, $: EngineInterface, c: Character, text: string): void {
   st.mainChatPromptArmed = false;
   st.pendingMainChatPrompt = text;
   try {
-    $.prompt.submit({ text }).catch((error: unknown) => log($, "sending the buddy's prompt to the main chat", error));
+    $.prompt
+      .submit({ text })
+      .then((r) => {
+        if (r.drop === undefined) showSentPrompt(st, $, c, text);
+        else lg($, 'info', 'promptToMainChat.dropped', { character: c.id, reason: r.drop });
+      })
+      .catch((error: unknown) => log($, "sending the buddy's prompt to the main chat", error));
     lg($, 'info', 'promptToMainChat.sent', { character: c.id, length: text.length });
   } catch (error) {
     log($, "sending the buddy's prompt to the main chat", error);
   }
 }
 
+/** The prompt the buddy sent Claude, in the bubble addressed to Claude (its yellow words), waiting its turn behind the turn's own bubble; never while hidden. */
+function showSentPrompt(st: State, $: EngineInterface, c: Character, text: string): void {
+  const b = st.b;
+  if (!b || st.hidden) return;
+  try {
+    answer(b, text, null, c.id, true, undefined, 'claude');
+  } catch (error) {
+    log($, "showing the buddy's prompt to the main chat", error);
+  }
+  refresh(st, $);
+}
+
 /** How the bubble says a verdict: a shortcut warned of, a wrong move screamed; a right one says nothing over the comment. */
 const VERDICT_BUBBLE: Record<Verdict, { tone: Tone; pose: Pose | null } | null> = { RIGHT: null, SHORTCUT: { tone: 'warn', pose: null }, WRONG: { tone: 'alarm', pose: 'oops' } };
 
 /**
- * A SHORTCUT or WRONG verdict of `c` in the bubble, its tone's ink, marking
- * turn `gen` loud so its comment never covers it; a held /buddy answer keeps
- * the bubble. `reason`: why the call gave none. Returns the words when the
+ * A SHORTCUT or WRONG verdict of `c` in the bubble, its tone's frame, marking
+ * turn `gen` loud so its comment never covers it; a model bubble already
+ * there keeps the bubble its 10 s first (answer). `reason`: why the call gave none. Returns the words when the
  * bubble said them, else null.
  */
 function sayVerdict(st: State, $: EngineInterface, c: Character, gen: number, v: { verdict: Verdict; why: string } | null, reason: string, fields: Record<string, number>): string | null {
@@ -1538,13 +1582,12 @@ function sayVerdict(st: State, $: EngineInterface, c: Character, gen: number, v:
       lg($, 'info', 'verdict.outcome', { outcome: 'quiet', verdict: v.verdict, ...fields });
       return null;
     }
-    const held = !st.hidden && holdsAnswer(b);
-    const shown = !st.hidden && !held && answer(b, v.why, loud.pose, c.id, true, loud.tone);
+    const shown = !st.hidden && answer(b, v.why, loud.pose, c.id, true, loud.tone);
     if (shown) {
       said = v.why;
       st.loudGen = gen;
     }
-    const outcome = shown ? 'said' : st.hidden ? 'hidden' : held ? 'held' : 'dropped';
+    const outcome = shown ? 'said' : st.hidden ? 'hidden' : 'dropped';
     lg($, 'info', 'verdict.outcome', { outcome, verdict: v.verdict, ...fields });
   } catch (error) {
     log($, 'a verdict', error);
@@ -1555,7 +1598,7 @@ function sayVerdict(st: State, $: EngineInterface, c: Character, gen: number, v:
 
 /**
  * The commentAfterEachTurn of `c` in the bubble, or the failure why there is none;
- * a held /buddy answer keeps the bubble, a previous turn's commentAfterEachTurn does not.
+ * a model bubble already there keeps the bubble its 10 s first (answer).
  * Never said by another character drawn meanwhile, nor over this turn's
  * verdict (`outranked`: the drawer and the memory still keep it). `fields`: ms
  * and usage, logged on the outcome. Returns the text when the bubble showed
@@ -1568,21 +1611,16 @@ function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t:
   try {
     if (text) {
       // Hidden by /buddy off while the model wrote it: never shown, so never remembered.
-      // A held /buddy answer keeps the bubble until it ends: the commentAfterEachTurn is never said over it, nor remembered.
-      const held = !st.hidden && holdsAnswer(b);
       // This turn's verdict, a warning or a scream, keeps the bubble: the comment goes to the drawer and the memory only.
-      const outranked = !st.hidden && !held && st.loudGen === gen;
-      const shown = !st.hidden && !held && !outranked && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id, true);
+      const outranked = !st.hidden && st.loudGen === gen;
+      const shown = !st.hidden && !outranked && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id, true);
       if (shown || outranked) said = text;
-      const outcome = shown ? 'answered' : outranked ? 'outranked' : st.hidden ? 'hidden' : held ? 'held' : 'dropped';
+      const outcome = shown ? 'answered' : outranked ? 'outranked' : st.hidden ? 'hidden' : 'dropped';
       lg($, 'info', 'commentAfterEachTurn.outcome', { outcome, ...(outcome === 'dropped' ? { asker: c.id, drawn: b.character.id } : {}), ...fields });
     } else {
       say($, `a commentAfterEachTurn got no answer: ${reason}`);
-      if (holdsAnswer(b)) lg($, 'info', 'commentAfterEachTurn.outcome', { outcome: 'held', reason, ...fields });
-      else {
-        const shown = failAnswer(b, reason, c.id, true);
-        lg($, 'info', 'commentAfterEachTurn.outcome', { outcome: shown ? 'failed' : 'dropped', reason, ...fields });
-      }
+      const shown = failAnswer(b, reason, c.id, true);
+      lg($, 'info', 'commentAfterEachTurn.outcome', { outcome: shown ? 'failed' : 'dropped', reason, ...fields });
     }
   } catch (error) {
     log($, 'a commentAfterEachTurn', error);
@@ -2407,8 +2445,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // The running-turn marker and the prompt clear first: a hook beneath that throws never leaves the turn running.
   on('turn.complete', async ($, e, next) => {
     const ended = onTurnEnd(st, $, e);
+    // A turn whose prompt the ledger lost reads it back from the transcript while the hooks beneath run; its origin stays unknown.
+    const found = ended?.lost ? lostPrompt($, e.turnId) : null;
     const r = await next(e);
-    onTurnComplete(st, $, e, ended);
+    const prompt = found ? await found : '';
+    onTurnComplete(st, $, e, ended && prompt ? { ...ended, prompt } : ended);
     return r;
   });
 

@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
   NOTIFICATION_RESULT_HEAD, NOTIFICATION_RESULT_TAIL, cleanAnswer, cleanPrompt,
-  BUDDY_PROMPT, NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, memoryStats, render, storeKey, type Block, type Exchange,
+  BUDDY_PROMPT, NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, didLine, ADDED_LABEL, memoryStats, render, storeKey, type Block, type Exchange,
+  STORY_ADDED_HEAD, STORY_ADDED_TAIL, STORY_ANSWER_HEAD, STORY_ANSWER_TAIL, STORY_COMPACTION_HEAD, STORY_COMPACTION_TAIL, STORY_DID_STEPS, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
 import { DID_LINE_CAP, DID_TEXT_CAP, FAIL_REASON_CAP } from '../plugins/buddy/src/did.ts';
 
@@ -239,15 +241,17 @@ describe('the store', () => {
 
 describe("a turn's numbers", () => {
   const stats = { ms: 134_000, requests: 2, tools: { Bash: 2 }, model: 'claude-opus-5', effort: 'low' };
-  test('kept with the turn, read back from the file, and said under what Claude did; the model again only when it changed', () => {
+  test('kept with the turn, read back from the file, and said under what Claude did, by the last turn only; the model again only when it changed', () => {
     let b = addTurn([], 't1', { prompt: 'one', answer: 'One.', did: ['ran ls'], stats }, 4, 1);
     b = addTurn(b, 't2', { prompt: 'two', answer: 'Two.', stats: { ...stats, ms: 3_000 } }, 4, 2);
     b = addTurn(b, 't3', { prompt: 'three', answer: 'Three.', stats: { ms: 1_000, requests: 1, model: 'claude-sonnet-5' } }, 4, 3);
     const back = chatTurnsToReadOf(JSON.parse(JSON.stringify({ blocks: b }))).blocks;
     expect(back).toEqual(b);
+    // Only the last turn says its numbers (the story form): each turn's are read here as the last one's.
+    expect(render(back.slice(0, 1), 'cat', 4)).toContain('Turn 1. The user asked Claude:\none\nClaude did: ran ls\nNumbers: 2m14s · 2 model requests · 2 tool calls (Bash 2) · on opus-5 at low effort\nClaude answered:\nOne.');
+    expect(render(back.slice(0, 2), 'cat', 4)).toContain('Turn 2. The user asked Claude:\ntwo\nNumbers: 3s · 2 model requests · 2 tool calls (Bash 2)\nClaude answered:');
     const r = render(back, 'cat', 4);
-    expect(r).toContain('Turn 1. The user asked Claude:\none\nClaude did: ran ls\nNumbers: 2m14s · 2 model requests · 2 tool calls (Bash 2) · on opus-5 at low effort\nClaude answered:\nOne.');
-    expect(r).toContain('Turn 2. The user asked Claude:\ntwo\nNumbers: 3s · 2 model requests · 2 tool calls (Bash 2)\nClaude answered:');
+    expect(r).toContain('Turn 1. The user asked Claude:\none\nClaude did: ran ls\nClaude answered:\nOne.');
     expect(r).toContain('Turn 3. The user asked Claude:\nthree\nNumbers: 1s · 1 model request · on sonnet-5\nClaude answered:');
   });
   test('a turn whose stored numbers are malformed is dropped, as one with malformed steps is; a turn kept before the numbers has none', () => {
@@ -319,5 +323,103 @@ describe('an interrupted turn', () => {
     const old = chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a' }, characters: {} }] });
     expect(old.error).toBeUndefined();
     expect(old.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
+  });
+});
+
+describe('prompts the user added while Claude worked', () => {
+  const ADDED = 'The user added while Claude worked:';
+  test('said right after the prompt, one line each, before the steps and the answer', () => {
+    const blocks = addTurn([], 't1', { prompt: 'fix it', answer: 'Done.', did: ['edited a.ts'], added: ['also run the tests', 'and lint'] }, 4);
+    expect(render(blocks, 'fixy', 4)).toContain(`Turn 1. The user asked Claude:\nfix it\n${ADDED} also run the tests\n${ADDED} and lint\nClaude did: edited a.ts\nClaude answered:\nDone.`);
+  });
+  test('the same on an interrupted turn and on one not the user\'s', () => {
+    const r = render(addTurn([], 't1', { prompt: 'go', answer: '', from: 'peer', interrupted: true, added: ['stop that'] }, 4), 'fixy', 4);
+    expect(r).toContain(`Claude was sent, not by the user (peer):\ngo\n${ADDED} stop that\nClaude answered, before the user interrupted the turn:`);
+  });
+  test('each cut like the prompt, empty ones gone, at most 3 kept: the newest; none is no field', () => {
+    const long = `${'h'.repeat(TURN_PROMPT_HEAD)}${'m'.repeat(500)}${'t'.repeat(TURN_PROMPT_TAIL)}`;
+    const cut = addTurn([], 'x', { prompt: long, answer: '' }, 4)[0]!.turn!.prompt;
+    const turn = addTurn([], 't1', { prompt: 'p', answer: 'a', added: ['a1', 'a2', '<system-reminder>x</system-reminder>', 'a3', long] }, 4)[0]!.turn!;
+    expect(turn.added).toEqual(['a2', 'a3', cut]);
+    expect(addTurn([], 't1', { prompt: 'p', answer: 'a', added: [] }, 4)[0]!.turn).not.toHaveProperty('added');
+  });
+  test('kept through the store; a non-list or a non-text entry is malformed; an older record without it still reads', () => {
+    const blocks = addTurn([], 't1', { prompt: 'p', answer: 'a', added: ['also BANANA'] }, 4);
+    const back = chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks })));
+    expect(back.error).toBeUndefined();
+    expect(back.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a', added: ['also BANANA'] });
+    const stored = (added: unknown) => ({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a', added }, characters: {} }] });
+    for (const bad of ['also', ['ok', 3]]) {
+      const r = chatTurnsToReadOf(stored(bad));
+      expect(r.error).toMatch(/1 malformed entry/);
+      expect(r.blocks).toEqual([]);
+    }
+    expect(chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a' }, characters: {} }] }).blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
+  });
+});
+
+describe('the story form: every remembered turn but the last, cut to what steers', () => {
+  const words = (tag: string, n: number): string => Array.from({ length: n }, (_, i) => `${tag}${i}`).join(' ');
+  const failed = { ms: 5_000, requests: 2, tools: { Bash: 3 }, failed: 2 };
+  /** A turnless block, a long turn, a long compaction, a short turn of another origin, and a long last turn, each with the cat's exchanges. */
+  function story(): Block[] {
+    let b = addExchange([], 'cat', line('Hi before.'));
+    b = addTurn(b, 't1', { prompt: words('ask', 200), answer: `${words('first', 80)}\n${words('mid', 80)}\n${words('end', 80)}`, added: [words('also', 120)], did: ['read a.ts, b.ts', 'ran the tests', 'edited a.ts', 'ran lint'], stats: failed }, 5);
+    b = addExchange(b, 'cat', line('Meow, tests.'));
+    b = addExchange(b, 'cat', { kind: 'endOfTurn', commentAfterEachTurn: 'Nice run.', suggestNextPrompt: 'run npm test' });
+    b = addExchange(b, 'cat', qa('why?', 'Because.\nIt was due.'));
+    b = addCompaction(b, 'compaction:1', `${words('sum', 300)}\n${words('next', 100)}`, 5);
+    b = addExchange(b, 'cat', line('Squashed.'));
+    b = addExchange(b, 'cat', endOfTurn('Compacted well.'));
+    b = addTurn(b, 't3', { prompt: 'fix it', answer: 'Stopped.', from: 'peer', interrupted: true, did: ['a', 'b', 'c', 'd', '… 5 more', 'x'], stats: { ms: 1_000, requests: 1, tools: { Read: 1 }, failed: 1 } }, 5);
+    b = addExchange(b, 'cat', line('Hmm.'));
+    b = addTurn(b, 't4', { prompt: words('last', 200), answer: `${words('fin', 150)}\n${words('done', 150)}`, added: [words('more', 120)], did: ['ran it'], stats: failed }, 5);
+    return addExchange(b, 'cat', line('Last word.'));
+  }
+
+  test("an older turn renders as the benched reference's story form of today's rendering (fixtures/story-form.txt)", () => {
+    expect(render(story(), 'cat', 5, ['fact: note one'])).toBe(readFileSync(new URL('./fixtures/story-form.txt', import.meta.url), 'utf8'));
+  });
+  test('the last turn stays as rendered before: prompt, added, steps, numbers and answer whole', () => {
+    expect(render(story(), 'cat', 5).endsWith(
+      `Turn 4. The user asked Claude:\n${words('last', 200)}\n${ADDED_LABEL} ${words('more', 120)}\nClaude did: ran it\nNumbers: 5s · 2 model requests · 3 tool calls (Bash 3), 2 failed\nClaude answered:\n${words('fin', 150)}\n${words('done', 150)}\n- You said: Last word.`,
+    )).toBe(true);
+  });
+  test("an older turn's prompt, added line and answer cut to their start and end; its numbers gone, its failed calls counted", () => {
+    const r = render(story(), 'cat', 5);
+    const ask = words('ask', 200);
+    expect(r).toContain(`Turn 1. The user asked Claude:\n${ask.slice(0, STORY_PROMPT_HEAD)} … ${ask.slice(-STORY_PROMPT_TAIL)}\n`);
+    const added = `${ADDED_LABEL} ${words('also', 120)}`;
+    expect(r).toContain(`\n${added.slice(0, STORY_ADDED_HEAD)} … ${added.slice(-STORY_ADDED_TAIL)}\n`);
+    const answer = `${words('first', 80)}\n${words('mid', 80)}\n${words('end', 80)}`;
+    expect(r).toContain(`Claude answered:\n${answer.slice(0, STORY_ANSWER_HEAD)} … ${answer.slice(-STORY_ANSWER_TAIL)}\n- You said: Meow, tests.`);
+    expect(r).toContain('Claude did: read a.ts, b.ts; ran the tests; edited a.ts; ran lint\n2 tool calls failed.\nClaude answered:');
+    expect(r).toContain('Claude did: a; b; c; d; … 5 more; x\n1 tool call failed.\nClaude answered, before the user interrupted the turn:');
+    expect(r.match(/^Numbers: /gm)).toHaveLength(1);
+  });
+  test('no failed call, no failed line; a failed test run is not a failed tool call', () => {
+    let b = addTurn([], 't1', { prompt: 'one', answer: 'One.', stats: { ms: 1_000, requests: 1, tools: { Bash: 1 }, tests: { passed: 1, failed: 2 } } }, 4);
+    b = addTurn(b, 't2', { prompt: 'two', answer: 'Two.' }, 4);
+    expect(render(b, 'cat', 4)).toContain('Turn 1. The user asked Claude:\none\nClaude answered:\nOne.\n\nTurn 2.');
+  });
+  test("an older turn keeps the buddy's exchanges whole and in order, its canned lines too", () => {
+    expect(render(story(), 'cat', 5)).toContain("- You said: Meow, tests.\n- After this turn, you commented: Nice run.\n  With it, you suggested the user's next prompt: run npm test\n- The user asked you: why?\n  You answered: Because.\n    It was due.\n\nTurn 2.");
+    expect(render(story(), 'cat', 5)).toContain('Stopped.\n- You said: Hmm.\n\nTurn 4.');
+  });
+  test('a compaction not last: its summary and exchanges, canned lines gone, cut to their start and end; a compaction last stays whole', () => {
+    const body = `${words('sum', 300)}\n${words('next', 100)}\n- After this turn, you commented: Compacted well.`;
+    expect(render(story(), 'cat', 5)).toContain(`Turn 2. The main chat was compacted: Claude now holds only this summary of everything before it:\n${body.slice(0, STORY_COMPACTION_HEAD)} … ${body.slice(-STORY_COMPACTION_TAIL)}\n\nTurn 3.`);
+    let b = addTurn([], 't1', turn('one'), 4);
+    b = addCompaction(b, 'compaction:1', words('sum', 400), 4);
+    b = addExchange(b, 'cat', line('Squashed.'));
+    expect(render(b, 'cat', 4).endsWith(`everything before it:\n${words('sum', 400)}\n- You said: Squashed.`)).toBe(true);
+  });
+  test('didLine: null keeps the steps as the last turn says them; a number names that many and counts them all', () => {
+    const did = ['a', 'b', 'c', 'd', '… 5 more', 'x'];
+    expect(didLine(did, null)).toBe('Claude did: a; b; c; d; … 5 more; x');
+    expect(didLine(did, 2)).toBe('Claude did 10 steps: a; b; …');
+    expect(didLine(['a', 'b'], 2)).toBe('Claude did 2 steps: a; b');
+    expect(didLine(['one'], 2)).toBe('Claude did 1 step: one');
+    expect(didLine(did)).toBe(didLine(did, STORY_DID_STEPS));
   });
 });
