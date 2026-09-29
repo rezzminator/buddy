@@ -165,7 +165,11 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number) {
   const drawn = messages.map((e) => {
     if (e.kind === 'clear') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  new conversation`, '') };
     if (e.kind === 'compact') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text) };
-    if (e.kind === 'you') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, e.read === false ? `  · interrupted, ${v.name} never read it` : '') };
+    if (e.kind === 'you') {
+      // The turn's numbers in brief once it ended, and whether the buddy never read it.
+      const notes = [e.numbers ?? '', e.read === false ? `interrupted, ${v.name} never read it` : ''].filter(Boolean);
+      return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, notes.length > 0 ? `  · ${notes.join(' · ')}` : '') };
+    }
     const who = speaker(e, v);
     // Its notes one bullet each; anything else as it was said.
     const lines = e.kind === 'memory' ? e.text.split('\n').flatMap((n) => wrapText(`• ${n}`, textW)) : wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);

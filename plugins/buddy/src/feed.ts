@@ -10,6 +10,7 @@
 
 import { COMPACTION, type Block } from './chatTurnsToRead.ts';
 import type { Verdict } from './prompts.ts';
+import { statsBrief } from './stats.ts';
 
 export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'memory' | 'line' | 'failed' | 'clear';
 
@@ -21,6 +22,7 @@ export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdi
  * `turnId`: the main turn a `you` entry started, or a `compact` entry's id.
  * `read`: whether the buddy filed that turn into its memory (true), or it
  * ended unanswered and the buddy never read it (false); absent while it runs.
+ * `numbers`: a `you` entry's turn in brief, once it ended (stats.ts statsBrief).
  * `verdict` and `desire`: a `verdict` entry's judgement (its text the why)
  * and the deepest desire it judged against, when named.
  */
@@ -36,6 +38,7 @@ export type FeedEntry = {
   taken?: boolean;
   turnId?: string;
   read?: boolean;
+  numbers?: string;
   verdict?: Verdict;
   desire?: string;
 };
@@ -51,6 +54,11 @@ export function pushEntry(feed: readonly FeedEntry[], entry: NewEntry): FeedEntr
 /** The `you` entry of turn `turnId` marked read or not by the buddy. */
 export function markRead(feed: readonly FeedEntry[], turnId: string, read: boolean): FeedEntry[] {
   return feed.map((e) => (e.kind === 'you' && e.turnId === turnId ? { ...e, read } : e));
+}
+
+/** The `you` entry of turn `turnId` with its turn's numbers in brief; '' leaves it as it is. */
+export function markNumbers(feed: readonly FeedEntry[], turnId: string, numbers: string): FeedEntry[] {
+  return numbers ? feed.map((e) => (e.kind === 'you' && e.turnId === turnId ? { ...e, numbers } : e)) : [...feed];
 }
 
 /**
@@ -86,7 +94,7 @@ export function feedOfMemory(blocks: readonly Block[], characterId: string, voic
     const when = b.at ?? at;
     if (b.turn) {
       if (b.turn.from === COMPACTION) f = pushEntry(f, { at: when, kind: 'compact', text: b.turn.answer, turnId: b.turnId, read: true });
-      else f = pushEntry(answerSuggestions(f, b.turn.prompt), { at: when, kind: 'you', text: b.turn.prompt, turnId: b.turnId, read: true });
+      else f = pushEntry(answerSuggestions(f, b.turn.prompt), { at: when, kind: 'you', text: b.turn.prompt, turnId: b.turnId, read: true, ...(b.turn.stats ? { numbers: statsBrief(b.turn.stats) } : {}) });
     }
     for (const x of b.characters[characterId] ?? []) {
       if (x.kind === 'question') {

@@ -241,10 +241,21 @@ run_session() {
       && [ -n "$r1" ] && grep -q 'IN · tool call Bash' "$r1" && grep -q '      command: ls' "$r1" && grep -q '  LOG info turn.call' "$r1" && grep -q 'OUT · bubble' "$r1" \
       && grep -q 'the turn ended (answer), as the buddy filed it' "$r1" && grep -q 'BUDDY CALL 1 · end-of-turn call' "$r1" && grep -q '─── IN: system ───' "$r1" \
       && [ -n "$r2" ] && grep -q '/buddy question' "$r2" && grep -q 'turn before my last one' "$r2" && grep -q '─── OUT: answered' "$r2" \
-      && check PASS "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2")" \
-      || check FAIL "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim" "$ROUNDS: $n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$ROUNDS" | head -4 | tr '\n' ' ')"
+      && grep -q '^Numbers: ' "$r2" && grep -q 'The turn that just ended is the last one above.' "$r2" \
+      && check PASS "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2"): $(grep -m1 '^Numbers: ' "$r2" | cut -c1-160)" \
+      || check FAIL "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "numbers line in T2's round: $([ -n "$r2" ] && grep -c '^Numbers: ' "$r2" || echo unread); $ROUNDS: $n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$ROUNDS" | head -4 | tr '\n' ' ')"
   fi
   if [ "$S" = S1 ]; then
+    # Each turn's numbers, counted as it ran: filed with the turn in memory.json, and one turn.numbers record per turn.
+    local mf st1 nrec
+    mf=$(memory_file)
+    st1=$([ -n "$mf" ] && jq -c '[.blocks[]? | select(.turn and (.turn.prompt | contains("S1T1"))) | .turn.stats][0] // empty' "$mf" 2>&1)
+    nrec=$(count turn.numbers 0)
+    if [ -n "$st1" ] && jq -e '.ms > 0 and .requests >= 2 and (.tools.Bash // 0) >= 1 and .tokens.out > 0 and (.model | length) > 0 and .context.window > 0 and has("usd")' <<<"$st1" > /dev/null 2>&1 && [ "$nrec" -ge 2 ]; then
+      check PASS "each turn's numbers in memory.json and the log" "T1 $st1; turn.numbers x$nrec"
+    else
+      check FAIL "each turn's numbers in memory.json and the log" "${mf:-no memory.json}: ${st1:-no numbers filed with S1T1}; turn.numbers x$nrec"
+    fi
     local a1 a2
     ask "remember the word tangerine" "ask1"; a1=$(stored question)
     [ "$(row_of outcome)" = answered ] && check PASS "/buddy question answered" "$a1" || check FAIL "/buddy question answered" "$ASK_OUT / $(row_of outcome) / bubble $(row_of bubble)"

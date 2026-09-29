@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  answerSuggestions, feedOfMemory, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
+  answerSuggestions, feedOfMemory, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
   type FeedEntry,
 } from '../plugins/buddy/src/feed.ts';
 
@@ -72,3 +72,18 @@ describe('the words the panels draw', () => {
     expect(wrapText('a\n\nb', 5)).toEqual(['a', '', 'b']);
   });
 });
+
+describe("a turn's numbers in the feed", () => {
+  test('set on its own `you` entry once it ended; an empty brief changes nothing', () => {
+    let f = pushEntry([], { at: 1, kind: 'you', text: 'one', turnId: 't1' });
+    f = pushEntry(f, { at: 2, kind: 'you', text: 'two', turnId: 't2' });
+    const marked = markNumbers(f, 't2', '12s · 3 tools · $0.05');
+    expect(marked.map((e) => e.numbers)).toEqual([undefined, '12s · 3 tools · $0.05']);
+    expect(markNumbers(marked, 't1', '')).toEqual(marked);
+  });
+  test('drawn back from the memory with each remembered turn', () => {
+    const f = feedOfMemory([{ turnId: 't1', turn: { prompt: 'go', answer: 'Went.', stats: { ms: 12_000, tools: { Read: 3 } } }, characters: {} }], 'cat', {}, 5);
+    expect(f[0]).toMatchObject({ kind: 'you', text: 'go', numbers: '12s · 3 tools' });
+  });
+});
+

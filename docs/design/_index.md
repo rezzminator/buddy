@@ -32,7 +32,7 @@ flowchart LR
   R["roster: characters/, customCharactersDir"] --> A
   O["original: hatch.ts, original.ts, species/"] --> R
   A --> M["drawer: hooks/drawer.tsx, src/feed.ts, src/menu.ts"]
-  A --> V["voice + chatTurnsToRead: src/prompts.ts, src/chatTurnsToRead.ts"]
+  A --> V["voice + chatTurnsToRead: src/prompts.ts, src/chatTurnsToRead.ts, src/stats.ts"]
   V --> Model["$.model.complete"]
 ```
 

@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code';
-import type { RenderElement, EngineInterface, ModelCompleteResult, On, PluginOptions, PromptSubmitInput, PromptSubmitResult, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStartInput, TurnStepInput } from 'claude-code';
+import type { RenderElement, EngineInterface, ModelCompleteResult, On, PluginOptions, PromptSubmitInput, PromptSubmitResult, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStartInput, TurnStepInput, TurnStepResult } from 'claude-code';
 import {
   COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, holdsAnswer, isMainLoop, observeBand, period, pet,
   currentPose, react, sceneOf, setCharacter, speak, tick, wake,
@@ -14,7 +14,7 @@ import {
 } from '../src/chatTurnsToRead.ts';
 import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, didOf } from '../src/did.ts';
-import { answerSuggestions, feedOfMemory, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
+import { answerSuggestions, feedOfMemory, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
 import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, freeRoundSlot, oldestRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
@@ -32,7 +32,8 @@ import {
   type SavedOriginal, type Soul,
 } from '../src/original.ts';
 import { BACKUP_LIMITS, backupCandidates, configSources, type ConfigSources, type Listed } from '../src/config-source.ts';
-import { bashCommand, toolOutput } from '../src/reactions.ts';
+import { bashCommand, classifyToolCall, toolOutput } from '../src/reactions.ts';
+import { closeTally, countAgentRun, countStep, countToolCall, openTally, statsBrief, usageReadingOf, type Tally, type TurnStats, type UsageReading } from '../src/stats.ts';
 import {
   choose, isCharacterFile, loadEntries, mergeRoster, startWarning, withEntry,
   type Entry, type LoadedFile, type Roster, type Source,
@@ -123,6 +124,12 @@ type State = {
   prompts: PromptLedger;
   /** The running main turn's id, from its turn.start to its turn.complete; undefined while none runs. */
   mainTurn: string | undefined;
+  /** The running main turn's numbers as they come in (src/stats.ts), and the session's usage read as it began; null while none runs. */
+  tally: { counts: Tally; before: Promise<UsageReading | null> } | null;
+  /** When the last main turn of this conversation ended, for the next one's gap; undefined before the first, and after /clear or a resume. */
+  lastMainEndAt: number | undefined;
+  /** A read of the session's usage failed and that was said: later failures are logged, not said. */
+  usageFailSaid: boolean;
   /** Bumped by every main turn's start: a memory write that failed is tried again only while it stays the same. */
   turnStarts: number;
   /** Bumped only by /clear or a resume: a /buddy question asked in an earlier conversation is dropped, never shown or remembered in this one. */
@@ -392,7 +399,7 @@ async function chainChatTurnsToRead(st: State, $: EngineInterface, what: string,
  * in all, while no main turn has started since and the conversation is the same; the change itself is
  * applied once, a later try only saving it.
  */
-function changeChatTurnsToRead(st: State, $: EngineInterface, what: string, change: (m: { blocks: Block[]; notes: Notes }) => { blocks: Block[]; notes: Notes }): void {
+function changeChatTurnsToRead(st: State, $: EngineInterface, what: string, change: (m: { blocks: Block[]; notes: Notes }) => { blocks: Block[]; notes: Notes } | Promise<{ blocks: Block[]; notes: Notes }>): void {
   const turnStarts = st.turnStarts;
   const conversation = st.conversation;
   let applied = '';
@@ -402,7 +409,9 @@ function changeChatTurnsToRead(st: State, $: EngineInterface, what: string, chan
       // Abandoned meanwhile: a later link may have written, and this one writes nothing.
       if (!m || !live()) return;
       if (applied !== m.sessionId) {
-        const changed = change({ blocks: m.blocks, notes: m.notes });
+        const changed = await change({ blocks: m.blocks, notes: m.notes });
+        // Abandoned while the change waited (a turn's numbers): a later try applies it again.
+        if (!live()) return;
         m.blocks = changed.blocks;
         m.notes = changed.notes;
         applied = m.sessionId;
@@ -434,11 +443,56 @@ function changeChatTurnsToRead(st: State, $: EngineInterface, what: string, chan
   attempt(1);
 }
 
-/** The answered main turn `turnId` filed last into the chatTurnsToRead, the oldest dropped past the option's count of turns. */
-function rememberTurn(st: State, $: EngineInterface, turnId: string, turn: Turn): void {
+/**
+ * The answered main turn `turnId` filed last into the chatTurnsToRead, with its
+ * numbers once `stats` has them, the oldest dropped past the option's count of
+ * turns. Reads made after it wait for it, the end-of-turn call's among them.
+ */
+function rememberTurn(st: State, $: EngineInterface, turnId: string, turn: Turn, stats: Promise<TurnStats | undefined>): void {
   const n = st.options.chatTurnsToRead;
   st.lastTurnId = turnId;
-  changeChatTurnsToRead(st, $, 'remembering the turn', (m) => ({ ...m, blocks: addTurn(m.blocks, turnId, turn, n, Date.now()) }));
+  changeChatTurnsToRead(st, $, 'remembering the turn', async (m) => {
+    const s = await stats;
+    return { ...m, blocks: addTurn(m.blocks, turnId, s ? { ...turn, stats: s } : turn, n, Date.now()) };
+  });
+}
+
+/** How long one read of the session's usage may take: past it, the turn's numbers go without its cost, context and limits. */
+const USAGE_DEADLINE_MS = 2_000;
+
+/** The session's usage now ($.session.usage()), checked; null when it failed, came back malformed, or took past USAGE_DEADLINE_MS; `when` names the read in a failure. */
+async function readUsage(st: State, $: EngineInterface, when: string): Promise<UsageReading | null> {
+  try {
+    const r: unknown = await within(sleeper($), $.session.usage(), USAGE_DEADLINE_MS);
+    if (r !== 'timeout') {
+      const reading = usageReadingOf(r);
+      if (!reading) throw new Error(`it came back as ${r === null ? 'null' : typeof r}, not the usage`);
+      return reading;
+    }
+    lg($, 'info', 'usage.read', { when, outcome: 'timeout', ms: USAGE_DEADLINE_MS });
+    return null;
+  } catch (error) {
+    // Said once: a usage that never reads would otherwise say so at every turn.
+    if (st.usageFailSaid) L.error(`reading the session's usage at ${when}`, error);
+    else log($, `reading the session's usage at ${when}`, error);
+    st.usageFailSaid = true;
+    return null;
+  }
+}
+
+/** The ended main turn's numbers: its tally closed with its end (`e`) and the session's usage at its start and now; undefined, logged, when that failed. */
+async function turnStats(st: State, $: EngineInterface, tally: { counts: Tally; before: Promise<UsageReading | null> }, e: TurnCompleteInput): Promise<TurnStats | undefined> {
+  try {
+    const ms = typeof e.durationMs === 'number' ? e.durationMs : Date.now() - tally.counts.startedAt;
+    const effort = st.mainEffort;
+    const [before, after] = await Promise.all([tally.before, readUsage(st, $, "the turn's end")]);
+    const stats = closeTally(tally.counts, { ms, ...(e.usage ? { usage: e.usage } : {}), ...(effort === undefined ? {} : { effort }) }, before, after);
+    lg($, 'info', 'turn.numbers', { ms: stats.ms, requests: stats.requests ?? 0, tools: Object.values(stats.tools ?? {}).reduce((n, k) => n + k, 0), agentRuns: stats.agents?.runs ?? 0, usd: stats.usd ?? -1, context: stats.context?.percent ?? -1 });
+    return stats;
+  } catch (error) {
+    log($, "counting the turn's numbers", error);
+    return undefined;
+  }
 }
 
 /** The main chat compacted: its summary filed as a turn of its own, and into the drawer; the drawer's older turns go with the memory's. */
@@ -516,9 +570,10 @@ function voice(c: Character): { who: string; color: string } {
 }
 
 /** What `c` remembers of this session, rendered for a prompt, after every write made before; '' when nothing, or not read within the caller's `ms`. */
-async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, ms: number): Promise<{ text: string; memory: MemoryStats }> {
+async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, ms: number): Promise<{ text: string; memory: MemoryStats; last?: string }> {
   let text = '';
   let memory: MemoryStats = { turns: 0, kept: 0, full: 0 };
+  let last: string | undefined;
   const landed = await chainChatTurnsToRead(
     st,
     $,
@@ -529,11 +584,12 @@ async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, 
       if (m && live()) {
         text = render(m.blocks, c.id, st.options.chatTurnsToRead, m.notes[c.id] ?? []);
         memory = memoryStats(m.blocks, st.options.chatTurnsToRead);
+        last = m.blocks.at(-1)?.turnId;
       }
     },
     ms,
   );
-  return landed ? { text, memory } : { text: '', memory: { turns: 0, kept: 0, full: 0 } };
+  return landed ? { text, memory, ...(last === undefined ? {} : { last }) } : { text: '', memory: { turns: 0, kept: 0, full: 0 } };
 }
 
 /**
@@ -765,14 +821,17 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
     const isError = res.isError === true;
     const denied = typeof res.deny === 'string';
     const output = toolOutput(res);
-    // A subagent's call is not the main turn's work: the round says it was heard, nothing more.
+    const command = call.tool === 'Bash' ? bashCommand(call) : '';
+    // The running main turn counts every call, its subagents' too: they are that turn's work.
+    if (st.tally) countToolCall(st.tally.counts, { tool: call.tool, args: call, failed: isError, denied, outcome: classifyToolCall({ tool: call.tool, isError, denied, output, command }), main: isMainLoop(e.agentId) });
+    // A subagent's call is not the main loop's own work: the round says it was heard, nothing more.
     if (!isMainLoop(e.agentId)) {
       roundEvent(st, $, toolLines(Date.now(), { tool: call.tool, args: call, output, failed: isError || denied, step: null, reaction: null, agentId: e.agentId }));
       return;
     }
     if (!st.b) return;
     const action = actionOf(call, isError || denied);
-    const reaction = react(st.b, { tool: call.tool, isError, denied, output, command: call.tool === 'Bash' ? bashCommand(call) : '', action }, Math.random);
+    const reaction = react(st.b, { tool: call.tool, isError, denied, output, command, action }, Math.random);
     roundEvent(st, $, toolLines(Date.now(), { tool: call.tool, args: call, output, failed: isError || denied, step: action ? (didOf([action])[0] ?? null) : null, reaction }));
     refresh(st, $);
   } catch (error) {
@@ -786,6 +845,15 @@ function onTurnStep(st: State, $: EngineInterface, e: TurnStepInput): void {
     st.mainEffort = observeEffort(st.mainEffort, e, st.mainTurn);
   } catch (error) {
     log($, "recording the main chat's effort", error);
+  }
+}
+
+/** A model request of the running main turn ended (`r`, the step's result): counted, with why it stopped; a subagent's or a side request's is not. */
+function onTurnStepped(st: State, $: EngineInterface, e: TurnStepInput, r: TurnStepResult | undefined): void {
+  try {
+    if (st.tally && isMainLoop(e.agentId) && e.turnId === st.tally.counts.turnId) countStep(st.tally.counts, r?.stopReason ?? null);
+  } catch (error) {
+    log($, 'counting a model request', error);
   }
 }
 
@@ -805,6 +873,7 @@ function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
   try {
     st.mainTurn = e.turnId;
     st.turnStarts++;
+    st.tally = { counts: openTally(e.turnId, Date.now(), st.lastMainEndAt), before: readUsage(st, $, "the turn's start") };
     st.prompts = startPromptTurn(st.prompts, e.turnId, e.text);
     openRound(st, $, e.turnId, e.text);
     const prompt = cleanPrompt(e.text);
@@ -818,19 +887,29 @@ function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
   }
 }
 
+/** An ended main turn as onTurnEnd hands it on: the prompt that started it, its origin when not the user's, its tally (null when its start was not seen). */
+type Ended = { prompt: string; from?: string; tally: { counts: Tally; before: Promise<UsageReading | null> } | null };
+
 /**
  * A main turn ended, however, before any hook beneath runs (turn.complete):
  * it is no longer the running one, and it uses up the prompt that started it,
  * returned for onTurnComplete to file; null for a subagent's end. Runs with no
  * character loaded too, and whatever the hooks beneath do.
  */
-function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): { prompt: string; from?: string } | null {
+function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): Ended | null {
   try {
-    if (!isMainLoop(e.agentId)) return null;
+    if (!isMainLoop(e.agentId)) {
+      // A subagent's run ended inside the running main turn: counted there, with what it spent.
+      if (st.tally) countAgentRun(st.tally.counts, e.usage);
+      return null;
+    }
     if (st.mainTurn === e.turnId) st.mainTurn = undefined;
+    const tally = st.tally?.counts.turnId === e.turnId ? st.tally : null;
+    st.tally = null;
+    st.lastMainEndAt = Date.now();
     const ended = endPromptTurn(st.prompts, e.turnId);
     st.prompts = ended.ledger;
-    return ended.from === undefined ? { prompt: ended.prompt } : { prompt: ended.prompt, from: ended.from };
+    return { prompt: ended.prompt, ...(ended.from === undefined ? {} : { from: ended.from }), tally };
   } catch (error) {
     log($, 'the end of a turn', error);
     return null;
@@ -838,7 +917,7 @@ function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): { promp
 }
 
 /** A main turn's end, `ended` its prompt (onTurnEnd): the tally, the chatTurnsToRead turns, and the end-of-turn call. */
-function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, ended: { prompt: string; from?: string } | null): void {
+function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, ended: Ended | null): void {
   try {
     // Only the main loop's end is the turn's end: a subagent's leaves the main turn's tally whole.
     if (!ended || !st.b) return;
@@ -849,9 +928,14 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     const answered = e.reason === 'answer' && !e.isAborted;
     const did = didOf(st.b.turn.actions);
     const from = ended.from === undefined ? {} : { from: ended.from };
-    if (answered && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from });
+    // Its numbers, counted as it ran, once the session's usage is read: filed with the turn, and on its row in the drawer.
+    const stats = ended.tally ? turnStats(st, $, ended.tally, e) : Promise.resolve(undefined);
+    if (answered && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from }, stats);
     // The drawer says whether the buddy read the turn: one interrupted never reaches its memory.
     changeFeed(st, $, 'the turn read', (f) => markRead(f, e.turnId, answered && st.interactive));
+    stats.then((s) => {
+      if (s) changeFeed(st, $, 'the turn numbers', (f) => markNumbers(f, e.turnId, statsBrief(s)));
+    }).catch((error) => log($, "showing the turn's numbers", error));
     roundEvent(st, $, turnEndSection(Date.now(), { turnId: e.turnId, reason: e.isAborted ? 'aborted' : e.reason, prompt: ended.prompt, answer: typeof e.answer === 'string' ? e.answer : '', did, ...from }));
     const gate: TurnGate = { answered, hidden: st.hidden, interactive: st.interactive, bandSeen: st.bandSeen, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt };
     const may = turnMay(gate);
@@ -887,6 +971,8 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
   st.roundBubble = null;
   st.prompts = NO_PROMPTS;
   st.mainTurn = undefined;
+  st.tally = null;
+  st.lastMainEndAt = undefined;
   st.conversation++;
   st.turnGen++;
   if (st.harnessSuggestion !== null) lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-stale' });
@@ -1055,7 +1141,8 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
         const [remembered, settings] = await Promise.all([readChatTurnsToRead(st, $, c, TURN_DEADLINE_MS), callSettings(st, $, 'turn.settings')]);
         // Past the deadline already: no completion is sent that nobody waits for.
         if (late) return 'timeout' as const;
-        const prompt = turnPrompt(t, remembered.text);
+        // The memory holds the turn just ended, what Claude did and its numbers with it: the prompt points there.
+        const prompt = turnPrompt(t, remembered.text, remembered.last === turnId);
         lg($, 'debug', 'turn.prompt', { length: prompt.length });
         // Abandoned the margin past the deadline, however late it is sent.
         const timeoutMs = requestTimeoutMs(TURN_DEADLINE_MS, (await $.clock.now()) - t0);
@@ -1920,6 +2007,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
     mainEffort: undefined,
     prompts: NO_PROMPTS,
     mainTurn: undefined,
+    tally: null,
+    lastMainEndAt: undefined,
+    usageFailSaid: false,
     conversation: 0,
     turnStarts: 0,
     lastTurnId: undefined,
@@ -2005,10 +2095,12 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return r;
   });
 
-  // The main chat's effort reaches the plugin only on its requests: recorded, then the stream passes through untouched.
+  // The main chat's effort reaches the plugin only on its requests: recorded, then the stream passes through untouched, and the request is counted with why it stopped.
   on('turn.step', async function* ($, e, next) {
     onTurnStep(st, $, e);
-    return yield* next(e);
+    const r = yield* next(e);
+    onTurnStepped(st, $, e, r);
+    return r;
   });
 
   // With suggestNextPrompt on, the engine's own guess is held back: the buddy's end-of-turn call writes suggestNextPrompt instead.

@@ -2,7 +2,7 @@ import type { On } from 'claude-code';
 import { describe, expect, mock, test } from 'claude-code/testing';
 import { SHORTCUTS, guideRows } from '../hooks/drawer.tsx';
 import { roll } from '../src/hatch.ts';
-import { CHARACTER_RULE, memoryRule } from '../src/prompts.ts';
+import { CHARACTER_RULE, JUST_ENDED, memoryRule } from '../src/prompts.ts';
 
 // Run with `claude plugin test plugins/buddy` (CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1).
 // The plugin loads from this folder; `on` here sits beneath it and answers
@@ -203,6 +203,11 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     return { value: { usage, ...answer } } as never;
   });
   return { logs, completes, clock, commands, saved, writes, opens, closes, files, focuses, gets, slow, suggested, origins, submit };
+}
+
+/** A prompt without its turns' numbers lines: for a test of what is filed, not of the numbers. */
+function withoutNumbers(p: string): string {
+  return p.replace(/^Numbers: .*\n/gm, '');
 }
 
 /** The user's prompt entering while idle, and the main turn `turnId` it starts. */
@@ -974,7 +979,9 @@ describe('hook paths', () => {
     expect(w.completes[0]?.timeoutMs).toBeGreaterThan(34_900);
     expect(w.completes[0]?.prompt).toContain('The user asked Claude:\nlist the files');
     expect(w.completes[0]?.prompt).toContain('Claude answered:\nT1');
-    expect(w.completes[0]?.prompt).toContain('Tools used: Bash. Failures: 0. Last shell command: ls.');
+    // The memory holds the turn just ended, its numbers under what it did, and the prompt points there.
+    expect(w.completes[0]?.prompt).toMatch(/Claude did: ran ls\nNumbers: \d+s · 1 tool call \(Bash 1\)\nClaude answered:\nT1\n/);
+    expect(w.completes[0]?.prompt.endsWith(`\n\n${JUST_ENDED}`)).toBe(true);
     // An untagged reply is the commentAfterEachTurn alone.
     expect(await shows(ui, /A completed answer\./)).toBe(true);
     const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
@@ -1059,7 +1066,7 @@ describe('hook paths', () => {
     await $.command.run(run('what did Claude do?'));
     await w.clock.settle();
     const p = w.completes.at(-1)!.prompt;
-    expect(p).toContain('Turn 1. The user asked Claude:\nfix the login bug\nClaude did: Run the tests; edited a.ts\nClaude answered:\nFixed\nIt works.');
+    expect(withoutNumbers(p)).toContain('Turn 1. The user asked Claude:\nfix the login bug\nClaude did: Run the tests; edited a.ts\nClaude answered:\nFixed\nIt works.');
     expect(p).not.toMatch(/SECRET_OUTPUT|SUBAGENT_STEP|rules/);
   });
 
@@ -1101,7 +1108,7 @@ describe('hook paths', () => {
     }
     await $.command.run(run('what did you say about the first turn?'));
     await w.clock.settle();
-    const p = w.completes.at(-1)!.prompt;
+    const p = withoutNumbers(w.completes.at(-1)!.prompt);
     // Turn 1 and its comment and suggestion are gone together; turn 2 is the oldest remembered, its own comment and suggestion under it.
     expect(p).not.toMatch(/ask number 1\b|comment on 1\.|next after 1\b/);
     expect(p).toContain("Turn 1. The user asked Claude:\nask number 2\nClaude answered:\nreply number 2\n- After this turn, you commented: comment on 2.\n  With it, you suggested the user's next prompt: next after 2\n\nTurn 2. The user asked Claude:\nask number 3");
@@ -1147,7 +1154,8 @@ describe('hook paths', () => {
     await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
-    expect(w.completes[0]?.prompt).toContain('Tools used: Bash. Failures: 0. Last shell command: ls.');
+    // The subagent's call and run are counted apart from the main loop's own.
+    expect(w.completes[0]?.prompt).toMatch(/\nNumbers: \d+s · 1 tool call \(Bash 1\) · 1 subagent run: 1 tool call\n/);
     await ui.unmount();
   });
 
@@ -1170,7 +1178,7 @@ describe('hook paths', () => {
     expect(last.indexOf('ask number 2')).toBeGreaterThan(-1);
     expect(last.indexOf('ask number 2')).toBeLessThan(last.indexOf('ask number 3'));
     expect(last.indexOf('ask number 3')).toBeLessThan(last.indexOf('reply number 5'));
-    expect(last.endsWith('In the turn that just ended: Tools used: none. Failures: 0. Last shell command: none.')).toBe(true);
+    expect(last.endsWith(`\n\n${JUST_ENDED}`)).toBe(true);
     await ui.unmount();
   });
 
@@ -1596,7 +1604,7 @@ describe('the end-of-turn call, turn by turn', () => {
     await $.turn.start({ text: 'second ask', turnId: 't2' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'second reply', isAborted: false, turnId: 't2' } as never);
     await w.clock.settle();
-    const last = w.completes.at(-1)!.prompt;
+    const last = withoutNumbers(w.completes.at(-1)!.prompt);
     expect(last).toContain('The user asked Claude:\nfirst ask\nClaude answered:\nfirst reply');
     expect(last).toContain('The user asked Claude:\nsecond ask\nClaude answered:\nsecond reply');
     await ui.unmount();
@@ -1720,7 +1728,7 @@ describe('the re-audit fixes', () => {
     await $.turn.start({ text: 'second ask', turnId: 't2' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'second reply', isAborted: false, turnId: 't2' } as never);
     await w.clock.settle();
-    const last = w.completes.at(-1)!.prompt;
+    const last = withoutNumbers(w.completes.at(-1)!.prompt);
     expect(last).toContain('The user asked Claude:\nsecond ask\nClaude answered:\nsecond reply');
     expect(last).not.toContain('peer says hi');
     await ui.unmount();
@@ -1765,7 +1773,7 @@ describe('the re-audit fixes', () => {
     await prompt($, 'new ask', 't2');
     await $.turn.complete({ reason: 'answer', answer: 'new reply', isAborted: false, turnId: 't2' } as never);
     await w.clock.settle();
-    const last = w.completes.at(-1)!.prompt;
+    const last = withoutNumbers(w.completes.at(-1)!.prompt);
     expect(last).toContain('The user asked Claude:\nnew ask\nClaude answered:\nnew reply');
     expect(last).not.toContain('old ask');
     expect(last).not.toContain('queued old');
@@ -2313,5 +2321,108 @@ describe('memory: whole messages, compactions, retries, and the drawer spanning 
     const cost = records(w).filter((r) => r.event === 'call.cost');
     expect(cost).toHaveLength(1);
     expect(cost[0]).toMatchObject({ kind: 'endOfTurn', outcome: 'answered', inTok: 1, outTok: 1, memTurns: 1, memFull: 20_005, memKept: 4800 + 2400 + 3 + 5 });
+  });
+});
+
+describe("a turn's numbers", () => {
+  test('counted as the turn runs, filed with it in memory.json, read by the end-of-turn call under what Claude did, and shown in brief on its row in the drawer', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Counted.\nSUGGEST_NEXT_PROMPT: NONE' } });
+    let usageReads = 0;
+    on('session.usage', async () => {
+      usageReads++;
+      return { value: usageReads === 1
+        ? { startedAt: 0, context: { tokens: 20_000, window: 200_000 }, rateLimits: [], cost: { usd: 1 } }
+        : { startedAt: 0, context: { tokens: 50_000, window: 200_000, percent: 25 }, rateLimits: [{ kind: 'five_hour', percentUsed: 71 }], cost: { usd: 1.42 } } } as never;
+    });
+    on('turn.step', async function* (_$, e) {
+      return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: e.index === 1 ? 'max_tokens' : 'tool_use', usage: null } as never;
+    });
+    on('tool.call', async (_$, e) => ((e as { command?: string }).command === 'npm test'
+      ? { result: { stdout: 'Tests  3 passed (3)' }, text: 'Tests  3 passed (3)', isError: false }
+      : { result: { stdout: 'ok' }, text: 'ok', isError: false }) as never);
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 160, maxRows: 40 });
+    await prompt($, 'ship it', 't1');
+    for (const input of [{ turnId: 't1', index: 0, model: 'opus', effort: 'medium', messageCount: 1 }, { turnId: 't1', index: 1, model: 'opus', effort: 'medium', messageCount: 3 }, { turnId: 's1', index: 0, model: 'opus', messageCount: 1, agentId: 'sub1' }]) {
+      const stream = $.turn.step(input as never);
+      for (let s = await stream.next(); !s.done; s = await stream.next());
+    }
+    await $.tool.call({ tool: 'Bash', command: 'npm test' } as never);
+    await $.tool.call({ tool: 'Edit', file_path: 'src/a.ts', old_string: 'x', new_string: 'y' } as never);
+    await $.tool.call({ tool: 'Bash', command: 'git commit -m "ship"' } as never);
+    await $.tool.call({ tool: 'Grep', pattern: 'x', agentId: 'sub1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'sub done', isAborted: false, turnId: 's1', agentId: 'sub1', usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-haiku-5' } } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Shipped.', isAborted: false, turnId: 't1', durationMs: 134_000, usage: { input_tokens: 1_000, output_tokens: 2_000, cache_read_input_tokens: 9_000, cache_creation_input_tokens: 0, model: 'claude-opus-5' } } as never);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filed = (memory(w) as any).blocks.find((b: { turnId?: string }) => b.turnId === 't1').turn.stats;
+    expect(filed).toMatchObject({
+      ms: 134_000, requests: 2, tools: { Bash: 2, Edit: 1 }, agents: { runs: 1, tools: 1, tokens: 150 }, files: { read: 0, edited: 1, wrote: 0 }, lines: { added: 1, removed: 1 },
+      tests: { passed: 1, failed: 0 }, git: { commits: 1, pushes: 0 }, stops: { maxTokens: 1, contextFull: 0 }, tokens: { in: 1_000, out: 2_000, cacheRead: 9_000, cacheWrite: 0 },
+      model: 'claude-opus-5', effort: 'medium', context: { percent: 25, window: 200_000 }, limits: { fiveHour: 71 },
+    });
+    expect(filed.usd.toFixed(2)).toBe('0.42');
+    expect(usageReads).toBe(2);
+    expect(w.completes[0]!.prompt).toContain(
+      'Turn 1. The user asked Claude:\nship it\nClaude did: ran npm test; edited a.ts; ran git commit -m "ship"\n' +
+        'Numbers: 2m14s · 2 model requests · 3 tool calls (Bash 2, Edit 1) · 1 subagent run: 1 tool call, 150 tokens · files 1 edited · lines +1 −1 · test runs 1 passed · 1 commit · ' +
+        'cut at max tokens 1× · tokens 10k in (90% cached), 2k out · $0.42 · context 25% full of 200k · 5-hour limit 71% used · on opus-5 at medium effort\nClaude answered:\nShipped.',
+    );
+    expect(w.completes[0]!.prompt.endsWith(`\n\n${JUST_ENDED}`)).toBe(true);
+    expect(records(w).find((r) => r.event === 'turn.numbers')).toMatchObject({ ms: 134_000, requests: 2, tools: 3, agentRuns: 1, context: 25 });
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(JSON.stringify(await ui.drawn())).toContain('2m14s · 4 tools · $0.42');
+    // A subagent still running after the turn ended counts toward no turn.
+    await $.tool.call({ tool: 'Grep', pattern: 'late', agentId: 'sub2' } as never);
+    await prompt($, 'next', 't2');
+    await $.turn.complete({ reason: 'answer', answer: 'Next.', isAborted: false, turnId: 't2', durationMs: 1_000 } as never);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const second = (memory(w) as any).blocks.find((b: { turnId?: string }) => b.turnId === 't2').turn.stats;
+    expect(second.agents).toBeUndefined();
+    expect(typeof second.gapMs).toBe('number');
+    // The kit has no ui.scroll for the open drawer; nothing else failed.
+    expect(w.logs.filter((l) => /failed:/.test(l) && !/no implementation for ui\.scroll/.test(l))).toEqual([]);
+    await ui.unmount();
+  });
+
+  test("a session usage that comes back malformed is said once: the turn is still filed, with its numbers and without the cost, context and limits", async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('session.usage', async () => ({ value: 'offline' }) as never);
+    await $.session.start(START);
+    const ui = await band($);
+    for (const n of [1, 2]) {
+      await prompt($, `ask ${n}`, `t${n}`);
+      await $.turn.complete({ reason: 'answer', answer: `reply ${n}`, isAborted: false, turnId: `t${n}`, durationMs: 5_000 } as never);
+      await w.clock.settle();
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stats = (memory(w) as any).blocks.filter((b: { turn?: unknown }) => b.turn).map((b: { turn: { stats: unknown } }) => b.turn.stats);
+    expect(stats).toHaveLength(2);
+    for (const s of stats) {
+      expect(s.ms).toBe(5_000);
+      expect(s.usd).toBeUndefined();
+      expect(s.context).toBeUndefined();
+    }
+    expect(w.logs.filter((l) => /reading the session's usage at the turn's (start|end) failed: it came back as string, not the usage/.test(l))).toHaveLength(1);
+    expect(records(w).filter((r) => r.event === "reading the session's usage at the turn's start" || r.event === "reading the session's usage at the turn's end").length).toBeGreaterThanOrEqual(4);
+    await ui.unmount();
+  });
+
+  test('a session usage that never answers holds the turn USAGE_DEADLINE_MS at most: filed without the cost, the timeout logged', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('session.usage', () => new Promise(() => undefined) as never);
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'ask', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'reply', isAborted: false, turnId: 't1', durationMs: 7_000 } as never);
+    await w.clock.advance(2_000);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((memory(w) as any).blocks.find((b: { turnId?: string }) => b.turnId === 't1').turn.stats).toEqual({ ms: 7_000 });
+    expect(records(w).filter((r) => r.event === 'usage.read').map((r) => r.outcome)).toEqual(['timeout', 'timeout']);
+    expect(w.completes).toHaveLength(1);
+    await ui.unmount();
   });
 });

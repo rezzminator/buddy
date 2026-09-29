@@ -221,3 +221,25 @@ describe('the store', () => {
     expect(memoryStats([], 4)).toEqual({ turns: 0, kept: 0, full: 0 });
   });
 });
+
+describe("a turn's numbers", () => {
+  const stats = { ms: 134_000, requests: 2, tools: { Bash: 2 }, model: 'claude-opus-5', effort: 'low' };
+  test('kept with the turn, read back from the file, and said under what Claude did; the model again only when it changed', () => {
+    let b = addTurn([], 't1', { prompt: 'one', answer: 'One.', did: ['ran ls'], stats }, 4, 1);
+    b = addTurn(b, 't2', { prompt: 'two', answer: 'Two.', stats: { ...stats, ms: 3_000 } }, 4, 2);
+    b = addTurn(b, 't3', { prompt: 'three', answer: 'Three.', stats: { ms: 1_000, requests: 1, model: 'claude-sonnet-5' } }, 4, 3);
+    const back = chatTurnsToReadOf(JSON.parse(JSON.stringify({ blocks: b }))).blocks;
+    expect(back).toEqual(b);
+    const r = render(back, 'cat', 4);
+    expect(r).toContain('Turn 1. The user asked Claude:\none\nClaude did: ran ls\nNumbers: 2m14s · 2 model requests · 2 tool calls (Bash 2) · on opus-5 at low effort\nClaude answered:\nOne.');
+    expect(r).toContain('Turn 2. The user asked Claude:\ntwo\nNumbers: 3s · 2 model requests · 2 tool calls (Bash 2)\nClaude answered:');
+    expect(r).toContain('Turn 3. The user asked Claude:\nthree\nNumbers: 1s · 1 model request · on sonnet-5\nClaude answered:');
+  });
+  test('a turn whose stored numbers are malformed is dropped, as one with malformed steps is; a turn kept before the numbers has none', () => {
+    const b = [{ turnId: 't1', turn: { prompt: 'p', answer: 'a', stats: { ms: 'slow' } }, characters: {} }, { turnId: 't2', turn: { prompt: 'q', answer: 'b' }, characters: {} }];
+    const back = chatTurnsToReadOf({ blocks: b }).blocks;
+    expect(back.map((x) => x.turnId)).toEqual(['t2']);
+    expect(render(back, 'cat', 4)).not.toContain('Numbers:');
+  });
+});
+

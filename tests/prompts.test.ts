@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ASKED_PROMPT_MAX_CHARS, ASKED_PROMPT_RULE, CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, DESIRE_MAX_CHARS, MEMORY_LINE, VERDICTS, lostThread, memoryRule, oneLine, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
+  ASKED_PROMPT_MAX_CHARS, ASKED_PROMPT_RULE, CHARACTER_RULE, ONE_LINE_RULE, SUGGEST_NEXT_PROMPT_MAX_CHARS, TURN_DEADLINE_MS, TURN_MAX_TOKENS, DESIRE_MAX_CHARS, JUST_ENDED, MEMORY_LINE, VERDICTS, lostThread, memoryRule, oneLine, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, suggestNextPromptText, turnPrompt, turnSystem,
 } from '../plugins/buddy/src/prompts.ts';
 
 describe('prompts', () => {
@@ -37,6 +37,11 @@ describe('chatTurnsToRead in the prompts', () => {
     expect(questionPrompt('what word', chatTurnsToRead)).toBe(`${chatTurnsToRead}\n\nThe user asks you directly: what word`);
     const tp = turnPrompt({ tools: ['Read'], failures: 0, lastBash: '', actions: [] }, chatTurnsToRead);
     expect(tp).toBe(`${chatTurnsToRead}\n\nIn the turn that just ended: Tools used: Read. Failures: 0. Last shell command: none.`);
+  });
+  test('a memory holding the turn just ended is pointed to, never repeated; an empty one still gets what the turn did', () => {
+    const t = { tools: ['Read'], failures: 0, lastBash: '', actions: [] };
+    expect(turnPrompt(t, chatTurnsToRead, true)).toBe(`${chatTurnsToRead}\n\n${JUST_ENDED}`);
+    expect(turnPrompt(t, '', true)).toBe('In the turn that just ended: Tools used: Read. Failures: 0. Last shell command: none.');
   });
   test('nothing remembered: the question alone', () => {
     expect(questionPrompt('hi', '')).toBe('The user asks you directly: hi');

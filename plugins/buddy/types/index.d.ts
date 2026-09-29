@@ -16,6 +16,7 @@ declare module 'claude-code' {
         taken?: boolean;
         turnId?: string;
         read?: boolean;
+        numbers?: string;
         verdict?: 'RIGHT' | 'SHORTCUT' | 'WRONG';
         desire?: string;
       }[];

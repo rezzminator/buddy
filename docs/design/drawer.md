@@ -60,7 +60,7 @@ Every text is whole: no entry is cut and the feed has no length cap, so the tab 
 
 | Section | Opened by |
 | --- | --- |
-| `{hh:mm}  you → Claude: {prompt}` | a main turn's start; `· interrupted, {name} never read it` when the turn ended unanswered and was not filed (`markRead`) |
+| `{hh:mm}  you → Claude: {prompt}` | a main turn's start; once it ends, its numbers in brief, `· 4m12s · 104 tools · $0.42` (`markNumbers`, `statsBrief`); `· interrupted, {name} never read it` when the turn ended unanswered and was not filed (`markRead`) |
 | `{hh:mm}  chat compacted · {name} read its summary: {summary}` | a compaction of the main chat, filed into the memory as a turn |
 | `{hh:mm}  new conversation` | `/clear` |
 

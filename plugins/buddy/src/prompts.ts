@@ -6,6 +6,7 @@
 // Each demands short lines.
 
 import type { Action } from './did.ts';
+import type { TurnStats } from './stats.ts';
 import { NOTES_MAX, cleanNotes } from './chatTurnsToRead.ts';
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
@@ -181,9 +182,11 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
  * per step, didOf; absent when it used no tool), and what Claude answered.
  * `from`, set when that prompt was not known to be the user's: its origin (a
  * peer, a task notification, a plugin), `unclassified` when the engine could
- * not place it, or `unknown` when no submission of it was seen.
+ * not place it, or `unknown` when no submission of it was seen. `stats`: its
+ * numbers (src/stats.ts), counted as it ran; absent for a compaction, or a
+ * turn remembered before they were kept.
  */
-export type Turn = { prompt: string; answer: string; did?: string[]; from?: string };
+export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
@@ -258,8 +261,17 @@ export function endsConversation(reason: string): boolean {
   return reason === 'clear' || reason === 'resume';
 }
 
-/** The end-of-turn call's prompt: what the buddy remembers (its chatTurnsToRead, rendered, the turn just ended its last), then what the turn did. */
-export function turnPrompt(t: TurnSummary, chatTurnsToRead = ''): string {
+/** The end-of-turn prompt's last line when the memory holds the turn just ended. */
+export const JUST_ENDED = 'The turn that just ended is the last one above.';
+
+/**
+ * The end-of-turn call's prompt: what the buddy remembers (its chatTurnsToRead,
+ * rendered). When it holds the turn just ended (`holdsTurn`, its last, with
+ * what Claude did and its numbers), a pointer to it; else, its memory missing
+ * that turn, what the turn did, counted here.
+ */
+export function turnPrompt(t: TurnSummary, chatTurnsToRead = '', holdsTurn = false): string {
+  if (holdsTurn && chatTurnsToRead) return `${chatTurnsToReadBlock(chatTurnsToRead)}${JUST_ENDED}`;
   return `${chatTurnsToReadBlock(chatTurnsToRead)}In the turn that just ended: ${turnFacts(t)}`;
 }
 

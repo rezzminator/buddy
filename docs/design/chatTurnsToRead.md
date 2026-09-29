@@ -6,7 +6,7 @@ It is one timeline per session, and every question and end-of-turn call reads it
 
 ## What it remembers
 
-The timeline is a list of blocks, oldest first, one per answered main-chat turn or compaction (`Block`): the turn's prompt, what Claude did and Claude's answer, under its `turnId`, when it was filed (`at`), how long its prompt and answer were before the cut (`full`), and each character's exchanges after it.
+The timeline is a list of blocks, oldest first, one per answered main-chat turn or compaction (`Block`): the turn's prompt, what Claude did, its numbers and Claude's answer, under its `turnId`, when it was filed (`at`), how long its prompt and answer were before the cut (`full`), and each character's exchanges after it.
 Only the first block may have no turn: what was said before the first turn remembered, such as the greeting.
 
 | Exchange | Holds |
@@ -30,6 +30,34 @@ Beside the timeline, each character keeps its own notes on the chat (`Notes`), w
 - **Leading what it remembers.** `render` puts them first, before the timeline, so every question and end-of-turn call reads them: `Your own notes on this chat, which you keep and rewrite yourself:` (`renderNotes`).
 - **Per chat and per character,** kept in the same `memory.json` as the timeline (`Stored.notes`), so a `/clear` starts with none and a reopened chat finds them again.
 - **Said when they change.** The drawer's thread shows each rewrite as `✎ {name}'s notes`, one bullet per note; `notes.outcome` logs `rewritten`, `cleared` or `unchanged`, with the count.
+
+## The numbers
+
+Each turn is filed with its numbers (`TurnStats`, [`src/stats.ts`](../../plugins/buddy/src/stats.ts)), counted in code as the turn runs, never by a model: the adapter opens a tally at `turn.start` (`openTally`), counts each of the main loop's model requests with why it stopped at `turn.step` (`countStep`), each tool call at `tool.call` (`countToolCall`), each subagent run that ends inside the turn with the tokens it spent (`countAgentRun`), and closes it at `turn.complete` with the turn's time, the main loop's tokens and model, the effort of its latest request, and the session's usage read at its start and its end (`closeTally`, `$.session.usage()`, at most 2 s each, checked at entry by `usageReadingOf`). The model reads them as one line under what Claude did (`renderStats`), a few dozen tokens:
+
+| Part | Counted from | Said |
+| --- | --- | --- |
+| time, gap | `turn.complete`'s `durationMs`; the previous main turn's end to this start | `4m12s, after a 14m00s pause` |
+| model requests | the main loop's `turn.step`s | `31 model requests` |
+| tool calls | the main loop's `tool.call`s, by tool (an MCP tool by its own name, its server dropped); errored, refused, and shell commands run again unchanged | `47 tool calls (Bash 20, Edit 12, Read 10, Grep 3, 2 more kinds), 3 failed, 1 denied, 2 shell commands run again unchanged` |
+| subagents | subagent runs ended, their calls and every token they spent | `2 subagent runs: 57 tool calls, 340k tokens` |
+| files, hot file | distinct paths read, edited, written; the file edited 3 times or more (`HOT_EDITS`) | `files 8 read, 5 edited, 1 written; buddy.tsx edited 9×` |
+| lines | an edit's old and new text, their shared first and last lines left out; a write's every line | `lines +212 −47` |
+| test runs | a test runner's summary (`classifyToolCall`) | `test runs 2 passed, 1 failed` |
+| git | `git commit` and `git push` where a command starts, past git's options | `1 commit, 1 push` |
+| web | `WebFetch`, `WebSearch`, a harvester, fetch, web or browser MCP tool | `3 web reads` |
+| stops | responses cut at max tokens; requests the context window could not hold | `cut at max tokens 1×` |
+| tokens | the main loop's, as `turn.complete` sums them | `tokens 1.2M in (95% cached), 18k out` |
+| cost | the session's cost at the end less at the start, as `/cost` counts it | `$0.42` |
+| context | the window after the turn | `context 62% full of 200k` |
+| limits | the 5-hour and weekly windows, said from 50% used (`LIMIT_SAID_PERCENT`) | `5-hour limit 71% used` |
+| model, effort | the model that answered; the effort of the last request; said for a turn that asked a model anything, again only when it changed from the turn before | `on opus-5 at xhigh effort` |
+
+- **Only what happened.** A group that stayed zero is left out, stored and said; a call that failed touches no file, line, commit or web read, only its failure count.
+- **The whole turn's work.** The main loop's own calls are counted by name, its subagents' in one number; what a call did (files, lines, tests, git, web) counts whoever made it. A subagent still running after the turn ended counts toward none.
+- **A read that fails is said.** A usage that fails or comes back malformed is said once in the transcript and logged every time; one that takes past 2 s logs `usage.read` `timeout`. Either way the turn is filed with its other numbers, without the cost, context and limits.
+- **The end-of-turn call points, never repeats.** Its memory holds the turn just ended, what Claude did and its numbers with it, so the prompt ends `The turn that just ended is the last one above.` (`JUST_ENDED`); only a memory missing that turn gets the tally counted here (`Tools used: …`).
+- **In the drawer too.** The turn's row in the talk tab carries them in brief once it ends: `4m12s · 104 tools · $0.42` (`statsBrief`, `markNumbers`). Each turn logs `turn.numbers`: its time, requests, tool calls, subagent runs, cost and context.
 
 ## How a turn is filtered
 
@@ -90,6 +118,7 @@ Before those turns:
 Turn 1. The user asked Claude:
 fix the login bug
 Claude did: read auth.ts, session.ts; Run the auth tests (failed); edited session.ts; Run the auth tests
+Numbers: 2m14s · 9 model requests · 5 tool calls (Bash 2, Read 2, Edit 1), 1 failed · files 2 read, 1 edited · lines +3 −1 · test runs 1 passed, 1 failed · tokens 240k in (91% cached), 3.1k out · $0.21 · context 38% full of 200k · on opus-5 at high effort
 Claude answered:
 Fixed it: the session cookie was never refreshed.
 - After this turn, you commented: Tests pass, but the lockfile moved.
@@ -99,6 +128,8 @@ Fixed it: the session cookie was never refreshed.
 
 Turn 2. The user asked Claude:
 commit the lockfile
+Claude did: Commit the lockfile
+Numbers: 11s, after a 1m05s pause · 2 model requests · 1 tool call (Bash 1) · 1 commit · tokens 250k in (99% cached), 90 out · $0.03 · context 39% full of 200k
 Claude answered:
 Committed.
 ```
@@ -108,7 +139,7 @@ A question that got no answer reads `You gave no answer.` under it; a turn whose
 | Call | What it gets |
 | --- | --- |
 | a question | the block, then the question (`questionPrompt`); its system prompt carries the memory rule (`oneLineSystem`, `memoryRule`) |
-| the end-of-turn call | the block, the turn just ended its last, then that turn's tally (`turnPrompt`) |
+| the end-of-turn call | the block, the turn just ended its last, then a pointer to it (`turnPrompt`, `JUST_ENDED`); the tally counted here only when the block misses that turn |
 
 The memory rule tells the character how far its memory reaches, in turns, and to say in character that its short-term memory doesn't reach that far when asked about anything older, never guessing or making it up.
 The block is read once, when the question is asked, so it holds what came before the question; the question joins the timeline with its answer.
@@ -155,10 +186,11 @@ A stored record that is malformed keeps what still reads and says how many entri
 | [`src/chatTurnsToRead.ts`](../../plugins/buddy/src/chatTurnsToRead.ts) | `CHAT_TURNS_TO_READ_DEFAULT`, `CHAT_TURNS_TO_READ_MAX`, `Notes`, `NOTES_MAX`, `NOTE_MAX_CHARS`, `cleanNotes`, `renderNotes`, `TURN_PROMPT_HEAD`, `TURN_PROMPT_TAIL`, `TURN_ANSWER_HEAD`, `TURN_ANSWER_TAIL`, `LINES_PER_TURN_MAX`, `COMPACTION`, `CHAT_TURNS_TO_READ_KEY_PREFIX`, `CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS`, `CHAT_TURNS_TO_READ_WRITE_TRIES`, `CHAT_TURNS_TO_READ_RETRY_MS`, `Exchange`, `Block`, `Stored`, `storeKey`, `keepText`, `ends`, `cleanPrompt`, `cleanAnswer`, `addTurn`, `addCompaction`, `memoryStats`, `addExchange`, `render`, `chatTurnsToReadOf` |
 | [`src/chatFolder.ts`](../../plugins/buddy/src/chatFolder.ts) | `BUDDY_FOLDER`, `MEMORY_FILE`, `projectsDir`, `projectSlug`, `isSessionId`, `transcriptPath`, `buddyFolder` |
 | [`src/did.ts`](../../plugins/buddy/src/did.ts) | `DID_MAX`, `DID_HEAD`, `DID_TEXT_CAP`, `DID_FILES_MAX`, `Action`, `FileVerb`, `actionOf`, `didOf` |
+| [`src/stats.ts`](../../plugins/buddy/src/stats.ts) | `TOOL_NAMES_MAX`, `HOT_EDITS`, `LIMIT_SAID_PERCENT`, `Tokens`, `TurnStats`, `Tally`, `UsageReading`, `usageReadingOf`, `CountedCall`, `openTally`, `countStep`, `countAgentRun`, `countToolCall`, `changedLines`, `closeTally`, `count`, `span`, `dollars`, `renderStats`, `statsBrief`, `turnStatsOf` |
 | [`src/chain.ts`](../../plugins/buddy/src/chain.ts) | `chained`, `newChain`, `latestWrites`, `LinkOutcome` |
-| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `MEMORY_LINE`, `parseTurnReply`, `memoryRule`, `oneLineSystem`, `questionPrompt`, `turnPrompt`, `Turn` |
+| [`src/prompts.ts`](../../plugins/buddy/src/prompts.ts) | `MEMORY_LINE`, `parseTurnReply`, `memoryRule`, `oneLineSystem`, `questionPrompt`, `JUST_ENDED`, `turnPrompt`, `Turn` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS` |
-| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `chatFolderFor`, `chatTurnsToReadFor`, `loadMemory`, `chainChatTurnsToRead`, `changeChatTurnsToRead`, `onToolCall`, `rememberTurn`, `rememberCompaction`, `rememberExchange`, `rememberNotes`, `completeRecorded`, `readChatTurnsToRead`, `heard`, `chatTurnsToReadFailed`, `ask`, `turnCall`, `onTurnComplete` |
+| [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `chatFolderFor`, `chatTurnsToReadFor`, `loadMemory`, `chainChatTurnsToRead`, `changeChatTurnsToRead`, `onToolCall`, `rememberTurn`, `rememberCompaction`, `rememberExchange`, `rememberNotes`, `completeRecorded`, `readChatTurnsToRead`, `heard`, `chatTurnsToReadFailed`, `ask`, `turnCall`, `onTurnComplete`, `onTurnStart`, `onTurnStepped`, `onTurnEnd`, `readUsage`, `turnStats` |
 | [`scripts/audit.mjs`](../../scripts/audit.mjs) | `npm run audit`: the `call.cost` records totalled |
 | [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `chatTurnsToRead` |
 
@@ -167,5 +199,6 @@ A stored record that is malformed keeps what still reads and says how many entri
 - Unit: [`tests/chatTurnsToRead.test.ts`](../../tests/chatTurnsToRead.test.ts): the window of turns and every exchange leaving with its turn, the turnless first block, filing under a turn and dropping one whose turn is gone, per-character exchanges kept whole and canned lines capped, the cut on turns, a compaction filed and rendered, the memory's stats, a prompt's markup and an answer's markdown dropped, what a turn did kept, the render, a malformed record said. [`tests/chatFolder.test.ts`](../../tests/chatFolder.test.ts): the projects folder, a project's folder name, the buddy folder beside the transcript, a session id that cannot name a folder. [`tests/prompts.test.ts`](../../tests/prompts.test.ts) covers the memory rule and where the block goes; [`tests/options.test.ts`](../../tests/options.test.ts) the option.
 - Unit, the notes: stored notes cleaned and read back, a malformed one dropped and counted, at most 6, leading what the character remembers; hooks: a reply's `MEMORY:` lines kept in `memory.json`, said in the drawer when they change, leading the next call and every question, kept by a reply without them, forgotten by `MEMORY: NONE`.
 - Unit: [`tests/did.test.ts`](../../tests/did.test.ts): a step per tool, bookkeeping dropped, files gathered under their verb, the caps.
+- Unit, the numbers: [`tests/stats.test.ts`](../../tests/stats.test.ts): every counter (calls by tool, failed, denied, reruns, files once each, the hot file, the changed lines, tests, commits and pushes past git's options and never in a quoted string, web reads, requests and stops, subagent runs and tokens), the cost, context and limits from the usage readings, the line with every group and the model said only on change, the drawer's brief, the short formats, a stored one read back and a malformed one refused; [`tests/chatTurnsToRead.test.ts`](../../tests/chatTurnsToRead.test.ts): kept with the turn, read back, said under what Claude did, a malformed one dropping its turn; [`tests/feed.test.ts`](../../tests/feed.test.ts): on the turn's row, and drawn back from the memory. Hooks: a turn's requests, calls, subagent run, tokens and the session's usage filed in `memory.json`, read under what Claude did by the end-of-turn call that points to it, shown on the drawer's row, and a subagent running after the turn counted toward none; a malformed usage said once, a hung one holding the turn 2 s at most, each filing the turn without the cost.
 - Hooks: a turn is remembered with what it did and never a tool's output, a subagent's steps left out; a question sees the last 4 turns and is told its reach; the fifth turn pushes out the first together with what was said after it; a question asked during a turn is filed under the turn before it; a headless session files no turn; a resumed session's question carries its stored turns; `/clear` and a resume start from another session's memory; a memory that cannot be saved is said in the next reply; a refused write is made again and lands, and is not once the next turn started; a compaction's summary reaches the next call, a precomputed or subagent one never; every call logs `call.cost`; the memory and the round files land in the chat's folder, also when its project folder is named otherwise; a memory kept in the store moves into the file and leaves the store; a reopened chat draws its memory into the drawer at once, the buddy hidden or not.
 - Live: the (j) rows ask `/buddy remember the word pineapple`, then `/buddy what word did I ask you to remember?`, expect `pineapple` in the answer, and read this chat's `memory.json`, with no `thinking` filler in it. The configuration proof's S3 runs `chatTurnsToRead: 1`: the file holds only the last turn, and a question about the turn before it is answered as out of memory.

@@ -46,17 +46,19 @@ The call speaks as the character drawn when the turn ended: what arrives after a
 Each turn is filed under its `turnId` with the prompt that started it, as `turn.start` carries it (`startPromptTurn`, `endPromptTurn`); `prompt.submit` supplies its origin (`submitPrompt`, `isUserOrigin`), so a peer message or task notification delivered into a running turn never takes the next turn's prompt, and a turn not started by the user is filed as such. The user's own origins are the terminal, Remote Control, an SDK host, the owner's Slack ping and a follow-up to the user's own action; a turn whose submission was never seen, or that the engine could not place, is shown as of unknown origin. A submission never matches the turn it was typed over, and a prompt that started no turn is dropped at the next turn's start, never handed to a later one. The running turn's marker and its prompt clear at every main `turn.complete`, before the hooks beneath it run and whether or not a character is loaded (`onTurnEnd`). Only an answered turn with a person at the prompt is filed into the `chatTurnsToRead` ([chatTurnsToRead](./chatTurnsToRead.md)), before the end-of-turn call reads it. A `/clear` or a resume (`session.end`, `endsConversation`) moves the process to another session id, and with it to another `chatTurnsToRead`; it empties the prompts, and a `/buddy` question asked before it is dropped, never shown or remembered, however its call ends, a throw included.
 `parseTurnReply` reads the reply, and `commentAfterEachTurn.outcome` carries the call's usage (`usageFields`: `inTok`, `cacheRead`, `cacheWrite`, `outTok`, `cachePct`) and `ms`, from the turn's end to the reply; when the call wrote no `commentAfterEachTurn`, `verdict.outcome` carries the usage instead, and `suggestNextPrompt.outcome` carries its `ms`.
 The system prompt (`turnSystem`) is the persona, the character rule, the second brain's charge when `suggestNextPrompt` is wanted, then the tagged lines wanted, the judgement first: `DESIRE:`, `VERDICT:` and `WHY:` ([The second brain](#the-second-brain-suggestnextprompt)); `COMMENT_AFTER_EACH_TURN:` the buddy's own reaction in character, at most 20 words, written knowing the verdict and never repeating `WHY` when both are wanted; and `SUGGEST_NEXT_PROMPT:`, following the verdict; then, always, `MEMORY:` lines, the buddy's own notes rewritten whole ([Its own notes](./chatTurnsToRead.md#its-own-notes)).
-The prompt is the `chatTurnsToRead` (the last `chatTurnsToRead` answered main-thread turns, 4 by default, 1 to 10, oldest first, each the prompt its `turn.start` carried, the user's or not, what Claude did, and Claude's answer, filtered as [chatTurnsToRead.md](chatTurnsToRead.md) says, with what the buddy and the user said after each; the turn just ended is the last), then the turn's tally (`turnPrompt`):
+The prompt is the `chatTurnsToRead` (the last `chatTurnsToRead` answered main-thread turns, 4 by default, 1 to 10, oldest first, each the prompt its `turn.start` carried, the user's or not, what Claude did, and Claude's answer, filtered as [chatTurnsToRead.md](chatTurnsToRead.md) says, with what the buddy and the user said after each, and its numbers ([The numbers](./chatTurnsToRead.md#the-numbers)); the turn just ended is the last), then a pointer to it (`turnPrompt`, `JUST_ENDED`); a memory missing that turn gets the turn's tally instead:
 
 ```text
 What you remember, oldest first:
 
 Turn 1. The user asked Claude:
 run the tests
+Claude did: read package.json, vitest.config.ts, setup.ts; Run the tests
+Numbers: 38s · 4 model requests · 4 tool calls (Read 3, Bash 1) · test runs 1 passed · tokens 96k in (88% cached), 1.4k out · $0.08 · context 21% full of 200k · on opus-5 at high effort
 Claude answered:
 All 42 pass.
 
-In the turn that just ended: Tools used: Read x3, Bash. Failures: 1. Last shell command: npm test.
+The turn that just ended is the last one above.
 ```
 
 `parseTurnReply` reads every tagged line in any order and case, bullets tolerated; an untagged reply is `commentAfterEachTurn` alone.

@@ -1,6 +1,6 @@
 // The buddy's memory, `chatTurnsToRead`: the main chat's last N answered turns,
 // each filtered to what carries meaning (the prompt without its markup, what
-// Claude did as one line per step, the start and end of its answer), and under each what the buddy and you exchanged after it, oldest first, one
+// Claude did as one line per step, its numbers as one line, the start and end of its answer), and under each what the buddy and you exchanged after it, oldest first, one
 // timeline per session. The buddy remembers of itself exactly as far back as
 // it remembers of the chat, so it never holds words about a turn it can no
 // longer see. An exchange is one /buddy question with its answer, one canned
@@ -18,6 +18,7 @@
 
 import { DID_MAX, DID_TEXT_CAP } from './did.ts';
 import type { Turn } from './prompts.ts';
+import { renderStats, turnStatsOf, type TurnStats } from './stats.ts';
 
 /** How many of the main chat's latest answered turns the buddy remembers by default: the chatTurnsToRead option's default. */
 export const CHAT_TURNS_TO_READ_DEFAULT = 4;
@@ -136,11 +137,11 @@ function capped(x: Exchange): Exchange | null {
   return answer ? { kind: 'question', question, answer } : { kind: 'question', question };
 }
 
-/** The turn cleaned and kept to the start and end of its prompt and answer, with what it did, if anything; capping it again keeps it. */
+/** The turn cleaned and kept to the start and end of its prompt and answer, with what it did, if anything, and its numbers; capping it again keeps it. */
 function cappedTurn(t: Turn): Turn {
   const turn: Turn = { prompt: ends(cleanPrompt(t.prompt), TURN_PROMPT_HEAD, TURN_PROMPT_TAIL), answer: ends(cleanAnswer(t.answer), TURN_ANSWER_HEAD, TURN_ANSWER_TAIL) };
   const did = (t.did ?? []).slice(0, DID_MAX).map((d) => (d.length > DID_TEXT_CAP ? `${d.slice(0, DID_TEXT_CAP - 1)}…` : d)).filter((d) => d);
-  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }) };
+  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }) };
 }
 
 /** The timeline with the answered turn `turnId` added last, at `at`, kept to its last `n` blocks: a turnless first block goes once `n` turns follow it. */
@@ -187,11 +188,15 @@ function dropOldLines(xs: Exchange[]): Exchange[] {
 /** Prompt origins that say nothing of whose a prompt was: no submission seen (`unknown`), or one the engine could not place. */
 const UNKNOWN_ORIGINS: readonly string[] = ['unknown', 'unclassified'];
 
-/** A remembered turn's prompt and answer; a prompt not the user's is never shown as what the user asked, one of unknown origin never said not to be. */
-function turnLines(t: Turn, k: number): string[] {
+/**
+ * A remembered turn's prompt, steps, numbers and answer; a prompt not the
+ * user's is never shown as what the user asked, one of unknown origin never
+ * said not to be. `prev`: the numbers of the turn remembered before it.
+ */
+function turnLines(t: Turn, k: number, prev?: TurnStats): string[] {
   if (t.from === COMPACTION) return [`Turn ${k}. The main chat was compacted: Claude now holds only this summary of everything before it:`, t.answer || '(no summary)'];
   const asked = t.from === undefined ? 'The user asked Claude:' : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:' : `Claude was sent, not by the user (${t.from}):`;
-  return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.did ? [`Claude did: ${t.did.join('; ')}`] : []), 'Claude answered:', t.answer || '(no text)'];
+  return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.did ? [`Claude did: ${t.did.join('; ')}`] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), 'Claude answered:', t.answer || '(no text)'];
 }
 
 /** The lines of one exchange, addressed to the character as "you": its first line a list item, the rest indented under it. */
@@ -226,10 +231,13 @@ export function render(blocks: readonly Block[], characterId: string, n: number,
   const kept = blocks.slice(-Math.max(1, n));
   const hasTurns = kept.some((b) => b.turn);
   let k = 0;
+  // The numbers of the turn before, whose model and effort a turn's numbers repeat only when they changed.
+  let prev: TurnStats | undefined;
   const parts = kept.flatMap((b) => {
     // A text of several lines stays under its item: every line after the first indented.
     const exchanges = (b.characters[characterId] ?? []).map((x) => exchangeLines(x).map((l, i) => `${i === 0 ? '- ' : '  '}${l.replace(/\n/g, '\n    ')}`).join('\n'));
-    const head = b.turn ? turnLines(b.turn, ++k) : exchanges.length > 0 ? [hasTurns ? 'Before those turns:' : 'Before any turn of the main chat:'] : [];
+    const head = b.turn ? turnLines(b.turn, ++k, prev) : exchanges.length > 0 ? [hasTurns ? 'Before those turns:' : 'Before any turn of the main chat:'] : [];
+    if (b.turn?.stats) prev = b.turn.stats;
     return head.length > 0 ? [[...head, ...exchanges].join('\n')] : [];
   });
   const timeline = parts.length > 0 ? ['What you remember, oldest first:', ...parts].join('\n\n') : '';
@@ -259,7 +267,9 @@ function turnOf(v: unknown): Turn | null {
   const t = v as Record<string, unknown>;
   if (typeof t.prompt !== 'string' || typeof t.answer !== 'string' || (t.from !== undefined && typeof t.from !== 'string')) return null;
   if (t.did !== undefined && !(Array.isArray(t.did) && t.did.every((d) => typeof d === 'string'))) return null;
-  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}) });
+  const stats = t.stats === undefined ? undefined : turnStatsOf(t.stats);
+  if (stats === null) return null;
+  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}), ...(stats ? { stats } : {}) });
 }
 
 /** Stored notes, each character's cleaned (cleanNotes); a character whose notes are not a list of text is dropped, counted in `dropped`. */
