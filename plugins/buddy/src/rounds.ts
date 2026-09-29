@@ -10,7 +10,7 @@
 // a free slot, else overwrites the one written least recently (Claude Code's $.fs can write but never
 // delete). No I/O: the adapter lists and stats the folder and writes the text.
 
-import { TAKEN_SUGGESTION } from './chatTurnsToRead.ts';
+import { BUDDY_PROMPT, BUDDY_PROMPT_LABEL, TAKEN_SUGGESTION } from './chatTurnsToRead.ts';
 
 /** The most round files the folder holds: past it the least recently written is overwritten. */
 export const ROUNDS_MAX = 150;
@@ -89,7 +89,11 @@ export function toolLines(at: number, call: { tool: string; args: Record<string,
 
 /** The turn's end as the buddy filed it into its memory: why it ended, the prompt, its origin, the steps, the answer. */
 export function turnEndSection(at: number, turn: RoundTurn): string {
-  const origin = turn.from === undefined ? 'the user' : turn.from === TAKEN_SUGGESTION ? "the user: the buddy's suggestion, unedited" : `not the user: ${turn.from}`;
+  const origin =
+    turn.from === undefined ? 'the user'
+    : turn.from === TAKEN_SUGGESTION ? "the user: the buddy's suggestion, unedited"
+    : turn.from === BUDDY_PROMPT ? BUDDY_PROMPT_LABEL
+    : `not the user: ${turn.from}`;
   return [
     '',
     rule(`IN · ${clock(at)} · the turn ended (${turn.reason}), as the buddy filed it`),

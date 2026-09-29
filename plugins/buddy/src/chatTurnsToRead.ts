@@ -40,6 +40,10 @@ export const LINES_PER_TURN_MAX = 3;
 export const COMPACTION = 'compaction';
 /** The `from` of a turn the user began with the buddy's own suggestion, sent unedited: the user's choice, the buddy's words. */
 export const TAKEN_SUGGESTION = 'taken-suggestion';
+/** The `from` of a turn the buddy's own prompt began (promptToMainChat): this plugin's own origin. */
+export const BUDDY_PROMPT = 'buddy-prompt';
+/** How the turn the buddy's own prompt began is labelled, to the buddy and in its rounds. */
+export const BUDDY_PROMPT_LABEL = 'the buddy (you), sent to Claude';
 /** The store key prefix a session's chatTurnsToRead was kept under before 1.0.0. */
 export const CHAT_TURNS_TO_READ_KEY_PREFIX = 'chatTurnsToRead:';
 /** How long one chatTurnsToRead write may take before it is abandoned and later reads and writes go ahead; a read is bounded by its caller's deadline. */
@@ -49,11 +53,11 @@ export const CHAT_TURNS_TO_READ_WRITE_TRIES = 3;
 /** How long after a failed or abandoned write the next try waits: the reads queued meanwhile go first. */
 export const CHAT_TURNS_TO_READ_RETRY_MS = 5_000;
 
-/** One exchange: a question and its answer (none when it got none), a canned line said on its own, or what a turn's end showed: its commentAfterEachTurn, the warning its verdict said (`warned`) and its suggestNextPrompt, at least one. */
+/** One exchange: a question and its answer (none when it got none), a canned line said on its own, or what a turn's end showed: its commentAfterEachTurn, the warning its verdict said (`warned`), the prompt it sent Claude itself (`promptToMainChat`) and its suggestNextPrompt, at least one. */
 export type Exchange =
   | { kind: 'question'; question: string; answer?: string }
   | { kind: 'line'; text: string }
-  | { kind: 'endOfTurn'; commentAfterEachTurn?: string; warned?: string; suggestNextPrompt?: string };
+  | { kind: 'endOfTurn'; commentAfterEachTurn?: string; warned?: string; promptToMainChat?: string; suggestNextPrompt?: string };
 /**
  * One main-chat turn, by its turnId, and each character's exchanges after it
  * ended, before the next one did. Only the first block may have no turn: what
@@ -129,9 +133,10 @@ function capped(x: Exchange): Exchange | null {
   if (x.kind === 'endOfTurn') {
     const commentAfterEachTurn = keepText(x.commentAfterEachTurn ?? '');
     const warned = keepText(x.warned ?? '');
+    const promptToMainChat = keepText(x.promptToMainChat ?? '');
     const suggestNextPrompt = keepText(x.suggestNextPrompt ?? '');
-    if (!commentAfterEachTurn && !warned && !suggestNextPrompt) return null;
-    return { kind: 'endOfTurn', ...(commentAfterEachTurn ? { commentAfterEachTurn } : {}), ...(warned ? { warned } : {}), ...(suggestNextPrompt ? { suggestNextPrompt } : {}) };
+    if (!commentAfterEachTurn && !warned && !promptToMainChat && !suggestNextPrompt) return null;
+    return { kind: 'endOfTurn', ...(commentAfterEachTurn ? { commentAfterEachTurn } : {}), ...(warned ? { warned } : {}), ...(promptToMainChat ? { promptToMainChat } : {}), ...(suggestNextPrompt ? { suggestNextPrompt } : {}) };
   }
   const question = keepText(x.question);
   if (!question) return null;
@@ -200,6 +205,7 @@ function turnLines(t: Turn, k: number, prev?: TurnStats): string[] {
   const asked =
     t.from === undefined ? 'The user asked Claude:'
     : t.from === TAKEN_SUGGESTION ? 'The user sent Claude your own suggested prompt, unedited:'
+    : t.from === BUDDY_PROMPT ? `From ${BUDDY_PROMPT_LABEL}:`
     : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:'
     : `Claude was sent, not by the user (${t.from}):`;
   return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.did ? [`Claude did: ${t.did.join('; ')}`] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), 'Claude answered:', t.answer || '(no text)'];
@@ -216,6 +222,7 @@ function exchangeLines(x: Exchange): string[] {
       const said: [string, string | undefined][] = [
         ['commented', x.commentAfterEachTurn],
         ['warned the user', x.warned],
+        ['sent Claude this prompt yourself', x.promptToMainChat],
         ["suggested the user's next prompt", x.suggestNextPrompt],
       ];
       return said.filter(([, text]) => text).map(([what, text], i) => `${i === 0 ? 'After this turn, you' : 'With it, you'} ${what}: ${text}`);
@@ -260,9 +267,9 @@ function exchangeOf(v: unknown): Exchange | null {
   }
   if (x.kind === 'line' && typeof x.text === 'string') return capped({ kind: 'line', text: x.text });
   if (x.kind === 'endOfTurn') {
-    const { commentAfterEachTurn: c, warned: v, suggestNextPrompt: s } = x;
-    if ([c, v, s].some((f) => f !== undefined && typeof f !== 'string')) return null;
-    return capped({ kind: 'endOfTurn', ...(typeof c === 'string' ? { commentAfterEachTurn: c } : {}), ...(typeof v === 'string' ? { warned: v } : {}), ...(typeof s === 'string' ? { suggestNextPrompt: s } : {}) });
+    const { commentAfterEachTurn: c, warned: v, promptToMainChat: p, suggestNextPrompt: s } = x;
+    if ([c, v, p, s].some((f) => f !== undefined && typeof f !== 'string')) return null;
+    return capped({ kind: 'endOfTurn', ...(typeof c === 'string' ? { commentAfterEachTurn: c } : {}), ...(typeof v === 'string' ? { warned: v } : {}), ...(typeof p === 'string' ? { promptToMainChat: p } : {}), ...(typeof s === 'string' ? { suggestNextPrompt: s } : {}) });
   }
   return null;
 }

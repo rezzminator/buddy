@@ -9,7 +9,7 @@ import { frameAt, type Character, type Pose } from '../src/character.ts';
 import { DRAWER_KEYS, USAGE, parseCommand, type Action } from '../src/command.ts';
 import { allItems, buildMenu, currentKeyOf, findItem, type Item, type Originals } from '../src/menu.ts';
 import {
-  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, TAKEN_SUGGESTION, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, storeKey,
+  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, BUDDY_PROMPT, TAKEN_SUGGESTION, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, storeKey,
   type Block, type Exchange, type Notes, type Stored,
 } from '../src/chatTurnsToRead.ts';
 import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
@@ -22,7 +22,7 @@ import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  ASKED_PROMPT_MAX_CHARS, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
+  ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, endPromptTurn, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
@@ -34,8 +34,9 @@ import {
 import { BACKUP_LIMITS, backupCandidates, configSources, type ConfigSources, type Listed } from '../src/config-source.ts';
 import { bashCommand, classifyToolCall, toolOutput } from '../src/reactions.ts';
 import {
-  SHELL_FILE_MAX_BYTES, closeTally, countAgentRun, countShellChanges, countStep, countToolCall, openTally, shellChanges, shellTargets, statsBrief, usageReadingOf,
-  type Tally, type TurnStats, type UsageReading,
+  SHELL_FILE_MAX_BYTES, SWEEP_DEPTH_MAX, SWEEP_FILES_MAX, SWEEP_READ_BYTES_MAX, SWEEP_SKIP_DIRS,
+  closeTally, countAgentRun, countShellChanges, countStep, countToolCall, openTally, shellChanges, shellFolders, shellTargets, statsBrief, sweptChanges, sweptShellChange, usageReadingOf,
+  type FileMark, type ShellChange, type Tally, type TurnStats, type UsageReading,
 } from '../src/stats.ts';
 import {
   choose, isCharacterFile, loadEntries, mergeRoster, startWarning, withEntry,
@@ -115,6 +116,13 @@ type State = {
   harnessSuggestion: string | null;
   /** The buddy gave up on this turn's suggestNextPrompt: the engine's own suggestion passes. */
   suggestNextPromptGaveUp: boolean;
+  /** A prompt of the user's entered since the buddy last prompted the main chat (promptToMainChat): at most one per prompt of the user's, never from the turn its own prompt began. */
+  mainChatPromptArmed: boolean;
+  /** The buddy's prompt to the main chat sent and not yet seen entering: how its own prompt.submit hook knows it when the engine gives no origin. */
+  pendingMainChatPrompt: string | undefined;
+  /** How many prompts of the user's have entered, and that count as each end-of-turn call began, by turn: a reply that comes back after the user prompted again never sends its prompt. */
+  userPrompts: number;
+  userPromptsAtCall: Map<string, number>;
   /** The buddy's own suggestion now dim in the prompt box; cleared by the user's next prompt, or by another suggestion shown. */
   shownSuggestion: string | null;
   /** The prompt of a suggestion taken unedited, as it entered: the turn it begins is filed as the buddy's words the user chose. */
@@ -470,13 +478,26 @@ const USAGE_DEADLINE_MS = 2_000;
 /** How long a shell command's files may take to read, before it runs and after: past it the command goes unmeasured, never held up. */
 const SHELL_MEASURE_MS = 300;
 
-/** A main-loop shell command's files as they were before it ran, and the tally their changes count into. */
-type ShellBefore = { tally: Tally; files: Map<string, string | null> };
+/** A tree sweep of the folders a shell command works in: each file's mark, the texts read ahead (before the command only), and whether no cap cut it short. */
+type Sweep = { marks: Map<string, FileMark>; texts: Map<string, string>; whole: boolean };
+
+/** A main-loop shell command's files as they were before it ran (the ones it names read, the folders it works in swept), and the tally their changes count into. */
+type ShellBefore = { tally: Tally; files: Map<string, string | null>; folders: string[]; sweep: Sweep | null };
+
+/** Where a folder really is, links followed (`/tmp` is `/private/tmp` on macOS); undefined when it cannot be resolved. */
+async function realFolder($: EngineInterface, dir: string): Promise<string | undefined> {
+  try {
+    return (await $.fs.stat(dir, { resolve: true })).realPath;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Each path's text, `null` when it does not exist (a file the command may
- * make); a folder, a file past SHELL_FILE_MAX_BYTES or one that cannot be read
- * is left out, unmeasured. The text is held only to compare, never logged.
+ * make), keyed by where it really is, so two spellings of one file are one; a
+ * folder, a file past SHELL_FILE_MAX_BYTES or one that cannot be read is left
+ * out, unmeasured. The text is held only to compare, never logged.
  */
 async function readShellFiles($: EngineInterface, paths: readonly string[]): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
@@ -484,12 +505,14 @@ async function readShellFiles($: EngineInterface, paths: readonly string[]): Pro
     paths.map(async (p) => {
       try {
         if (!(await $.fs.exists(p))) {
-          out.set(p, null);
+          const cut = p.lastIndexOf('/');
+          const real = await realFolder($, p.slice(0, cut) || '/');
+          out.set(real ? `${real}/${p.slice(cut + 1)}` : p, null);
           return;
         }
-        const s = await $.fs.stat(p);
+        const s = await $.fs.stat(p, { resolve: true });
         if (s.kind !== 'file' || s.size > SHELL_FILE_MAX_BYTES) return;
-        out.set(p, await $.fs.read(p));
+        out.set(s.realPath ?? p, await $.fs.read(p));
       } catch (error) {
         lgT($, 'shell.measure', { outcome: 'unreadable', reason: message(error) });
       }
@@ -498,7 +521,92 @@ async function readShellFiles($: EngineInterface, paths: readonly string[]): Pro
   return out;
 }
 
-/** A main-loop shell command about to run while a turn is tallied: the files it names (shellTargets), read; null when there is nothing to measure or no time to. */
+/** A file's text for counting its lines; undefined when it is past SHELL_FILE_MAX_BYTES, holds a NUL (a binary), or cannot be read. */
+async function readText($: EngineInterface, path: string, size?: number): Promise<string | undefined> {
+  try {
+    if ((size ?? (await $.fs.stat(path)).size) > SHELL_FILE_MAX_BYTES) return undefined;
+    const text = await $.fs.read(path);
+    return text.includes('\u0000') ? undefined : text;
+  } catch (error) {
+    lgT($, 'shell.sweep', { outcome: 'unreadable', reason: message(error) });
+    return undefined;
+  }
+}
+
+/**
+ * The files under `folders`, nearest first: dot-folders and SWEEP_SKIP_DIRS
+ * left out, at most SWEEP_FILES_MAX files SWEEP_DEPTH_MAX folders deep, each
+ * marked by its size and modification time; with `readAhead`, the smallest
+ * text files read as well, SWEEP_READ_BYTES_MAX in all. A folder not there
+ * yet holds nothing; one that cannot be listed is logged and makes the sweep
+ * not whole.
+ */
+async function sweepFolders($: EngineInterface, folders: readonly string[], readAhead: boolean): Promise<Sweep> {
+  const marks = new Map<string, FileMark>();
+  const texts = new Map<string, string>();
+  const files: { path: string; size: number }[] = [];
+  let whole = true;
+  const seen = new Set(folders);
+  let level = folders.map((dir) => ({ dir, depth: 0 }));
+  while (level.length > 0) {
+    const listed = await Promise.all(
+      level.map(async ({ dir, depth }) => {
+        try {
+          return { dir, depth, entries: depth === 0 && !(await $.fs.exists(dir)) ? [] : await $.fs.list(dir) };
+        } catch (error) {
+          lgT($, 'shell.sweep', { outcome: 'unlisted', reason: message(error) });
+          whole = false;
+          return { dir, depth, entries: [] };
+        }
+      }),
+    );
+    level = [];
+    for (const { dir, depth, entries } of listed) {
+      for (const entry of [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+        const path = `${dir}/${entry.name}`;
+        if (entry.kind === 'dir') {
+          if (entry.name.startsWith('.') || SWEEP_SKIP_DIRS.has(entry.name) || seen.has(path)) continue;
+          if (depth >= SWEEP_DEPTH_MAX) whole = false;
+          else {
+            seen.add(path);
+            level.push({ dir: path, depth: depth + 1 });
+          }
+        } else if (entry.kind === 'file') {
+          if (files.length >= SWEEP_FILES_MAX) whole = false;
+          else files.push({ path, size: entry.size });
+        }
+      }
+    }
+  }
+  await Promise.all(
+    files.map(async ({ path }) => {
+      try {
+        const s = await $.fs.stat(path);
+        marks.set(path, { size: s.size, mtimeMs: s.mtimeMs });
+      } catch (error) {
+        lgT($, 'shell.sweep', { outcome: 'unmarked', reason: message(error) });
+      }
+    }),
+  );
+  if (readAhead) {
+    let budget = SWEEP_READ_BYTES_MAX;
+    const ahead: { path: string; size: number }[] = [];
+    for (const f of files.filter((x) => x.size <= SHELL_FILE_MAX_BYTES).sort((a, b) => a.size - b.size)) {
+      if (f.size > budget) break;
+      budget -= f.size;
+      ahead.push(f);
+    }
+    await Promise.all(
+      ahead.map(async ({ path, size }) => {
+        const text = await readText($, path, size);
+        if (text !== undefined) texts.set(path, text);
+      }),
+    );
+  }
+  return { marks, texts, whole };
+}
+
+/** A main-loop shell command about to run while a turn is tallied: the files it names (shellTargets) read, the folders it works in (shellFolders) swept; null when there is nothing to measure or no time to. */
 async function shellBefore(st: State, $: EngineInterface, e: ToolCallInput): Promise<ShellBefore | null> {
   try {
     const tally = st.tally?.counts;
@@ -506,27 +614,65 @@ async function shellBefore(st: State, $: EngineInterface, e: ToolCallInput): Pro
     if (!tally || call.tool !== 'Bash' || !isMainLoop(e.agentId)) return null;
     const command = bashCommand(call);
     if (!command) return null;
-    const files = await within(sleeper($), (async () => readShellFiles($, shellTargets(command, await $.session.cwd(), (await $.env.get('HOME')) ?? '')))(), SHELL_MEASURE_MS);
-    if (files === 'timeout') {
-      lgT($, 'shell.measure', { outcome: 'timeout', when: 'before' });
-      return null;
-    }
-    return files.size > 0 ? { tally, files } : null;
+    const cwd = await $.session.cwd();
+    const home = (await $.env.get('HOME')) ?? '';
+    const spelled = shellFolders(command, cwd, home);
+    const folders = [...new Set(await Promise.all(spelled.map(async (dir) => (await realFolder($, dir)) ?? dir)))];
+    const started = Date.now();
+    const [files, sweep] = await Promise.all([
+      within(sleeper($), readShellFiles($, shellTargets(command, cwd, home)), SHELL_MEASURE_MS),
+      within(sleeper($), sweepFolders($, folders, true), SHELL_MEASURE_MS),
+    ]);
+    if (files === 'timeout') lgT($, 'shell.measure', { outcome: 'timeout', when: 'before' });
+    if (sweep === 'timeout') lgT($, 'shell.sweep', { outcome: 'timeout', when: 'before' });
+    else lgT($, 'shell.sweep', { outcome: 'swept', files: sweep.marks.size, read: sweep.texts.size, whole: sweep.whole, ms: Date.now() - started });
+    const named = files === 'timeout' ? new Map<string, string | null>() : files;
+    const swept = sweep === 'timeout' ? null : sweep;
+    return named.size > 0 || swept ? { tally, files: named, folders, sweep: swept } : null;
   } catch (error) {
     log($, "reading a shell command's files before it runs", error);
     return null;
   }
 }
 
-/** The command ran, however it ended: its files read again, and each one it really changed counted (shellChanges). */
+/**
+ * The command ran, however it ended: the files it names read again, each one
+ * it really changed counted (shellChanges); then its folders swept again, and
+ * each other file that changed counted (sweptChanges), its lines where its
+ * text was read before, else as unmeasured (sweptShellChange).
+ */
 async function shellAfter($: EngineInterface, before: ShellBefore): Promise<void> {
   try {
-    const now = await within(sleeper($), readShellFiles($, [...before.files.keys()]), SHELL_MEASURE_MS);
-    if (now === 'timeout') {
-      lgT($, 'shell.measure', { outcome: 'timeout', when: 'after' });
-      return;
+    const [now, sweep] = await Promise.all([
+      within(sleeper($), readShellFiles($, [...before.files.keys()]), SHELL_MEASURE_MS),
+      before.sweep ? within(sleeper($), sweepFolders($, before.folders, false), SHELL_MEASURE_MS) : Promise.resolve(null),
+    ]);
+    const changes: ShellChange[] = [];
+    const measured = new Set<string>();
+    if (now === 'timeout') lgT($, 'shell.measure', { outcome: 'timeout', when: 'after' });
+    else {
+      changes.push(...shellChanges(before.files, now));
+      for (const file of before.files.keys()) if (now.has(file)) measured.add(file);
     }
-    countShellChanges(before.tally, shellChanges(before.files, now));
+    const was = before.sweep;
+    if (sweep === 'timeout') lgT($, 'shell.sweep', { outcome: 'timeout', when: 'after' });
+    else if (sweep && was) {
+      const moved = sweptChanges(was.marks, sweep.marks, was.whole && sweep.whole).filter((c) => !measured.has(c.file));
+      const read = await within(
+        sleeper($),
+        Promise.all(
+          moved.map(async (c) => {
+            const before = c.kind === 'made' ? null : was.texts.get(c.file);
+            const after = c.kind === 'gone' ? null : c.kind === 'made' || before !== undefined ? await readText($, c.file) : undefined;
+            return sweptShellChange(c.file, c.kind, before, after);
+          }),
+        ),
+        SHELL_MEASURE_MS,
+      );
+      if (read === 'timeout') lgT($, 'shell.sweep', { outcome: 'timeout', when: 'reading' });
+      else for (const c of read) if (c) changes.push(c);
+    }
+    countShellChanges(before.tally, changes);
   } catch (error) {
     log($, 'measuring what a shell command changed', error);
   }
@@ -947,12 +1093,26 @@ function takeSuggestion(st: State, $: EngineInterface, e: PromptSubmitInput): bo
   }
 }
 
-/** A prompt that entered the session (`r`, next(e)'s result) joins the ledger, with its origin; a dropped one never does. `taken`: it is the buddy's suggestion, unedited (takeSuggestion). */
-function onPromptSubmit(st: State, $: EngineInterface, e: PromptSubmitInput, r: PromptSubmitResult, taken: boolean): void {
+/** Whether a submitted prompt is this plugin's own (promptToMainChat's): by its origin, or as the text it just sent (isOwnPrompt). */
+function ownPrompt(st: State, $: EngineInterface, e: PromptSubmitInput): boolean {
+  try {
+    return isOwnPrompt(e.origin, $.plugin.name, e.text, st.pendingMainChatPrompt);
+  } catch (error) {
+    log($, "telling the buddy's own prompt", error);
+    return false;
+  }
+}
+
+/** A prompt that entered the session (`r`, next(e)'s result) joins the ledger, with its origin, the buddy's own as BUDDY_PROMPT; a dropped one never does. One of the user's arms promptToMainChat. `taken`: it is the buddy's suggestion, unedited (takeSuggestion). */
+function onPromptSubmit(st: State, $: EngineInterface, e: PromptSubmitInput, r: PromptSubmitResult, taken: boolean, own: boolean): void {
   try {
     if (typeof r.drop === 'string') return;
     // Validated here: an origin the engine left out is not presumed the user's.
-    st.prompts = submitPrompt(st.prompts, r.text, e.origin?.kind ?? 'unclassified', e.turnId);
+    st.prompts = submitPrompt(st.prompts, r.text, own ? BUDDY_PROMPT : originOf(e.origin, $.plugin.name), e.turnId);
+    if (isUserOrigin(e.origin?.kind ?? 'unclassified')) {
+      st.mainChatPromptArmed = true;
+      st.userPrompts++;
+    }
     if (taken) {
       st.takenPrompt = r.text;
       lg($, 'info', 'suggestNextPrompt.taken', { length: r.text.length });
@@ -1035,21 +1195,32 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
       if (s) changeFeed(st, $, 'the turn numbers', (f) => markNumbers(f, e.turnId, statsBrief(s)));
     }).catch((error) => log($, "showing the turn's numbers", error));
     roundEvent(st, $, turnEndSection(Date.now(), { turnId: e.turnId, reason: e.isAborted ? 'aborted' : e.reason, prompt: ended.prompt, answer: typeof e.answer === 'string' ? e.answer : '', did, ...from }));
-    const gate: TurnGate = { answered, hidden: st.hidden, interactive: st.interactive, bandSeen: st.bandSeen, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt };
+    const gate: TurnGate = {
+      answered,
+      hidden: st.hidden,
+      interactive: st.interactive,
+      bandSeen: st.bandSeen,
+      commentAfterEachTurn: st.options.commentAfterEachTurn,
+      suggestNextPrompt: st.options.suggestNextPrompt,
+      promptToMainChat: st.options.promptToMainChat,
+      mainChatPromptArmed: st.mainChatPromptArmed,
+    };
     const may = turnMay(gate);
     const { turn, commentAfterEachTurnDue } = endTurn(st.b, may.commentAfterEachTurn, st.options.secondsBetweenComments);
-    const wants: TurnWants = { commentAfterEachTurn: commentAfterEachTurnDue, suggestNextPrompt: may.suggestNextPrompt };
+    const wants: TurnWants = { commentAfterEachTurn: commentAfterEachTurnDue, suggestNextPrompt: may.suggestNextPrompt, promptToMainChat: may.promptToMainChat };
     // The engine's own suggestion is held back only while this turn's call may still propose one; one already held (the engine may suggest before this code runs) is shown or released, never erased.
     st.suggestNextPromptGaveUp = !wants.suggestNextPrompt;
     if (!wants.suggestNextPrompt) giveUpSuggestNextPrompt(st, $, gen, 0).catch((error) => log($, "showing the engine's own suggestion", error));
-    if (wants.commentAfterEachTurn || wants.suggestNextPrompt) {
-      lg($, 'info', 'turn.call', { commentAfterEachTurn: wants.commentAfterEachTurn, suggestNextPrompt: wants.suggestNextPrompt, tools: turn.tools.length });
+    if (wants.commentAfterEachTurn || wants.suggestNextPrompt || wants.promptToMainChat) {
+      lg($, 'info', 'turn.call', { commentAfterEachTurn: wants.commentAfterEachTurn, suggestNextPrompt: wants.suggestNextPrompt, promptToMainChat: wants.promptToMainChat, tools: turn.tools.length });
       // The character drawn as the turn ended: what arrives after a switch is never said by another.
       st.calls++;
+      st.userPromptsAtCall.set(e.turnId, st.userPrompts);
       turnCall(st, $, st.b.character, turn, e.turnId, gen, wants, Date.now())
         .catch((error) => log($, 'the end-of-turn call', error))
         .finally(() => {
           st.calls--;
+          st.userPromptsAtCall.delete(e.turnId);
         });
     } else {
       lg($, 'info', 'turn.skipped', { why: skipReason(gate) });
@@ -1257,7 +1428,7 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
     else if (!r.isAnswered) reason = r.reason;
     else {
       reply = parseTurnReply(r.text);
-      lg($, 'debug', 'turn.reply', { length: r.text.length, commentAfterEachTurn: reply.commentAfterEachTurn?.length ?? 0, verdict: reply.verdict ?? 'none', suggestNextPrompt: reply.suggestNextPrompt?.length ?? 0 });
+      lg($, 'debug', 'turn.reply', { length: r.text.length, commentAfterEachTurn: reply.commentAfterEachTurn?.length ?? 0, verdict: reply.verdict ?? 'none', suggestNextPrompt: reply.suggestNextPrompt?.length ?? 0, promptToMainChat: reply.promptToMainChat?.length ?? 0 });
     }
   } catch (error) {
     log($, 'the end-of-turn call', error);
@@ -1277,7 +1448,7 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
   // The second brain first: a warning or a scream takes the bubble, and the comment never covers it.
   let warned: string | null = null;
   let verdict: { verdict: Verdict; why: string } | null = null;
-  if (wants.suggestNextPrompt) {
+  if (wants.suggestNextPrompt || wants.promptToMainChat) {
     if (reply?.desire) st.desire = reply.desire;
     verdict = reply?.verdict && reply.why ? { verdict: reply.verdict, why: reply.why } : null;
     warned = sayVerdict(st, $, c, gen, verdict, reason, verdictFields);
@@ -1299,18 +1470,48 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
   else if (wants.commentAfterEachTurn && reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: reason, ...voice(c), ms });
   if (verdict) feedAdd(st, $, { at: Date.now(), kind: 'verdict', text: verdict.why, verdict: verdict.verdict, ...(st.desire ? { desire: st.desire } : {}), ...voice(c), ...(commentAfterEachTurn === null ? cost : {}) });
   if (suggestNextPrompt !== null) feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: suggestNextPrompt, ...voice(c) });
-  // What this turn showed, as one exchange: the comment, the warning, the suggestion.
-  if (commentAfterEachTurn !== null || warned !== null || suggestNextPrompt !== null) {
+  let promptToMainChat = wants.promptToMainChat ? (reply?.promptToMainChat ?? null) : null;
+  // The user prompted again while this call ran: the buddy's prompt would land after the user's own, answering a turn that moved on.
+  if (promptToMainChat !== null && st.userPrompts !== st.userPromptsAtCall.get(turnId)) {
+    lg($, 'info', 'promptToMainChat.stale', { character: c.id, length: promptToMainChat.length });
+    promptToMainChat = null;
+  }
+  // What this turn showed, as one exchange: the comment, the warning, the prompt it sent Claude, the suggestion.
+  if (commentAfterEachTurn !== null || warned !== null || promptToMainChat !== null || suggestNextPrompt !== null) {
     rememberExchange(
       st,
       $,
       c.id,
-      { kind: 'endOfTurn', ...(commentAfterEachTurn !== null ? { commentAfterEachTurn } : {}), ...(warned !== null ? { warned } : {}), ...(suggestNextPrompt !== null ? { suggestNextPrompt } : {}) },
+      {
+        kind: 'endOfTurn',
+        ...(commentAfterEachTurn !== null ? { commentAfterEachTurn } : {}),
+        ...(warned !== null ? { warned } : {}),
+        ...(promptToMainChat !== null ? { promptToMainChat } : {}),
+        ...(suggestNextPrompt !== null ? { suggestNextPrompt } : {}),
+      },
       turnId,
     );
   }
   // The buddy's own notes, rewritten; a reply with no MEMORY line keeps the ones it had.
   if (reply?.memory) rememberNotes(st, $, c.id, voice(c), reply.memory);
+  if (promptToMainChat !== null) sendPromptToMainChat(st, $, c, promptToMainChat);
+}
+
+/**
+ * The buddy's own prompt to the main chat (promptToMainChat), `text`, once its
+ * turn's exchange is filed: disarmed first, so the turn it starts never sends
+ * another until a prompt of the user's re-arms it; submitted as this plugin's,
+ * never awaited, a refusal logged.
+ */
+function sendPromptToMainChat(st: State, $: EngineInterface, c: Character, text: string): void {
+  st.mainChatPromptArmed = false;
+  st.pendingMainChatPrompt = text;
+  try {
+    $.prompt.submit({ text }).catch((error: unknown) => log($, "sending the buddy's prompt to the main chat", error));
+    lg($, 'info', 'promptToMainChat.sent', { character: c.id, length: text.length });
+  } catch (error) {
+    log($, "sending the buddy's prompt to the main chat", error);
+  }
 }
 
 /** How the bubble says a verdict: a shortcut warned of, a wrong move screamed; a right one says nothing over the comment. */
@@ -2103,6 +2304,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
     turnGen: 0,
     harnessSuggestion: null,
     suggestNextPromptGaveUp: false,
+    mainChatPromptArmed: false,
+    pendingMainChatPrompt: undefined,
+    userPrompts: 0,
+    userPromptsAtCall: new Map(),
     shownSuggestion: null,
     takenPrompt: null,
     desire: null,
@@ -2171,11 +2376,14 @@ export const register: Register = (on: On, options: PluginOptions) => {
     return r;
   });
 
-  // What entered, once it did: a prompt a lower hook dropped starts no turn and is never filed. The buddy's suggestion sent unedited carries, for Claude alone, whose words it holds.
+  // What entered, once it did: a prompt a lower hook dropped starts no turn and is never filed. The buddy's suggestion sent unedited, and the buddy's own prompt to the main chat, carry, for Claude alone, whose words they hold.
   on('prompt.submit', async ($, e, next) => {
     const taken = takeSuggestion(st, $, e);
-    const r = await next(taken ? { ...e, context: [...(e.context ?? []), TAKEN_SUGGESTION_CONTEXT] } : e);
-    onPromptSubmit(st, $, e, r, taken);
+    const own = !taken && ownPrompt(st, $, e);
+    if (own) st.pendingMainChatPrompt = undefined;
+    const context = taken ? TAKEN_SUGGESTION_CONTEXT : own ? BUDDY_PROMPT_CONTEXT : null;
+    const r = await next(context !== null ? { ...e, context: [...(e.context ?? []), context] } : e);
+    onPromptSubmit(st, $, e, r, taken, own);
     return r;
   });
 

@@ -7,7 +7,7 @@
 
 import type { Action } from './did.ts';
 import type { TurnStats } from './stats.ts';
-import { NOTES_MAX, cleanNotes } from './chatTurnsToRead.ts';
+import { BUDDY_PROMPT, NOTES_MAX, cleanNotes } from './chatTurnsToRead.ts';
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
 /** A question asking for a prompt gets one, on a line of its own the plugin puts in the prompt box. */
@@ -91,21 +91,23 @@ function turnFacts(t: TurnSummary): string {
   return `Tools used: ${tools}. Failures: ${t.failures}. Last shell command: ${bash}.`;
 }
 
-/** What the end-of-turn call writes: commentAfterEachTurn, the second brain with its suggestNextPrompt, or both. */
-export type TurnWants = { commentAfterEachTurn: boolean; suggestNextPrompt: boolean };
+/** What the end-of-turn call writes: commentAfterEachTurn, the second brain with its suggestNextPrompt, the prompt the buddy sends the main chat itself, or any of them together. */
+export type TurnWants = { commentAfterEachTurn: boolean; suggestNextPrompt: boolean; promptToMainChat: boolean };
 
-/** What an ended main-loop turn and the session look like to the end-of-turn call. */
-export type TurnGate = { answered: boolean; hidden: boolean; interactive: boolean; bandSeen: boolean; commentAfterEachTurn: boolean; suggestNextPrompt: boolean };
+/** What an ended main-loop turn and the session look like to the end-of-turn call; `mainChatPromptArmed`: a prompt of the user's entered since the buddy last prompted the main chat. */
+export type TurnGate = { answered: boolean; hidden: boolean; interactive: boolean; bandSeen: boolean; commentAfterEachTurn: boolean; suggestNextPrompt: boolean; promptToMainChat: boolean; mainChatPromptArmed: boolean };
 
 /**
  * What an ended main turn may ask the model for, before secondsBetweenComments:
  * nothing for a turn not answered, while hidden, or with nobody at the prompt;
  * commentAfterEachTurn only once the band has drawn in this session (one nobody
- * can see is never paid for); suggestNextPrompt wherever the prompt box is.
+ * can see is never paid for); suggestNextPrompt wherever the prompt box is;
+ * promptToMainChat only while armed, so at most one per prompt of the user's,
+ * and never from the turn the buddy's own prompt began.
  */
 export function turnMay(g: TurnGate): TurnWants {
   const calls = g.answered && !g.hidden && g.interactive;
-  return { commentAfterEachTurn: g.commentAfterEachTurn && calls && g.bandSeen, suggestNextPrompt: g.suggestNextPrompt && calls };
+  return { commentAfterEachTurn: g.commentAfterEachTurn && calls && g.bandSeen, suggestNextPrompt: g.suggestNextPrompt && calls, promptToMainChat: g.promptToMainChat && calls && g.mainChatPromptArmed };
 }
 
 /** Why an ended main turn makes no call; `commentAfterEachTurnDue` false with commentAfterEachTurn allowed is secondsBetweenComments. */
@@ -113,7 +115,7 @@ export function skipReason(g: TurnGate): string {
   if (!g.answered) return 'not an answered turn';
   if (!g.interactive) return 'headless';
   if (g.hidden) return 'hidden';
-  if (!g.commentAfterEachTurn && !g.suggestNextPrompt) return 'commentAfterEachTurn and suggestNextPrompt off';
+  if (!g.commentAfterEachTurn && !g.suggestNextPrompt) return g.promptToMainChat ? 'promptToMainChat unarmed until the user prompts' : 'commentAfterEachTurn and suggestNextPrompt off';
   if (g.commentAfterEachTurn && !g.bandSeen && !g.suggestNextPrompt) return 'band never drawn';
   return 'secondsBetweenComments';
 }
@@ -146,12 +148,16 @@ export const DESIRE_MAX_CHARS = 160;
  * VERDICT on Claude's last move against it; WHY, in character, screamed for
  * WRONG; and SUGGEST_NEXT_PROMPT, following the verdict, as the user would
  * type it: an ask, an instruction or a decision, never the user's report.
+ * PROMPT_TO_MAIN_CHAT, with promptToMainChat, before the suggestion: a prompt
+ * the buddy sends Claude itself; it brings the judgement with it, and with
+ * both the suggestion is NONE after one.
  * MEMORY last, always: the buddy's own notes, rewritten.
  */
 export function turnSystem(persona: string, wants: TurnWants, desire: string | null = null): string {
   // The judgement first, so the character's comment is written knowing it; the suggestion last, following the verdict.
   const lines: string[] = [];
-  if (wants.suggestNextPrompt) {
+  const judges = wants.suggestNextPrompt || wants.promptToMainChat;
+  if (judges) {
     lines.push(
       'DESIRE: what the user most deeply wants from this chat, beneath the words of this turn: the outcome they are really after, in plain words, at most 15 words.',
       "VERDICT: RIGHT, SHORTCUT or WRONG, judging Claude's last move (what it did, what it claimed, what it proposes next) against DESIRE. " +
@@ -162,7 +168,18 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
     );
   }
   if (wants.commentAfterEachTurn) {
-    lines.push(`COMMENT_AFTER_EACH_TURN: your own reaction to the turn, in character, one line, at most 20 words${wants.suggestNextPrompt ? ', knowing your verdict, never repeating WHY' : ''}.`);
+    lines.push(`COMMENT_AFTER_EACH_TURN: your own reaction to the turn, in character, one line, at most 20 words${judges ? ', knowing your verdict, never repeating WHY' : ''}.`);
+  }
+  if (wants.promptToMainChat) {
+    lines.push(
+      'PROMPT_TO_MAIN_CHAT: a prompt you send Claude yourself, right now, before the user reads on, ' +
+        "when this turn left the user's own ask unmet or unproven: a false claim, a check of what was asked that Claude skipped or bypassed, a part of the ask it missed. " +
+        (wants.suggestNextPrompt
+          ? "A SHORTCUT or WRONG on the ask itself goes here, not in SUGGEST_NEXT_PROMPT; work beyond the ask, and any decision that is the user's, stays a suggestion. "
+          : "Work beyond the ask, and any decision that is the user's, never goes here. ") +
+        "Plain words, not in character, at most 40 words, naming the thing; it reaches Claude as yours, never as the user's. " +
+        'Write PROMPT_TO_MAIN_CHAT: NONE otherwise.',
+    );
   }
   if (wants.suggestNextPrompt) {
     lines.push(
@@ -170,11 +187,12 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
         'It asks, instructs or decides, and every fact in it is already in the chat: the user may send it with one key, unread, so it never reports what the user did, ran, saw or saved. ' +
         "When the next step is the user's own (a key to make, a check only they can run), suggest what they would ask Claude about it. " +
         'After RIGHT, say yes and move to the next step; after SHORTCUT, ask for the proper way; after WRONG, stop Claude and name what to do instead. ' +
-        'Write SUGGEST_NEXT_PROMPT: NONE only when the work is plainly finished and nothing follows.',
+        'Write SUGGEST_NEXT_PROMPT: NONE only when the work is plainly finished and nothing follows.' +
+        (wants.promptToMainChat ? ' After a PROMPT_TO_MAIN_CHAT of yours, write SUGGEST_NEXT_PROMPT: NONE: Claude is about to act on it.' : ''),
     );
   }
   lines.push(MEMORY_LINE);
-  const brain = wants.suggestNextPrompt
+  const brain = judges
     ? "You are also the user's second brain: you watch the work with Claude and judge it, a second pair of eyes on every decision.\n" +
       (desire ? `At the last turn's end you named the user's deepest desire: ${desire}\nKeep it unless this chat shows it changed.\n` : '')
     : '';
@@ -274,6 +292,32 @@ export const TAKEN_SUGGESTION_CONTEXT =
   "This prompt is the buddy's suggestion, a plugin's guess at the user's next prompt, sent by the user unedited. " +
   "Any claim in it about what the user did, ran, saw or saved is the buddy's guess, not the user's report: check it before acting on it.";
 
+/**
+ * What Claude reads beside the buddy's own prompt (promptToMainChat), attached
+ * by the buddy's prompt.submit hook: whose it is, and how to take it.
+ */
+export const BUDDY_PROMPT_CONTEXT =
+  'This prompt was sent by the buddy plugin, not by the user: a second model that watches this chat and judged your last turn. ' +
+  "The user did not write it and may not have read it. Treat it as a reviewer's note: check what it claims, act on what holds up, and say plainly what does not.";
+
+/** The origin a prompt is filed under: this plugin's own (`self`, its manifest name) is BUDDY_PROMPT; any other goes by its kind, `unclassified` when the engine left it out. */
+export function originOf(origin: { kind: string; name?: string } | undefined, self: string): string {
+  if (origin === undefined) return 'unclassified';
+  return origin.kind === 'plugin' && origin.name === self ? BUDDY_PROMPT : origin.kind;
+}
+
+/**
+ * Whether a submitted prompt is the buddy's own (promptToMainChat's): its
+ * origin names this plugin `self`, or, since the engine may hand a plugin's
+ * own hook its submission with no origin, it is the text the buddy just sent
+ * (`pending`, compared one-spaced) and not of a user's origin.
+ */
+export function isOwnPrompt(origin: { kind: string; name?: string } | undefined, self: string, text: string, pending: string | undefined): boolean {
+  if (originOf(origin, self) === BUDDY_PROMPT) return true;
+  const oneSpaced = (s: string): string => s.replace(/\s+/g, ' ').trim();
+  return pending !== undefined && !isUserOrigin(origin?.kind ?? 'unclassified') && oneSpaced(text) === oneSpaced(pending);
+}
+
 /** The end-of-turn prompt's last line when the memory holds the turn just ended. */
 export const JUST_ENDED = 'The turn that just ended is the last one above.';
 
@@ -288,7 +332,7 @@ export function turnPrompt(t: TurnSummary, chatTurnsToRead = '', holdsTurn = fal
   return `${chatTurnsToReadBlock(chatTurnsToRead)}In the turn that just ended: ${turnFacts(t)}`;
 }
 
-const TAGGED = /^[\s\-*]*(comment_after_each_turn|suggest_next_prompt|desire|verdict|why|memory)\s*:\s*(.*)$/i;
+const TAGGED = /^[\s\-*]*(comment_after_each_turn|suggest_next_prompt|prompt_to_main_chat|desire|verdict|why|memory)\s*:\s*(.*)$/i;
 
 /** A reply's tagged lines, by lowercased tag, the first of each; untagged lines are left out. */
 function taggedLines(reply: string): Map<string, string> {
@@ -300,13 +344,15 @@ function taggedLines(reply: string): Map<string, string> {
   return tags;
 }
 
-/** The end-of-turn reply, each part or null: a VERDICT not one of VERDICTS, a DESIRE past DESIRE_MAX_CHARS, or an empty line is none; SUGGEST_NEXT_PROMPT as suggestNextPromptText reads it. */
+/** The end-of-turn reply, each part or null: a VERDICT not one of VERDICTS, a DESIRE past DESIRE_MAX_CHARS, or an empty line is none; SUGGEST_NEXT_PROMPT as suggestNextPromptText reads it, PROMPT_TO_MAIN_CHAT too, up to PROMPT_TO_MAIN_CHAT_MAX_CHARS. */
 export type TurnReply = {
   commentAfterEachTurn: string | null;
   desire: string | null;
   verdict: Verdict | null;
   why: string | null;
   suggestNextPrompt: string | null;
+  /** The prompt the buddy sends the main chat itself. */
+  promptToMainChat: string | null;
   /** The buddy's notes, rewritten (cleanNotes); [] for MEMORY: NONE; null when the reply wrote no MEMORY line, which keeps the notes it had. */
   memory: string[] | null;
 };
@@ -324,17 +370,19 @@ function memoryLines(reply: string): string[] | null {
 /** The end-of-turn reply by its tagged lines, in any order and case, bullets tolerated; an untagged reply is the commentAfterEachTurn alone. */
 export function parseTurnReply(reply: string): TurnReply {
   const tags = taggedLines(reply);
-  if (tags.size === 0) return { commentAfterEachTurn: oneLine(reply) || null, desire: null, verdict: null, why: null, suggestNextPrompt: null, memory: null };
+  if (tags.size === 0) return { commentAfterEachTurn: oneLine(reply) || null, desire: null, verdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, memory: null };
   const line = (tag: string) => oneLine(tags.get(tag) ?? '') || null;
   const desire = line('desire');
   const word = /^[A-Za-z]+/.exec(line('verdict') ?? '')?.[0]?.toUpperCase();
   const next = tags.get('suggest_next_prompt');
+  const toMainChat = tags.get('prompt_to_main_chat');
   return {
     commentAfterEachTurn: line('comment_after_each_turn'),
     desire: desire !== null && desire.length <= DESIRE_MAX_CHARS ? desire : null,
     verdict: VERDICTS.find((v) => v === word) ?? null,
     why: line('why'),
     suggestNextPrompt: next === undefined ? null : suggestNextPromptText(next),
+    promptToMainChat: toMainChat === undefined ? null : suggestNextPromptText(toMainChat, PROMPT_TO_MAIN_CHAT_MAX_CHARS),
     memory: memoryLines(reply),
   };
 }
@@ -360,6 +408,9 @@ export function oneLine(reply: string): string {
   const line = reply.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
   return line.replace(/^["'`]+|["'`]+$/g, '').trim();
 }
+
+/** The longest PROMPT_TO_MAIN_CHAT kept: past it, it is not a short note to Claude. */
+export const PROMPT_TO_MAIN_CHAT_MAX_CHARS = 400;
 
 /** The longest suggestNextPrompt kept: past it, the reply is not a prompt someone would type. */
 export const SUGGEST_NEXT_PROMPT_MAX_CHARS = 200;

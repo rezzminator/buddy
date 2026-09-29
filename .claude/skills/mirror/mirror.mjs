@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // This file lives at {repo}/.claude/skills/mirror/; a symlink to it resolves here too.
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const TAGS = ['DESIRE', 'VERDICT', 'WHY', 'COMMENT_AFTER_EACH_TURN', 'SUGGEST_NEXT_PROMPT', 'MEMORY'];
+const TAGS = ['DESIRE', 'VERDICT', 'WHY', 'COMMENT_AFTER_EACH_TURN', 'PROMPT_TO_MAIN_CHAT', 'SUGGEST_NEXT_PROMPT', 'MEMORY'];
 // Where the captured system's persona ends: every version's character rule opens with it.
 const PERSONA_END = '\n\nBecome this character completely';
 
@@ -51,9 +51,13 @@ function opts(argv) {
 
 const norm = (s) => s.replace(/\s+/g, ' ').trim();
 
+// A clause that looks ahead ("once out.txt appears", "if the tests passed") or asks for a check ("confirm it says done") reports nothing.
+const NOT_A_REPORT = /\b(?:when|once|after|until|if|whether|unless|confirm|check|verify|ensure|make sure)\b[^,.;?]*/gi;
+
 export function reportFlag(suggestion) {
   if (!suggestion || /^none$/i.test(suggestion.trim())) return '';
-  return REPORT.some((r) => r.test(suggestion)) ? 'REPORT?' : '';
+  const said = suggestion.replace(NOT_A_REPORT, '');
+  return REPORT.some((r) => r.test(said)) ? 'REPORT?' : '';
 }
 
 export function tagged(reply) {
@@ -157,6 +161,8 @@ function live(o) {
     if (t.VERDICT) console.log(`  VERDICT ${t.VERDICT}${t.WHY ? ` · WHY ${t.WHY}` : ''}`);
     if (t.COMMENT_AFTER_EACH_TURN) console.log(`  COMMENT ${t.COMMENT_AFTER_EACH_TURN}`);
     console.log(`  SUGGEST ${sug || '(none)'} ${[reportFlag(sug), taken].filter(Boolean).join(' ')}`);
+    const toClaude = t.PROMPT_TO_MAIN_CHAT ?? '';
+    if (toClaude && !/^none[.!]*$/i.test(toClaude)) console.log(`  TO CLAUDE ${toClaude}`);
     if (!Object.keys(t).length) console.log(`  (no tagged line in the reply: ${c.reply.slice(0, 160)})`);
   }
 }
@@ -196,7 +202,7 @@ async function systemFor(arm, captured, cache) {
   if (typeof turnSystem !== 'function') fail(`${src}/prompts.ts exports no turnSystem`);
   const cut = captured.indexOf(PERSONA_END);
   if (cut < 0) fail('the captured system has no character rule to split the persona at');
-  const wants = { commentAfterEachTurn: captured.includes('COMMENT_AFTER_EACH_TURN:'), suggestNextPrompt: captured.includes('SUGGEST_NEXT_PROMPT:') };
+  const wants = { commentAfterEachTurn: captured.includes('COMMENT_AFTER_EACH_TURN:'), suggestNextPrompt: captured.includes('SUGGEST_NEXT_PROMPT:'), promptToMainChat: captured.includes('PROMPT_TO_MAIN_CHAT:') };
   const desire = /you named the user's deepest desire: (.*)\n/.exec(captured)?.[1] ?? null;
   return turnSystem(captured.slice(0, cut), wants, desire);
 }

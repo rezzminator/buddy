@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
   cleanAnswer, cleanPrompt,
-  NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, memoryStats, render, storeKey, type Block, type Exchange,
+  BUDDY_PROMPT, NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, memoryStats, render, storeKey, type Block, type Exchange,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
 
 const qa = (question: string, answer?: string): Exchange => (answer === undefined ? { kind: 'question', question } : { kind: 'question', question, answer });
@@ -247,3 +247,20 @@ describe("a turn's numbers", () => {
   });
 });
 
+
+describe("the buddy's own prompt to the main chat, remembered", () => {
+  test('filed with the turn\'s end, next to the suggestion, and kept through the store', () => {
+    const b = addExchange(addTurn([], 't1', { prompt: 'go', answer: 'Tests pass.' }, 4), 'cat', { kind: 'endOfTurn', commentAfterEachTurn: 'Did they?', promptToMainChat: 'run the tests and show the output', suggestNextPrompt: 'commit it' }, 't1');
+    expect(render(b, 'cat', 4)).toContain(
+      "- After this turn, you commented: Did they?\n  With it, you sent Claude this prompt yourself: run the tests and show the output\n  With it, you suggested the user's next prompt: commit it",
+    );
+    const alone = addExchange(addTurn([], 't1', { prompt: 'go', answer: 'Tests pass.' }, 4), 'cat', { kind: 'endOfTurn', promptToMainChat: 'run the tests' }, 't1');
+    expect(render(alone, 'cat', 4).endsWith('- After this turn, you sent Claude this prompt yourself: run the tests')).toBe(true);
+    expect(chatTurnsToReadOf(JSON.parse(JSON.stringify({ blocks: b }))).blocks).toEqual(b);
+    expect(chatTurnsToReadOf({ blocks: [{ ...b[0], characters: { cat: [{ kind: 'endOfTurn', promptToMainChat: 7 }] } }] }).blocks[0]!.characters.cat ?? []).toEqual([]);
+  });
+  test('the turn it started is labelled as the buddy\'s own', () => {
+    const b = addTurn([], 't2', { prompt: 'run the tests and show the output', answer: 'Ran them: 2 fail.', from: BUDDY_PROMPT }, 4);
+    expect(render(b, 'cat', 4)).toContain('Turn 1. From the buddy (you), sent to Claude:\nrun the tests and show the output\n');
+  });
+});

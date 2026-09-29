@@ -60,6 +60,12 @@
       "description": "After every answered turn, the same short call on model proposes your next prompt, as you would type it, as the grey suggestion in the prompt box. Claude Code's own suggestion is held back and shown only when the buddy has none. Off: Claude Code's own suggestion shows as usual.",
       "default": true
     },
+    "promptToMainChat": {
+      "type": "boolean",
+      "title": "Prompt the main chat",
+      "description": "The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours; Claude reads it as the buddy's, never yours.",
+      "default": false
+    },
     "chatTurnsToRead": {
       "type": "number",
       "title": "How many recent chat turns the buddy remembers (1 to 10)",

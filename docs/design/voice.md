@@ -36,7 +36,7 @@ An answer, a failure or a refusal holds the bubble for its time; tool-call react
 
 ## The end-of-turn call
 
-`commentAfterEachTurn` and `suggestNextPrompt` are on by default (`commentAfterEachTurn: true`, `suggestNextPrompt: true`); each turns off alone.
+`commentAfterEachTurn` and `suggestNextPrompt` are on by default (`commentAfterEachTurn: true`, `suggestNextPrompt: true`); each turns off alone. `promptToMainChat` is off by default: on, the same call may write `PROMPT_TO_MAIN_CHAT:`, a prompt the buddy sends Claude itself through `$.prompt.submit`, which the buddy's own `prompt.submit` hook marks for Claude with `BUDDY_PROMPT_CONTEXT`; it brings the judgement lines with it, is armed by each prompt of the user's and disarmed by the send, so the turn it starts never sends another.
 At the end of every turn (`turn.complete`), the brain resets the turn's tally and returns it with whether `commentAfterEachTurn` is due (`endTurn`): `commentAfterEachTurn` on, and at least `secondsBetweenComments` seconds (0 by default: every turn) of brain time since the last `commentAfterEachTurn`.
 The call is made only for an answered turn of the main loop (`reason: 'answer'`, not aborted, no `agentId`), tool use or not, while the buddy is shown, when `commentAfterEachTurn` is due or `suggestNextPrompt` is on.
 It is one `$.model.complete` on `model` at `effort`, at most 2048 output tokens, thinking included (`TURN_MAX_TOKENS`), within 30 seconds (`TURN_DEADLINE_MS`): about 3 seconds. The character's prompt and the suggestion's are one system prompt, combined as the options ask, and one reply carries every line.

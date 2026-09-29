@@ -12,7 +12,10 @@
 // it, and only when it succeeded. A main-loop shell command's own edits are
 // measured, never guessed: the files it names (shellTargets), read before and
 // after it runs, count only when they really changed (shellChanges), whatever
-// its exit.
+// its exit; a tree sweep of the folders it works in (shellFolders) catches
+// the files it changes without naming them, a script's or a formatter's
+// (sweptChanges), their lines counted where their text was read before, else
+// said to be unmeasured (sweptShellChange).
 // No I/O: the adapter feeds a Tally from turn.start, turn.step, tool.call and
 // turn.complete, reads the session's usage at the turn's start and end, reads
 // a shell command's files around it, and closes the Tally into the TurnStats
@@ -28,6 +31,14 @@ export const LIMIT_SAID_PERCENT = 50;
 export const SHELL_CANDIDATES_MAX = 24;
 /** The largest file a shell command's edits are measured in: a bigger one is left unread. */
 export const SHELL_FILE_MAX_BYTES = 256 * 1024;
+/** The most files a tree sweep marks, nearest the command's folders first: past it the rest go unmarked. */
+export const SWEEP_FILES_MAX = 400;
+/** How many folders deep a tree sweep walks below each folder the command works in. */
+export const SWEEP_DEPTH_MAX = 4;
+/** The most bytes a tree sweep reads before the command runs, smallest files first, so a file it changes has its lines counted. */
+export const SWEEP_READ_BYTES_MAX = 512 * 1024;
+/** Folders a tree sweep never walks into, beside every dot-folder: dependencies and build output. */
+export const SWEEP_SKIP_DIRS: ReadonlySet<string> = new Set(['node_modules', 'dist', 'build', 'coverage', 'vendor', 'target', 'venv', '__pycache__', 'out']);
 
 /** Tokens as the API counts them: input read fresh, output, and input read from or written to the prompt cache. */
 export type Tokens = { in: number; out: number; cacheRead: number; cacheWrite: number };
@@ -53,8 +64,8 @@ export type TurnStats = {
   files?: { read: number; edited: number; wrote: number };
   /** The file edited most, by name, once edited HOT_EDITS times or more. */
   hot?: { file: string; edits: number };
-  /** Lines added and removed by edits and writes; a write counts all its lines as added. */
-  lines?: { added: number; removed: number };
+  /** Lines added and removed by edits and writes; a write counts all its lines as added. `unmeasured`: the files a shell command changed whose lines could not be counted. */
+  lines?: { added: number; removed: number; unmeasured?: number };
   /** Test runs that passed and that failed. */
   tests?: { passed: number; failed: number };
   git?: { commits: number; pushes: number };
@@ -96,6 +107,7 @@ export type Tally = {
   edits: Map<string, number>;
   added: number;
   removed: number;
+  unmeasured: Set<string>;
   passed: number;
   failedTests: number;
   commits: number;
@@ -166,6 +178,7 @@ export function openTally(turnId: string, now: number, lastEndAt?: number): Tall
     edits: new Map(),
     added: 0,
     removed: 0,
+    unmeasured: new Set(),
     passed: 0,
     failedTests: 0,
     commits: 0,
@@ -255,8 +268,11 @@ export function changedLines(tool: string, args: Record<string, unknown>): { add
   return { added, removed };
 }
 
-/** One file a shell command really changed: `made` when it did not exist before; its lines as fileLineDelta counts them. */
-export type ShellChange = { file: string; made: boolean; added: number; removed: number };
+/** One file a shell command really changed: `made` when it did not exist before; its lines as fileLineDelta counts them, or `unmeasured` when its text was not read. */
+export type ShellChange = { file: string; made: boolean; added: number; removed: number; unmeasured?: true };
+
+/** A file as a tree sweep marks it: a change of its size or its modification time is a change. */
+export type FileMark = { size: number; mtimeMs: number };
 
 // A word that may be a file: letters, digits and `@~.+/_-` only (no glob, variable or flag), with a slash or an extension.
 const PATH_WORD = /^[\w@~.+/-]+$/;
@@ -292,11 +308,7 @@ function resolveWord(w: string, base: string, home: string): string | null {
  * changed (shellChanges).
  */
 export function shellTargets(command: string, cwd: string, home: string): string[] {
-  const bases = [cwd];
-  for (const m of command.matchAll(INTO)) {
-    const dir = resolveWord(m[1] ?? m[2] ?? m[3] ?? '', cwd, home);
-    if (dir && !bases.includes(dir)) bases.push(dir);
-  }
+  const bases = shellFolders(command, cwd, home);
   const words: string[] = [];
   for (const m of command.matchAll(QUOTED)) words.push(m[1] ?? m[2] ?? '');
   words.push(...command.replace(QUOTED, ' ').split(/[\s;&|()<>`=,]+/));
@@ -311,6 +323,16 @@ export function shellTargets(command: string, cwd: string, home: string): string
     }
   }
   return out;
+}
+
+/** The folders a shell command works in: the session's folder `cwd`, then each it `cd`s into or points `-C` at; `~` is `home`. */
+export function shellFolders(command: string, cwd: string, home: string): string[] {
+  const bases = [cwd];
+  for (const m of command.matchAll(INTO)) {
+    const dir = resolveWord(m[1] ?? m[2] ?? m[3] ?? '', cwd, home);
+    if (dir && !bases.includes(dir)) bases.push(dir);
+  }
+  return bases;
 }
 
 /** A file's text as lines, its last newline ending the last line. */
@@ -352,13 +374,47 @@ export function shellChanges(before: ReadonlyMap<string, string | null>, after: 
   return out;
 }
 
-/** A shell command's changes into the tally: a file made is written, one changed or deleted edited, each an edit of that file, its lines counted. */
+/**
+ * The files two tree sweeps of the same folders tell apart: `changed` when its
+ * size or modification time moved; `made` and `gone` only when both sweeps
+ * were `whole` (no cap cut either short), since a file past a cap is missing
+ * from one sweep without having come or gone.
+ */
+export function sweptChanges(before: ReadonlyMap<string, FileMark>, after: ReadonlyMap<string, FileMark>, whole: boolean): { file: string; kind: 'changed' | 'made' | 'gone' }[] {
+  const out: { file: string; kind: 'changed' | 'made' | 'gone' }[] = [];
+  for (const [file, was] of before) {
+    const now = after.get(file);
+    if (now === undefined) {
+      if (whole) out.push({ file, kind: 'gone' });
+    } else if (now.size !== was.size || now.mtimeMs !== was.mtimeMs) out.push({ file, kind: 'changed' });
+  }
+  if (whole) for (const file of after.keys()) if (!before.has(file)) out.push({ file, kind: 'made' });
+  return out;
+}
+
+/**
+ * A swept change as a ShellChange: `was` and `now` the file's text before and
+ * after (`null` absent, `undefined` not read). Its lines count when both sides
+ * are known, and a touch that left the text as it was is no change (null);
+ * with a side unknown the file still counts, its lines `unmeasured`.
+ */
+export function sweptShellChange(file: string, kind: 'changed' | 'made' | 'gone', was: string | null | undefined, now: string | null | undefined): ShellChange | null {
+  const made = kind === 'made';
+  const before = made ? '' : was;
+  const after = kind === 'gone' ? '' : now;
+  if (typeof before !== 'string' || typeof after !== 'string') return { file, made, added: 0, removed: 0, unmeasured: true };
+  if (kind === 'changed' && before === after) return null;
+  return { file, made, ...fileLineDelta(before, after) };
+}
+
+/** A shell command's changes into the tally: a file made is written, one changed or deleted edited, each an edit of that file, its lines counted or kept as unmeasured. */
 export function countShellChanges(t: Tally, changes: readonly ShellChange[]): void {
   for (const c of changes) {
     (c.made ? t.wrote : t.edited).add(c.file);
     t.edits.set(c.file, (t.edits.get(c.file) ?? 0) + 1);
     t.added += c.added;
     t.removed += c.removed;
+    if (c.unmeasured) t.unmeasured.add(c.file);
   }
 }
 
@@ -422,7 +478,7 @@ export function closeTally(
     ...(some(t.agentRuns, t.agentTools) ? { agents: { runs: t.agentRuns, tools: t.agentTools, tokens: t.agentTokens } } : {}),
     ...(some(t.read.size, t.edited.size, t.wrote.size) ? { files: { read: t.read.size, edited: t.edited.size, wrote: t.wrote.size } } : {}),
     ...(hot && hot[1] >= HOT_EDITS ? { hot: { file: hot[0].replace(/\/+$/, '').split('/').pop() ?? hot[0], edits: hot[1] } } : {}),
-    ...(some(t.added, t.removed) ? { lines: { added: t.added, removed: t.removed } } : {}),
+    ...(some(t.added, t.removed, t.unmeasured.size) ? { lines: { added: t.added, removed: t.removed, ...(t.unmeasured.size > 0 ? { unmeasured: t.unmeasured.size } : {}) } } : {}),
     ...(some(t.passed, t.failedTests) ? { tests: { passed: t.passed, failed: t.failedTests } } : {}),
     ...(some(t.commits, t.pushes) ? { git: { commits: t.commits, pushes: t.pushes } } : {}),
     ...(t.web > 0 ? { web: t.web } : {}),
@@ -491,7 +547,10 @@ export function renderStats(s: TurnStats, prev?: TurnStats): string {
     const f = [s.files.read ? `${count(s.files.read)} read` : '', s.files.edited ? `${count(s.files.edited)} edited` : '', s.files.wrote ? `${count(s.files.wrote)} written` : ''].filter(Boolean);
     parts.push(`files ${f.join(', ')}${s.hot ? `; ${s.hot.file} edited ${s.hot.edits}×` : ''}`);
   }
-  if (s.lines) parts.push(`lines +${count(s.lines.added)} −${count(s.lines.removed)}`);
+  if (s.lines) {
+    const unmeasured = s.lines.unmeasured ? `unmeasured in ${plural(s.lines.unmeasured, 'file')}` : '';
+    parts.push(unmeasured && !s.lines.added && !s.lines.removed ? `lines ${unmeasured}` : `lines +${count(s.lines.added)} −${count(s.lines.removed)}${unmeasured ? `, ${unmeasured}` : ''}`);
+  }
   if (s.tests) parts.push(`test runs ${[s.tests.passed ? `${s.tests.passed} passed` : '', s.tests.failed ? `${s.tests.failed} failed` : ''].filter(Boolean).join(', ')}`);
   if (s.git) parts.push([s.git.commits ? plural(s.git.commits, 'commit') : '', s.git.pushes ? plural(s.git.pushes, 'push', 'pushes') : ''].filter(Boolean).join(', '));
   if (s.web) parts.push(`${plural(s.web, 'web read')}`);
@@ -537,7 +596,7 @@ export function turnStatsOf(v: unknown): TurnStats | null {
     (s.agents === undefined || counts(s.agents, ['runs', 'tools', 'tokens'])) &&
     (s.files === undefined || counts(s.files, ['read', 'edited', 'wrote'])) &&
     (s.hot === undefined || (typeof (s.hot as { file?: unknown }).file === 'string' && counts(s.hot, ['edits']))) &&
-    (s.lines === undefined || counts(s.lines, ['added', 'removed'])) &&
+    (s.lines === undefined || (counts(s.lines, ['added', 'removed']) && counts(s.lines, ['unmeasured'], true))) &&
     (s.tests === undefined || counts(s.tests, ['passed', 'failed'])) &&
     (s.git === undefined || counts(s.git, ['commits', 'pushes'])) &&
     (s.stops === undefined || counts(s.stops, ['maxTokens', 'contextFull'])) &&

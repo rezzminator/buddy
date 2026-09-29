@@ -341,6 +341,16 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   bubble against it and against a verdict. `suggestNextPrompt: false`
   leaves Claude Code's own alone; with it on, turning off Claude Code's own
   prompt suggestions saves paying for both.
+- **`promptToMainChat`** (off by default): the buddy may prompt Claude itself.
+  The same end-of-turn call may write one more line, a prompt of at most 40
+  words the buddy sends Claude right away, only when the turn left your own
+  ask unmet or unproven: a false claim, a check of what you asked that
+  Claude skipped, a part of the ask it missed. Work beyond the ask stays a
+  suggestion. Claude
+  reads it under the plugin's origin with a note that it is the buddy's,
+  never yours, to check before acting on. At most one per prompt of yours:
+  the turn it starts never sends another. The buddy remembers what it sent
+  and files that turn as its own.
 - **Errors are never silent.** A chosen character that is missing or invalid
   draws the duck with a bubble
   `Couldn't load {id}: {error}; the personality tab in /buddy picks another`
@@ -365,6 +375,7 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 | `effort` | string | `"low"` | How hard `model` thinks on each of those calls: low, medium, high, xhigh, max or `inherit`. `inherit` uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies |
 | `secondsBetweenComments` | number | `0` | Minimum seconds between two `commentAfterEachTurn`; 0 = every answered turn |
 | `suggestNextPrompt` | boolean | `true` | The buddy's second brain, in the same end-of-turn call: it names what you most deeply want, judges Claude's last move `RIGHT`, `SHORTCUT` (warned in yellow) or `WRONG` (screamed in red), and writes your next prompt to match (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
+| `promptToMainChat` | boolean | `false` | The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, from the same end-of-turn call: only when the turn left your own ask unmet or unproven (a false claim, a check of what you asked that Claude skipped or bypassed, a part of the ask it missed); work beyond the ask, and a decision that is yours, stays a suggestion. Claude reads it as the buddy's, never yours, with a note saying so; the turn it starts never sends another, and with `suggestNextPrompt` on the suggestion after one is none. Logs `promptToMainChat.sent`. |
 | `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest answered turns it remembers, 1 to 10, after its own notes on the chat (at most 6, rewritten by itself at every turn's end). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; each turn with its numbers (time, requests, tool calls, subagents, files, lines, tests, commits, tokens, cost, context); anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`), so reopening a chat brings it back, and per character; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
 | `logLevel` | string | `"info"` | Log level: error, info or debug |
 | `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, capped at 1 MB with one rotation; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |

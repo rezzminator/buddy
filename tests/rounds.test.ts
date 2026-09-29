@@ -57,3 +57,11 @@ describe('a round', () => {
     expect(callSection(1, { ...call, kind: 'endOfTurn', settings: {}, usage: {}, reply: '', outcome: 'threw: boom' })).toContain('BUDDY CALL 1 · end-of-turn call · sent 07:53:12.123 ═══');
   });
 });
+
+import { BUDDY_PROMPT } from '../plugins/buddy/src/chatTurnsToRead.ts';
+
+describe("the buddy's own prompt in a round", () => {
+  test('the turn it started is filed as the buddy\'s own', () => {
+    expect(turnEndSection(AT, { turnId: 't2', reason: 'answer', prompt: 'run the tests', answer: 'Ran them.', did: [], from: BUDDY_PROMPT })).toContain('prompt (from the buddy (you), sent to Claude):\nrun the tests\n');
+  });
+});

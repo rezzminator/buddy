@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   HOT_EDITS, LIMIT_SAID_PERCENT, TOOL_NAMES_MAX,
   SHELL_CANDIDATES_MAX,
-  changedLines, closeTally, count, countAgentRun, countShellChanges, countStep, countToolCall, dollars, fileLineDelta, openTally, renderStats, shellChanges, shellTargets, span, statsBrief, turnStatsOf,
+  changedLines, closeTally, count, countAgentRun, countShellChanges, countStep, countToolCall, dollars, fileLineDelta, openTally, renderStats, shellChanges, shellFolders, shellTargets, span, statsBrief, sweptChanges, sweptShellChange, turnStatsOf,
   type CountedCall, type TurnStats,
 } from '../plugins/buddy/src/stats.ts';
 
@@ -213,5 +213,41 @@ describe("a shell command's own edits", () => {
     expect([...t.wrote]).toEqual(['/new.txt']);
     expect(t.edits.get('/a.ts')).toBe(2);
     expect([t.added, t.removed]).toEqual([5, 3]);
+  });
+  test('the folders a command works in: the session folder, then each it cds into or points -C at', () => {
+    expect(shellFolders('cd pfm && make; git -C ../lib status; cd ~/x', '/w/app', '/h')).toEqual(['/w/app', '/w/app/pfm', '/w/lib', '/h/x']);
+    expect(shellFolders('python3 fix.py', '/w/app', '/h')).toEqual(['/w/app']);
+  });
+  test("a tree sweep's changes: size or time moved is changed; made and gone only when both sweeps were whole", () => {
+    const before = new Map([['/a.js', { size: 4, mtimeMs: 1 }], ['/b.js', { size: 4, mtimeMs: 1 }], ['/same.js', { size: 2, mtimeMs: 5 }], ['/gone.js', { size: 1, mtimeMs: 1 }]]);
+    const after = new Map([['/a.js', { size: 6, mtimeMs: 1 }], ['/b.js', { size: 4, mtimeMs: 2 }], ['/same.js', { size: 2, mtimeMs: 5 }], ['/new.js', { size: 3, mtimeMs: 9 }]]);
+    expect(sweptChanges(before, after, true)).toEqual([
+      { file: '/a.js', kind: 'changed' },
+      { file: '/b.js', kind: 'changed' },
+      { file: '/gone.js', kind: 'gone' },
+      { file: '/new.js', kind: 'made' },
+    ]);
+    expect(sweptChanges(before, after, false)).toEqual([{ file: '/a.js', kind: 'changed' }, { file: '/b.js', kind: 'changed' }]);
+  });
+  test("a swept change's lines: counted when its text is known both sides, a touch with the same text no change, an unknown side unmeasured", () => {
+    expect(sweptShellChange('/a.js', 'changed', 'a\nb\n', 'a\nB\n')).toEqual({ file: '/a.js', made: false, added: 1, removed: 1 });
+    expect(sweptShellChange('/a.js', 'changed', 'a\n', 'a\n')).toBeNull();
+    expect(sweptShellChange('/n.js', 'made', null, 'x\ny\n')).toEqual({ file: '/n.js', made: true, added: 2, removed: 0 });
+    expect(sweptShellChange('/g.js', 'gone', 'p\nq\n', null)).toEqual({ file: '/g.js', made: false, added: 0, removed: 2 });
+    expect(sweptShellChange('/logo.png', 'changed', undefined, undefined)).toEqual({ file: '/logo.png', made: false, added: 0, removed: 0, unmeasured: true });
+    expect(sweptShellChange('/big.json', 'made', null, undefined)).toEqual({ file: '/big.json', made: true, added: 0, removed: 0, unmeasured: true });
+  });
+  test('a file whose lines went unmeasured still counts as a file, and the line says so instead of reading as no change', () => {
+    const t = openTally('t1', 0);
+    countShellChanges(t, [{ file: '/a.js', made: false, added: 1, removed: 1 }, { file: '/logo.png', made: false, added: 0, removed: 0, unmeasured: true }]);
+    const s = closeTally(t, { ms: 1000 }, null, null);
+    expect(s.files).toEqual({ read: 0, edited: 2, wrote: 0 });
+    expect(s.lines).toEqual({ added: 1, removed: 1, unmeasured: 1 });
+    expect(renderStats(s)).toContain('lines +1 −1, unmeasured in 1 file');
+    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual(s);
+    const only = openTally('t2', 0);
+    countShellChanges(only, [{ file: '/x.bin', made: false, added: 0, removed: 0, unmeasured: true }, { file: '/y.bin', made: false, added: 0, removed: 0, unmeasured: true }]);
+    expect(renderStats(closeTally(only, { ms: 1000 }, null, null))).toContain('lines unmeasured in 2 files');
+    expect(turnStatsOf({ ms: 1, lines: { added: 1, removed: 0, unmeasured: -1 } })).toBeNull();
   });
 });

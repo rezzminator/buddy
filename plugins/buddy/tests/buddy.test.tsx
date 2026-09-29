@@ -2,7 +2,7 @@ import type { On } from 'claude-code';
 import { describe, expect, mock, test } from 'claude-code/testing';
 import { SHORTCUTS, guideRows } from '../hooks/drawer.tsx';
 import { roll } from '../src/hatch.ts';
-import { CHARACTER_RULE, JUST_ENDED, TAKEN_SUGGESTION_CONTEXT, memoryRule } from '../src/prompts.ts';
+import { BUDDY_PROMPT_CONTEXT, CHARACTER_RULE, JUST_ENDED, TAKEN_SUGGESTION_CONTEXT, memoryRule } from '../src/prompts.ts';
 
 // Run with `claude plugin test plugins/buddy` (CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1).
 // The plugin loads from this folder; `on` here sits beneath it and answers
@@ -172,7 +172,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
   on('session.start', async (_$, e) => ({ cwd: e.cwd }));
   on('fs.exists', async (_$, e) => ({ value: Object.keys(files).some((f) => f === e.path || f.startsWith(`${e.path}/`)) }));
   on('fs.list', async (_$, e) => {
-    if (e.path === HOME || e.path.startsWith(`${HOME}/`)) {
+    if (e.path === HOME || e.path.startsWith(`${HOME}/`) || Object.keys(files).some((f) => f.startsWith(`${e.path}/`))) {
       // A thrown answer reaches the plugin as the kit's own rejection, not this message.
       if (disk.refuseHome && e.path === HOME) throw new Error(`EPERM: not allowed to list ${e.path}`);
       // A folder is listed by the files beneath it.
@@ -2393,6 +2393,34 @@ describe("a turn's numbers", () => {
     expect(filed).toMatchObject({ files: { read: 0, edited: 1, wrote: 1 }, lines: { added: 4, removed: 1 } });
     expect(w.completes[0]!.prompt).toContain('lines +4 −1');
   });
+  test("a script's edits count too: a tree sweep of the command's folders finds the files it changed without naming them, lines exact where read before, else unmeasured; dependencies and dot-folders never swept", async ($, on) => {
+    const mtimes: Record<string, number> = {};
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Counted.\nSUGGEST_NEXT_PROMPT: NONE' } }, {
+      files: { [`${ROOT}/fix.py`]: 'import pathlib\n', [`${ROOT}/src/calc.js`]: 'a\nb\n', [`${ROOT}/src/same.js`]: 'k\n', [`${ROOT}/logo.png`]: '\u0000PNG1', [`${ROOT}/node_modules/x/index.js`]: 'q\n', [`${ROOT}/.cache/t.txt`]: 'q\n' },
+      mtimes,
+    });
+    on('tool.call', async (_$, e) => {
+      if ((e as { command?: string }).command === 'python3 fix.py') {
+        w.files[`${ROOT}/src/calc.js`] = 'a\nB\n';
+        mtimes[`${ROOT}/src/calc.js`] = 5;
+        mtimes[`${ROOT}/src/same.js`] = 7;
+        w.files[`${ROOT}/src/out.js`] = 'x\ny\nz\n';
+        w.files[`${ROOT}/logo.png`] = '\u0000PNG22';
+        w.files[`${ROOT}/node_modules/x/index.js`] = 'Q\n';
+        w.files[`${ROOT}/.cache/t.txt`] = 'Q\n';
+      }
+      return { result: { stdout: '' }, text: '', isError: false } as never;
+    });
+    await $.session.start(START);
+    await prompt($, 'rename it', 't1');
+    await $.tool.call({ tool: 'Bash', command: 'python3 fix.py' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Renamed.', isAborted: false, turnId: 't1', durationMs: 5_000 } as never);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filed = (memory(w) as any).blocks.find((b: { turnId?: string }) => b.turnId === 't1').turn.stats;
+    expect(filed).toMatchObject({ files: { read: 0, edited: 2, wrote: 1 }, lines: { added: 4, removed: 1, unmeasured: 1 } });
+    expect(w.completes[0]!.prompt).toContain('lines +4 −1, unmeasured in 1 file');
+  });
   test('counted as the turn runs, filed with it in memory.json, read by the end-of-turn call under what Claude did, and shown in brief on its row in the drawer', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Counted.\nSUGGEST_NEXT_PROMPT: NONE' } });
     let usageReads = 0;
@@ -2492,5 +2520,69 @@ describe("a turn's numbers", () => {
     expect(records(w).filter((r) => r.event === 'usage.read').map((r) => r.outcome)).toEqual(['timeout', 'timeout']);
     expect(w.completes).toHaveLength(1);
     await ui.unmount();
+  });
+});
+
+/**
+ * The kit loads the plugin under test with its manifest's defaults, so
+ * promptToMainChat is off here, and an inline plugin cannot import buddy's
+ * code: the send itself (option on) is covered by the unit tests only. What
+ * the kit shows: a plugin's own submission reaches its own prompt.submit hook
+ * without the `{ kind: 'plugin', name }` origin the engine docs promise, so
+ * buddy's hook, which knows its own prompt by that origin, is proven here on
+ * a submission that carries it.
+ */
+const TO_CLAUDE = 'run the tests and show their output: you said they pass, and none ran';
+const PROMPTS_CLAUDE = `VERDICT: SHORTCUT\nWHY: claimed green, ran nothing.\nCOMMENT_AFTER_EACH_TURN: Green, you say?\nPROMPT_TO_MAIN_CHAT: ${TO_CLAUDE}\nSUGGEST_NEXT_PROMPT: NONE`;
+const asksToPrompt = (c: { system?: string }) => (c.system ?? '').includes('PROMPT_TO_MAIN_CHAT:');
+/** A plugin that submits a prompt at every turn's end, a context given at the call, and whose own prompt.submit hook says what origin it saw. */
+const SUBMITTER = {
+  plugins: [
+    {
+      name: 'submitter',
+      register(on: On) {
+        on('turn.complete', async ($, e, next) => {
+          const r = await next(e);
+          void $.prompt.submit({ text: 'from the submitter', context: ['attached at the call'] } as never);
+          return r;
+        });
+        on('prompt.submit', async ($, e, next) => {
+          return next(e.text === 'from the submitter' ? { ...e, context: [...(e.context ?? []), `seen by its own hook: ${JSON.stringify({ origin: e.origin, self: $.plugin.name })}`] } : e);
+        });
+      },
+    },
+  ],
+};
+
+describe('promptToMainChat', () => {
+  test("the kit hands a plugin's own $.prompt.submit to its own prompt.submit hook, but with no origin, and drops a context given at the call", SUBMITTER, async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.submitted.filter((x) => x.text === 'from the submitter')).toEqual([{ text: 'from the submitter', context: ['seen by its own hook: {"self":"submitter"}'] }]);
+  });
+  test("buddy's own prompt carries, for Claude alone, whose it is; another plugin's does not; the turn it starts is filed as the buddy's own", async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Hm.\nSUGGEST_NEXT_PROMPT: NONE' } });
+    await $.session.start(START);
+    await $.prompt.submit({ text: 'from another plugin', origin: { kind: 'plugin', name: 'another' } } as never);
+    expect(w.submitted.at(-1)).toEqual({ text: 'from another plugin' });
+    await $.prompt.submit({ text: TO_CLAUDE, origin: { kind: 'plugin', name: 'buddy' } } as never);
+    expect(w.submitted.at(-1)).toEqual({ text: TO_CLAUDE, context: [BUDDY_PROMPT_CONTEXT] });
+    await $.turn.start({ text: TO_CLAUDE, turnId: 't2' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Ran them: two fail.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(w.completes.at(-1)!.prompt).toContain(`From the buddy (you), sent to Claude:\n${TO_CLAUDE}\n`);
+  });
+  test('off (the default): no PROMPT_TO_MAIN_CHAT line is asked for and nothing is sent, though the reply writes one', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
+    await $.session.start(START);
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(1);
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
+    expect(w.submitted).toEqual([{ text: 'fix the login bug' }]);
+    expect(records(w).filter((r) => r.event === 'promptToMainChat.sent')).toHaveLength(0);
   });
 });
