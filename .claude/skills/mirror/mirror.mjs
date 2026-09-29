@@ -7,7 +7,10 @@
 //
 //   node mirror.mjs live [buddy-dir | session-id] [--last N]
 //   node mirror.mjs calls <round-file>...
-//   node mirror.mjs replay <round-file> [--call N] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--model M] [--effort E] [--jobs J]
+//   node mirror.mjs replay <round-file> [--call N] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--model M] [--effort E] [--jobs J] [--want W,...]
+//
+// --want asks for lines the captured call did not (promptToMainChat, suggestNextPrompt, commentAfterEachTurn), in
+// every arm but old: a round captured with an option off is replayed as if it had been on.
 
 import { execFile, execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
@@ -194,7 +197,7 @@ function srcAt(rev, cache) {
   return src;
 }
 
-async function systemFor(arm, captured, cache) {
+async function systemFor(arm, captured, cache, want = []) {
   if (arm === 'old') return captured;
   // A folder holding prompts.ts is a snapshot of an earlier try; otherwise the working tree, or a git rev.
   const src = existsSync(join(arm, 'prompts.ts')) ? resolve(arm) : arm === 'tree' ? join(REPO, 'plugins/buddy/src') : srcAt(arm, cache);
@@ -203,6 +206,7 @@ async function systemFor(arm, captured, cache) {
   const cut = captured.indexOf(PERSONA_END);
   if (cut < 0) fail('the captured system has no character rule to split the persona at');
   const wants = { commentAfterEachTurn: captured.includes('COMMENT_AFTER_EACH_TURN:'), suggestNextPrompt: captured.includes('SUGGEST_NEXT_PROMPT:'), promptToMainChat: captured.includes('PROMPT_TO_MAIN_CHAT:') };
+  for (const w of want) wants[w] = true;
   const desire = /you named the user's deepest desire: (.*)\n/.exec(captured)?.[1] ?? null;
   return turnSystem(captured.slice(0, cut), wants, desire);
 }
@@ -258,6 +262,10 @@ async function replay(o) {
   const call = o.call ? eot.find((c) => c.n === Number(o.call)) : eot[eot.length - 1];
   if (!call) fail(`${file} has no end-of-turn call ${o.call}; it has ${eot.map((c) => c.n).join(', ')}`);
   const arms = (o.arms ?? 'old,HEAD,tree').split(',').filter(Boolean);
+  const WANTS = ['commentAfterEachTurn', 'suggestNextPrompt', 'promptToMainChat'];
+  const want = String(o.want ?? '').split(',').filter(Boolean);
+  for (const w of want) if (!WANTS.includes(w)) fail(`--want ${w}: not one of ${WANTS.join(', ')}`);
+  if (want.length && arms.includes('old')) fail('--want asks the arms for lines the captured call never had; the old arm replays it verbatim, so leave old out');
   const runs = Number(o.runs ?? 3);
   const out = o.out ?? join(tmpdir(), 'buddy-mirror');
   const model = o.model ?? call.model;
@@ -266,14 +274,14 @@ async function replay(o) {
   const cache = new Map();
   const systems = {};
   for (const arm of arms) {
-    systems[arm] = await systemFor(arm, call.system, cache);
+    systems[arm] = await systemFor(arm, call.system, cache, want);
     writeFileSync(join(out, `${r.file}-c${call.n}-${armTag(arm)}.system.txt`), systems[arm]);
   }
   writeFileSync(join(out, `${r.file}-c${call.n}.prompt.txt`), call.prompt);
   const jobs = arms.flatMap((arm) => Array.from({ length: runs }, (_, k) => async () => ({ arm: armTag(arm), run: k + 1, ...(await ask(systems[arm], call.prompt, model, effort)) })));
   const results = await pool(jobs, Number(o.jobs ?? 6));
   const ledger = join(out, 'ledger.tsv');
-  if (!existsSync(ledger)) writeFileSync(ledger, ['when', 'round', 'call', 'judged', 'arm', 'run', 'ms', 'inTok', 'outTok', 'usd', 'verdict', 'report', 'comment', 'suggest', 'error'].join('\t') + '\n');
+  if (!existsSync(ledger)) writeFileSync(ledger, ['when', 'round', 'call', 'judged', 'arm', 'run', 'ms', 'inTok', 'outTok', 'usd', 'verdict', 'report', 'comment', 'suggest', 'error', 'toClaude'].join('\t') + '\n');
   const when = new Date().toISOString();
   console.log(`${r.file} call ${call.n} · judged: ${judgedTurn(call.prompt).slice(0, 110)}`);
   const captured = tagged(call.reply);
@@ -281,10 +289,11 @@ async function replay(o) {
   for (const x of results) {
     const t = x.text ? tagged(x.text) : {};
     const sug = t.SUGGEST_NEXT_PROMPT ?? '';
+    const toClaude = t.PROMPT_TO_MAIN_CHAT ?? '';
     writeFileSync(join(out, `${r.file}-c${call.n}-${x.arm}-r${x.run}.reply.txt`), x.error ? `ERROR ${x.error}\n` : x.text);
-    appendFileSync(ledger, [when, r.file, call.n, judgedTurn(call.prompt).slice(0, 80), x.arm, x.run, x.ms, x.inTok, x.outTok, x.usd, t.VERDICT, reportFlag(sug), t.COMMENT_AFTER_EACH_TURN, sug, x.error].map(cell).join('\t') + '\n');
+    appendFileSync(ledger, [when, r.file, call.n, judgedTurn(call.prompt).slice(0, 80), x.arm, x.run, x.ms, x.inTok, x.outTok, x.usd, t.VERDICT, reportFlag(sug), t.COMMENT_AFTER_EACH_TURN, sug, x.error, toClaude].map(cell).join('\t') + '\n');
     if (x.error) console.log(`  ${x.arm} r${x.run} · ERROR ${x.error}`);
-    else console.log(`  ${x.arm} r${x.run} · ${x.ms} ms · ${t.VERDICT ?? '-'} · COMMENT ${t.COMMENT_AFTER_EACH_TURN ?? '-'}\n    SUGGEST ${sug || '(none)'} ${reportFlag(sug)}`);
+    else console.log(`  ${x.arm} r${x.run} · ${x.ms} ms · ${t.VERDICT ?? '-'} · COMMENT ${t.COMMENT_AFTER_EACH_TURN ?? '-'}\n    SUGGEST ${sug || '(none)'} ${reportFlag(sug)}${toClaude ? `\n    TO CLAUDE ${toClaude}` : ''}`);
   }
   const usd = results.reduce((a, x) => a + (x.usd ?? 0), 0);
   const errors = results.filter((x) => x.error).length;
@@ -296,6 +305,6 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   const [cmd, ...rest] = process.argv.slice(2);
   const o = opts(rest);
   const run = { live, calls, replay }[cmd];
-  if (!run) fail('usage: mirror.mjs live [buddy-dir|session-id] [--last N] | calls <round-file>... | replay <round-file> [--call N] [--arms old,HEAD,tree] [--runs K] [--out DIR]');
+  if (!run) fail('usage: mirror.mjs live [buddy-dir|session-id] [--last N] | calls <round-file>... | replay <round-file> [--call N] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--want W,...]');
   Promise.resolve(run(o)).catch((error) => fail(`${cmd}: ${error.stack ?? error}`));
 }

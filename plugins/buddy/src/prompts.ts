@@ -172,12 +172,13 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
   }
   if (wants.promptToMainChat) {
     lines.push(
-      'PROMPT_TO_MAIN_CHAT: a prompt you send Claude yourself, right now, before the user reads on, ' +
-        "when this turn left the user's own ask unmet or unproven: a false claim, a check of what was asked that Claude skipped or bypassed, a part of the ask it missed. " +
-        (wants.suggestNextPrompt
-          ? "A SHORTCUT or WRONG on the ask itself goes here, not in SUGGEST_NEXT_PROMPT; work beyond the ask, and any decision that is the user's, stays a suggestion. "
-          : "Work beyond the ask, and any decision that is the user's, never goes here. ") +
-        "Plain words, not in character, at most 40 words, naming the thing; it reaches Claude as yours, never as the user's. " +
+      'PROMPT_TO_MAIN_CHAT: a prompt you send Claude yourself, right now, before the user reads on. ' +
+        "Send one only on evidence inside this turn that the user's own ask is unmet or unproven: a step marked failed, or failed test runs, that the answer passes over or contradicts (a step marked failed ended in an error, so a result the answer draws from it is unproven, unless the error was the point, such as a crash reproduced or a test watched failing); " +
+        'a conclusion the answer states (done, installed, verified, none left, all pass) that rests on less than it names, such as a check of some of the items or a change made in one of the places; ' +
+        'an instruction in the ask (a stop, a condition, an order) Claude did not follow; a part of the ask the answer never addresses. ' +
+        'Your own doubts are never a reason: a better method, a risk that might bite, a hypothesis to test, a tidy-up, a gap Claude named while leaving its conclusion open: those' +
+        (wants.suggestNextPrompt ? ' go in SUGGEST_NEXT_PROMPT. ' : ' never go here. ') +
+        "Plain words, not in character, at most 40 words: name the evidence, then the one fix or check it needs; it reaches Claude as yours, never as the user's. " +
         'Write PROMPT_TO_MAIN_CHAT: NONE otherwise.',
     );
   }
