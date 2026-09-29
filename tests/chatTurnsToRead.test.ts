@@ -77,6 +77,15 @@ describe('the timeline', () => {
     expect(cat.filter((x) => x.kind === 'line')).toEqual([line('l2'), line('l3'), line('l4')]);
     expect(b[0]!.characters.duck).toEqual([line('Quack.')]);
   });
+  test('a canned line said again under the same turn, as a greeting after each reload, is kept once', () => {
+    let b = addTurn([], 't1', turn('one'), 4);
+    b = addExchange(b, 'cat', line('Compiler is warm.'));
+    b = addExchange(b, 'cat', qa('why?', 'because'));
+    b = addExchange(b, 'cat', line('Compiler is warm.'));
+    expect(b[0]!.characters.cat).toEqual([line('Compiler is warm.'), qa('why?', 'because')]);
+    b = addTurn(b, 't2', turn('two'), 4);
+    expect(addExchange(b, 'cat', line('Compiler is warm.'))[1]!.characters.cat).toEqual([line('Compiler is warm.')]);
+  });
   test('an exchange is kept whole, its lines too; a turn is cut to the start and end of its prompt and answer', () => {
     const b = addExchange(addTurn([], 't1', turn(`START${'p'.repeat(TURN_PROMPT_HEAD + TURN_PROMPT_TAIL)}END`, `HEAD${'a'.repeat(TURN_ANSWER_HEAD + TURN_ANSWER_TAIL)}TAIL`), 4), 'cat', endOfTurn('c'.repeat(200), 's'.repeat(200)));
     const { prompt, answer } = b[0]!.turn!;
@@ -171,7 +180,7 @@ describe('render', () => {
     b = addTurn(b, 't2', { prompt: '', answer: 'ok', from: 'unknown' }, 4);
     const r = render(b, 'cat', 4);
     expect(r).toContain('Turn 1. Claude was sent, not by the user (peer):\nping\nClaude answered:\n(no text)');
-    expect(r).toContain('Turn 2. Claude was sent, from an unknown origin:\n(not seen)');
+    expect(r).toContain("Turn 2. Claude was sent, by a sender you did not see (most often the user's own slash command or skill, or a prompt sent while you restarted):\n(not seen)");
   });
   test('only the character\'s own exchanges; nothing is empty; a lowered n reads the newest', () => {
     let b = addTurn([], 't1', turn('one'), 4);

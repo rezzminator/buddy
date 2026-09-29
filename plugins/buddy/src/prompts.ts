@@ -5,7 +5,7 @@
 // notes on the chat, rewritten every turn, in one reply.
 // Each demands short lines.
 
-import type { Action } from './did.ts';
+import { actionOf, failureReason, type Action } from './did.ts';
 import type { TurnStats } from './stats.ts';
 import { BUDDY_PROMPT, NOTES_MAX, cleanNotes, cleanPrompt, ends } from './chatTurnsToRead.ts';
 
@@ -312,21 +312,30 @@ export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string
   return from === undefined ? { prompt: turn.text, ...added, ledger } : { prompt: turn.text, from, ...added, ledger };
 }
 
-/** A transcript row the prompt a turn began with is read back from: `$.session.messages()`'s rows. */
-export type MessageRow = { role: string; text: string; toolResults?: readonly unknown[] };
+/** A transcript row a turn is read back from: `$.session.messages()`'s rows, an assistant row's tool calls with their outcome. */
+export type MessageRow = { role: string; text: string; toolUses?: readonly { tool: string; input: Record<string, unknown>; text?: string; isError?: true }[]; toolResults?: readonly unknown[] };
 
 /** A user row the engine files for a local command's output: never a prompt. The rows carry no mark of an injected message, so it is told by its markup. */
 const LOCAL_COMMAND_OUTPUT = /^\s*<local-command-(?:caveat|stdout|stderr)>/;
 
 /**
- * The prompt a turn began with, read back from the transcript when the
- * ledger no longer holds it (a plugin hot reload empties it): the text of the
- * last user row that is neither a tool result nor a local command's output
- * and says something once its markup goes; '' when no row is one.
+ * A turn read back from the transcript when the ledger no longer holds it (a
+ * plugin hot reload empties it, and the buddy saw none of the turn's tool
+ * calls before it): the prompt, the text of the last user row that is neither
+ * a tool result nor a local command's output and says something once its
+ * markup goes, '' when no row is one; and the steps of every tool call the
+ * assistant rows after it hold, a failed one with why.
  */
-export function lostPromptOf(rows: readonly MessageRow[]): string {
-  const row = rows.findLast((r) => r.role === 'user' && (r.toolResults?.length ?? 0) === 0 && !LOCAL_COMMAND_OUTPUT.test(r.text) && cleanPrompt(r.text) !== '');
-  return row?.text ?? '';
+export function lostTurnOf(rows: readonly MessageRow[]): { prompt: string; steps: Action[] } {
+  const i = rows.findLastIndex((r) => r.role === 'user' && (r.toolResults?.length ?? 0) === 0 && !LOCAL_COMMAND_OUTPUT.test(r.text) && cleanPrompt(r.text) !== '');
+  if (i < 0) return { prompt: '', steps: [] };
+  const steps = rows
+    .slice(i + 1)
+    .filter((r) => r.role === 'assistant')
+    .flatMap((r) => r.toolUses ?? [])
+    .map((u) => actionOf({ ...u.input, tool: u.tool }, u.isError ? { kind: 'failed', reason: failureReason(u.text ?? '') } : null))
+    .filter((a): a is Action => a !== null);
+  return { prompt: rows[i]!.text, steps };
 }
 
 /** A session end that leaves the process on a fresh conversation (`/clear`, a resume): the chat's chatTurnsToRead turns, its prompts and a pending commentAfterEachTurn are the old one's. */

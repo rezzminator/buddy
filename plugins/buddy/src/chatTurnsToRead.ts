@@ -231,6 +231,8 @@ export function memoryStats(blocks: readonly Block[], n: number): { turns: numbe
  * newest remembered when the exchange began), or under the newest block when
  * `after` is undefined; with no block yet, under a first, turnless one. An
  * exchange whose turn is no longer remembered is older than the memory: dropped.
+ * A canned line already kept under that turn (a greeting after each reload) is
+ * not kept twice.
  */
 export function addExchange(blocks: readonly Block[], characterId: string, x: Exchange, after?: string): Block[] {
   const c = capped(x);
@@ -239,7 +241,9 @@ export function addExchange(blocks: readonly Block[], characterId: string, x: Ex
   const i = after === undefined ? blocks.length - 1 : blocks.findIndex((b) => b.turnId === after);
   if (i < 0) return [...blocks];
   const b = blocks[i]!;
-  const exchanges = dropOldLines([...(b.characters[characterId] ?? []), c]);
+  const had = b.characters[characterId] ?? [];
+  if (c.kind === 'line' && had.some((y) => y.kind === 'line' && y.text === c.text)) return [...blocks];
+  const exchanges = dropOldLines([...had, c]);
   return blocks.map((y, k) => (k === i ? { ...b, characters: { ...b.characters, [characterId]: exchanges } } : y));
 }
 
@@ -280,7 +284,7 @@ function turnLines(t: Turn, k: number, prev: TurnStats | undefined, older: boole
     t.from === undefined ? 'The user asked Claude:'
     : t.from === TAKEN_SUGGESTION ? 'The user sent Claude your own suggested prompt, unedited:'
     : t.from === BUDDY_PROMPT ? `From ${BUDDY_PROMPT_LABEL}:`
-    : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:'
+    : UNKNOWN_ORIGINS.includes(t.from) ? "Claude was sent, by a sender you did not see (most often the user's own slash command or skill, or a prompt sent while you restarted):"
     : `Claude was sent, not by the user (${t.from}):`;
   const answered = t.interrupted ? 'Claude answered, before the user interrupted the turn:' : 'Claude answered:';
   if (!older) return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.added ?? []).map((a) => `${ADDED_LABEL} ${a}`), ...(t.did ? [didLine(t.did, null)] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];

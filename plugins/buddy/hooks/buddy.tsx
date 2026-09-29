@@ -13,7 +13,7 @@ import {
   type Block, type Exchange, type Notes, type Stored,
 } from '../src/chatTurnsToRead.ts';
 import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
-import { actionOf, denialReason, didOf, failureReason, type Failure } from '../src/did.ts';
+import { actionOf, denialReason, didOf, failureReason, type Action as Step, type Failure } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
 import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
@@ -22,7 +22,7 @@ import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostPromptOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
+  ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostTurnOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../src/suggestNextPrompt.ts';
@@ -1149,7 +1149,7 @@ function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
 }
 
 /** An ended main turn as onTurnEnd hands it on: the prompt that started it, its origin when not the user's, the prompts delivered into it, its tally (null when its start was not seen); `lost` when the ledger held no entry for it, its prompt to be read back from the transcript (lostPrompt). */
-type Ended = { prompt: string; from?: string; added?: string[]; lost?: true; tally: { counts: Tally; before: Promise<UsageReading | null> } | null };
+type Ended = { prompt: string; from?: string; added?: string[]; lost?: true; lostSteps?: Step[]; tally: { counts: Tally; before: Promise<UsageReading | null> } | null };
 
 /**
  * A main turn ended, however, before any hook beneath runs (turn.complete):
@@ -1184,19 +1184,19 @@ function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): Ended |
 }
 
 /**
- * The prompt of the main turn `turnId` the ledger lost, read back from the
- * transcript (lostPromptOf): logged either way, found or none there; a failed
- * read is said and logged as a failure, and gives ''.
+ * The main turn `turnId` the ledger lost, its prompt and steps read back from
+ * the transcript (lostTurnOf): logged either way, found or none there; a
+ * failed read is said and logged as a failure, and gives no prompt.
  */
-async function lostPrompt($: EngineInterface, turnId: string): Promise<string> {
+async function lostTurn($: EngineInterface, turnId: string): Promise<{ prompt: string; steps: Step[] }> {
   try {
     const rows = await $.session.messages();
-    const prompt = lostPromptOf(rows);
-    lg($, 'info', 'prompt.backfill', { turnId, outcome: prompt ? 'found' : 'none', rows: rows.length });
-    return prompt;
+    const lost = lostTurnOf(rows);
+    lg($, 'info', 'prompt.backfill', { turnId, outcome: lost.prompt ? 'found' : 'none', rows: rows.length, steps: lost.steps.length });
+    return lost;
   } catch (error) {
     log($, 'reading the transcript for a lost prompt', error, { turnId });
-    return '';
+    return { prompt: '', steps: [] };
   }
 }
 
@@ -1210,7 +1210,8 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     const gen = ++st.turnGen;
     // An answered turn is filed into the chatTurnsToRead, and an interrupted one as interrupted (what Claude said before it its answer; it still makes no call), a prompt not the user's under its origin; a headless session (nobody at the prompt) files none, never pushing an interactive session's memory out of the store.
     const answered = e.reason === 'answer' && !e.isAborted;
-    const did = didOf(st.b.turn.actions);
+    // A turn read back after a hot reload takes its steps from the transcript: the buddy heard only the calls after the reload.
+    const did = didOf(ended.lostSteps?.length ? ended.lostSteps : st.b.turn.actions);
     const from = ended.from === undefined ? {} : { from: ended.from };
     // The prompts the user typed while it ran, delivered into it: read with it, never as a turn of their own.
     const added = ended.added ? { added: ended.added } : {};
@@ -2436,11 +2437,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // The running-turn marker and the prompt clear first: a hook beneath that throws never leaves the turn running.
   on('turn.complete', async ($, e, next) => {
     const ended = onTurnEnd(st, $, e);
-    // A turn whose prompt the ledger lost reads it back from the transcript while the hooks beneath run; its origin stays unknown.
-    const found = ended?.lost ? lostPrompt($, e.turnId) : null;
+    // A turn whose prompt the ledger lost reads it and its steps back from the transcript while the hooks beneath run; its origin stays unknown.
+    const found = ended?.lost ? lostTurn($, e.turnId) : null;
     const r = await next(e);
-    const prompt = found ? await found : '';
-    onTurnComplete(st, $, e, ended && prompt ? { ...ended, prompt } : ended);
+    const lost = found ? await found : null;
+    onTurnComplete(st, $, e, ended && lost?.prompt ? { ...ended, prompt: lost.prompt, lostSteps: lost.steps } : ended);
     return r;
   });
 
