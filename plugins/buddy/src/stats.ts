@@ -9,10 +9,14 @@
 // them as one line per remembered turn (renderStats), a few dozen tokens.
 // The main loop's own tool calls are counted by name; its subagents' in one
 // number; what a call did (files, lines, tests, git, web) counts whoever made
-// it, and only when it succeeded.
+// it, and only when it succeeded. A main-loop shell command's own edits are
+// measured, never guessed: the files it names (shellTargets), read before and
+// after it runs, count only when they really changed (shellChanges), whatever
+// its exit.
 // No I/O: the adapter feeds a Tally from turn.start, turn.step, tool.call and
-// turn.complete, reads the session's usage at the turn's start and end, and
-// closes the Tally into the TurnStats filed with the turn.
+// turn.complete, reads the session's usage at the turn's start and end, reads
+// a shell command's files around it, and closes the Tally into the TurnStats
+// filed with the turn.
 
 /** The most tool names one turn's line names, the most used first; the rest are counted. */
 export const TOOL_NAMES_MAX = 4;
@@ -20,6 +24,10 @@ export const TOOL_NAMES_MAX = 4;
 export const HOT_EDITS = 3;
 /** The rate-limit use at which a turn's line names the window: below it, the limit is no news. */
 export const LIMIT_SAID_PERCENT = 50;
+/** The most files one shell command's words are checked as: past it the rest go unmeasured. */
+export const SHELL_CANDIDATES_MAX = 24;
+/** The largest file a shell command's edits are measured in: a bigger one is left unread. */
+export const SHELL_FILE_MAX_BYTES = 256 * 1024;
 
 /** Tokens as the API counts them: input read fresh, output, and input read from or written to the prompt cache. */
 export type Tokens = { in: number; out: number; cacheRead: number; cacheWrite: number };
@@ -247,6 +255,113 @@ export function changedLines(tool: string, args: Record<string, unknown>): { add
   return { added, removed };
 }
 
+/** One file a shell command really changed: `made` when it did not exist before; its lines as fileLineDelta counts them. */
+export type ShellChange = { file: string; made: boolean; added: number; removed: number };
+
+// A word that may be a file: letters, digits and `@~.+/_-` only (no glob, variable or flag), with a slash or an extension.
+const PATH_WORD = /^[\w@~.+/-]+$/;
+const pathLike = (w: string): boolean =>
+  w.length >= 2 && w.length <= 300 && !w.startsWith('-') && PATH_WORD.test(w) && (w.includes('/') || /\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(w));
+// A folder the command moves into or points a tool at: `cd dir`, `-C dir`.
+const INTO = /(?:(?:^|[;&|({\n])\s*cd|\s-C)\s+(?:'([^'\n]+)'|"([^"\n]+)"|([^\s;&|)]+))/g;
+const QUOTED = /'([^'\n]*)'|"([^"\n]*)"/g;
+
+/** `rel` from folder `base`, `.` and `..` resolved; an absolute `rel` stands alone. */
+function joinPath(base: string, rel: string): string {
+  const out: string[] = [];
+  for (const p of (rel.startsWith('/') ? rel : `${base}/${rel}`).split('/')) {
+    if (p === '' || p === '.') continue;
+    if (p === '..') out.pop();
+    else out.push(p);
+  }
+  return `/${out.join('/')}`;
+}
+
+/** A word as a path from `base`: `~` is `home`; null for `~user` or a `~` with no home known. */
+function resolveWord(w: string, base: string, home: string): string | null {
+  if (w === '~' || w.startsWith('~/')) return home ? joinPath(home, w.slice(2)) : null;
+  if (w.startsWith('~')) return null;
+  return joinPath(base, w);
+}
+
+/**
+ * The files a shell command may change, as it names them: each path-like word
+ * or quoted string, from the session's folder `cwd` and from each folder the
+ * command `cd`s into or points `-C` at; `~` is `home`. At most
+ * SHELL_CANDIDATES_MAX, device files left out. Only measuring them tells which
+ * changed (shellChanges).
+ */
+export function shellTargets(command: string, cwd: string, home: string): string[] {
+  const bases = [cwd];
+  for (const m of command.matchAll(INTO)) {
+    const dir = resolveWord(m[1] ?? m[2] ?? m[3] ?? '', cwd, home);
+    if (dir && !bases.includes(dir)) bases.push(dir);
+  }
+  const words: string[] = [];
+  for (const m of command.matchAll(QUOTED)) words.push(m[1] ?? m[2] ?? '');
+  words.push(...command.replace(QUOTED, ' ').split(/[\s;&|()<>`=,]+/));
+  const out: string[] = [];
+  for (const w of words) {
+    if (!pathLike(w)) continue;
+    for (const base of w.startsWith('/') || w.startsWith('~') ? [cwd] : bases) {
+      const f = resolveWord(w, base, home);
+      if (f === null || f.startsWith('/dev/') || f.startsWith('/proc/') || out.includes(f)) continue;
+      if (out.length === SHELL_CANDIDATES_MAX) return out;
+      out.push(f);
+    }
+  }
+  return out;
+}
+
+/** A file's text as lines, its last newline ending the last line. */
+const fileLines = (s: string): string[] => (s === '' ? [] : (s.endsWith('\n') ? s.slice(0, -1) : s).split('\n'));
+
+/**
+ * The lines a whole file changed, counted as git counts them: past the lines
+ * both share at the start and the end, each line's count before against after,
+ * so two edits far apart are two lines each way, never the span between.
+ */
+export function fileLineDelta(before: string, after: string): { added: number; removed: number } {
+  const a = fileLines(before);
+  const b = fileLines(after);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const net = new Map<string, number>();
+  for (let i = head; i < a.length - tail; i++) net.set(a[i]!, (net.get(a[i]!) ?? 0) + 1);
+  for (let i = head; i < b.length - tail; i++) net.set(b[i]!, (net.get(b[i]!) ?? 0) - 1);
+  let added = 0;
+  let removed = 0;
+  for (const n of net.values()) {
+    if (n > 0) removed += n;
+    else added -= n;
+  }
+  return { added, removed };
+}
+
+/** The files a shell command changed: each measured before (`null` when absent) and after it ran; a file not measured after is left out. */
+export function shellChanges(before: ReadonlyMap<string, string | null>, after: ReadonlyMap<string, string | null>): ShellChange[] {
+  const out: ShellChange[] = [];
+  for (const [file, was] of before) {
+    if (!after.has(file)) continue;
+    const now = after.get(file) ?? null;
+    if (was === now) continue;
+    out.push({ file, made: was === null, ...fileLineDelta(was ?? '', now ?? '') });
+  }
+  return out;
+}
+
+/** A shell command's changes into the tally: a file made is written, one changed or deleted edited, each an edit of that file, its lines counted. */
+export function countShellChanges(t: Tally, changes: readonly ShellChange[]): void {
+  for (const c of changes) {
+    (c.made ? t.wrote : t.edited).add(c.file);
+    t.edits.set(c.file, (t.edits.get(c.file) ?? 0) + 1);
+    t.added += c.added;
+    t.removed += c.removed;
+  }
+}
+
 /** `before` replaced by `after`, as whole lines: the lines they share at the start and the end are unchanged. */
 function lineDiff(before: string, after: string): { added: number; removed: number } {
   const a = before === '' ? [] : before.split('\n');
@@ -363,7 +478,7 @@ export function renderStats(s: TurnStats, prev?: TurnStats): string {
     const byUse = Object.entries(s.tools).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     const total = byUse.reduce((n, [, k]) => n + k, 0);
     const named = byUse.slice(0, TOOL_NAMES_MAX).map(([name, k]) => `${toolName(name)} ${k}`);
-    if (byUse.length > TOOL_NAMES_MAX) named.push(`${byUse.length - TOOL_NAMES_MAX} more kinds`);
+    if (byUse.length > TOOL_NAMES_MAX) named.push(plural(byUse.length - TOOL_NAMES_MAX, 'more kind'));
     const trouble = [s.failed ? `${s.failed} failed` : '', s.denied ? `${s.denied} denied` : '', s.reruns ? `${plural(s.reruns, 'shell command')} run again unchanged` : ''].filter(Boolean);
     parts.push([`${plural(total, 'tool call')} (${named.join(', ')})`, ...trouble].join(', '));
   }

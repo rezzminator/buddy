@@ -2371,6 +2371,28 @@ describe('memory: whole messages, compactions, retries, and the drawer spanning 
 });
 
 describe("a turn's numbers", () => {
+  test("a shell command's own edits count: the files it names are read before and after it runs, only a real change counted; a subagent's never measured", async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Counted.\nSUGGEST_NEXT_PROMPT: NONE' } }, { files: { [`${ROOT}/src/a.ts`]: 'one\ntwo\n', [`${ROOT}/README.md`]: 'same\n' } });
+    on('tool.call', async (_$, e) => {
+      const c = e as { command?: string; agentId?: string };
+      if (c.command?.startsWith('sed')) {
+        w.files[`${ROOT}/src/a.ts`] = 'one\n2\nthree\n';
+        w.files[`${ROOT}/notes.txt`] = 'x\ny\n';
+      }
+      if (c.agentId) w.files[`${ROOT}/README.md`] = 'changed by a subagent\n';
+      return { result: { stdout: '' }, text: '', isError: false } as never;
+    });
+    await $.session.start(START);
+    await prompt($, 'fix it', 't1');
+    await $.tool.call({ tool: 'Bash', command: "sed -i '' s/two/2/ src/a.ts && printf 'x\\ny\\n' > notes.txt && cat README.md" } as never);
+    await $.tool.call({ tool: 'Bash', command: 'echo more >> README.md', agentId: 'sub1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed.', isAborted: false, turnId: 't1', durationMs: 5_000 } as never);
+    await w.clock.settle();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filed = (memory(w) as any).blocks.find((b: { turnId?: string }) => b.turnId === 't1').turn.stats;
+    expect(filed).toMatchObject({ files: { read: 0, edited: 1, wrote: 1 }, lines: { added: 4, removed: 1 } });
+    expect(w.completes[0]!.prompt).toContain('lines +4 −1');
+  });
   test('counted as the turn runs, filed with it in memory.json, read by the end-of-turn call under what Claude did, and shown in brief on its row in the drawer', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Counted.\nSUGGEST_NEXT_PROMPT: NONE' } });
     let usageReads = 0;

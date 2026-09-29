@@ -23,7 +23,8 @@ const PERSONA_END = '\n\nBecome this character completely';
 
 // A suggestion that reads like the user reporting what they did, ran or saw. Triage for the reader, never the verdict.
 const REPORT = [
-  /^(?:ok(?:ay)?,?\s+|yes,?\s+)?(?:i\s+(?:just\s+)?)?(?:ran|saved|copied|pasted|made|created|installed|checked|added|restarted|reloaded|deleted|typed|did|tried|opened|generated|pushed|committed|fixed|tested|set up|logged in)\b/i,
+  // A leading "did" asks ("did gitter commit it?"); "I did" is the second pattern's.
+  /^(?:ok(?:ay)?,?\s+|yes,?\s+)?(?:i\s+(?:just\s+)?)?(?:ran|saved|copied|pasted|made|created|installed|checked|added|restarted|reloaded|deleted|typed|tried|opened|generated|pushed|committed|fixed|tested|set up|logged in)\b/i,
   /\b(?:i|i've|i have|we|we've)\s+(?:just\s+|already\s+)?(?:ran|saved|copied|pasted|made|created|installed|checked|added|restarted|reloaded|deleted|typed|did|tried|opened|generated|pushed|committed|fixed|tested|done)\b/i,
   /\b(?:saved|copied|pasted|installed|created|generated)\s+(?:at|to|in|it|the|with|already|now)\b/i,
   /\b(?:it says|says|shows|showed|file exists|exists now|is there|it's there|works now|worked|passed|is saved|are saved)\b/i,

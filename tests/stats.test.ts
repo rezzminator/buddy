@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   HOT_EDITS, LIMIT_SAID_PERCENT, TOOL_NAMES_MAX,
-  changedLines, closeTally, count, countAgentRun, countStep, countToolCall, dollars, openTally, renderStats, span, statsBrief, turnStatsOf,
+  SHELL_CANDIDATES_MAX,
+  changedLines, closeTally, count, countAgentRun, countShellChanges, countStep, countToolCall, dollars, fileLineDelta, openTally, renderStats, shellChanges, shellTargets, span, statsBrief, turnStatsOf,
   type CountedCall, type TurnStats,
 } from '../plugins/buddy/src/stats.ts';
 
@@ -127,6 +128,10 @@ describe('the line the model reads', () => {
     );
     expect(Object.keys(full.tools!).length).toBeGreaterThan(TOOL_NAMES_MAX);
   });
+  test('one kind past the named ones is singular', () => {
+    const tools = { Bash: 5, Edit: 4, Read: 3, Grep: 2, Write: 1 };
+    expect(renderStats({ ms: 1_000, tools })).toBe('Numbers: 1s · 15 tool calls (Bash 5, Edit 4, Read 3, Grep 2, 1 more kind)');
+  });
 
   test('the model and effort only when they changed from the turn before; a limit below LIMIT_SAID_PERCENT unsaid', () => {
     const next: TurnStats = { ms: 3_000, requests: 1, model: 'claude-opus-5', effort: 'xhigh', limits: { fiveHour: LIMIT_SAID_PERCENT - 1 } };
@@ -172,5 +177,41 @@ describe('stored numbers', () => {
       expect(turnStatsOf(bad)).toBeNull();
     }
     expect(turnStatsOf({ ms: 1, limits: {} })).toEqual({ ms: 1, limits: {} });
+  });
+});
+
+describe("a shell command's own edits", () => {
+  test('its candidates: every path-like word or quoted string, against the session folder and each folder it cds into; home for ~; no flag, URL or glob', () => {
+    const c = shellTargets("cd pfm && sed -i '' s/a/b/ src/a.ts > ~/out.log; curl https://x.io/a.json; rm -f *.tmp; python3 - <<'PY'\np='docs/x.md'\nopen(p,'w')\nPY", '/w/app', '/h');
+    for (const f of ['/w/app/src/a.ts', '/w/app/pfm/src/a.ts', '/w/app/docs/x.md', '/w/app/pfm/docs/x.md', '/h/out.log']) expect(c).toContain(f);
+    expect(c.some((f) => f.includes('https') || f.includes('*') || f.includes('-i'))).toBe(false);
+    expect(shellTargets('cat /etc/hosts ../up/b.txt', '/w/app', '/h')).toEqual(['/etc/hosts', '/w/up/b.txt']);
+    expect(shellTargets('git -C sub commit -a && cat notes.md 2>/dev/null', '/w/app', '/h')).toEqual(['/w/app/notes.md', '/w/app/sub/notes.md']);
+    expect(shellTargets(Array.from({ length: 40 }, (_, i) => `f${i}.txt`).join(' '), '/w', '/h')).toHaveLength(SHELL_CANDIDATES_MAX);
+  });
+  test('the lines a whole file changed, counted as git counts them: two edits far apart are two lines each way, not the span between', () => {
+    const ten = Array.from({ length: 10 }, (_, i) => `line ${i}`);
+    const edited = ten.map((l, i) => (i === 1 || i === 8 ? `${l}!` : l));
+    expect(fileLineDelta(ten.join('\n') + '\n', edited.join('\n') + '\n')).toEqual({ added: 2, removed: 2 });
+    expect(fileLineDelta('a\nb\nc\n', 'a\nB\nc\nd\n')).toEqual({ added: 2, removed: 1 });
+    expect(fileLineDelta('', 'x\ny\n')).toEqual({ added: 2, removed: 0 });
+    expect(fileLineDelta('same\n', 'same\n')).toEqual({ added: 0, removed: 0 });
+  });
+  test('only a real change counts: a file made is written, one changed or deleted edited, its lines counted', () => {
+    const before = new Map<string, string | null>([['/a.ts', 'one\ntwo\n'], ['/new.txt', null], ['/same.md', 'x\n'], ['/gone.txt', 'p\nq\n'], ['/never.txt', null]]);
+    const after = new Map<string, string | null>([['/a.ts', 'one\n2\nthree\n'], ['/new.txt', 'x\ny\n'], ['/same.md', 'x\n'], ['/gone.txt', null], ['/never.txt', null]]);
+    const changes = shellChanges(before, after);
+    expect(changes).toEqual([
+      { file: '/a.ts', made: false, added: 2, removed: 1 },
+      { file: '/new.txt', made: true, added: 2, removed: 0 },
+      { file: '/gone.txt', made: false, added: 0, removed: 2 },
+    ]);
+    const t = openTally('t1', 0);
+    countShellChanges(t, changes);
+    countShellChanges(t, [{ file: '/a.ts', made: false, added: 1, removed: 0 }]);
+    expect([...t.edited].sort()).toEqual(['/a.ts', '/gone.txt']);
+    expect([...t.wrote]).toEqual(['/new.txt']);
+    expect(t.edits.get('/a.ts')).toBe(2);
+    expect([t.added, t.removed]).toEqual([5, 3]);
   });
 });

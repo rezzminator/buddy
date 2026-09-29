@@ -33,7 +33,10 @@ import {
 } from '../src/original.ts';
 import { BACKUP_LIMITS, backupCandidates, configSources, type ConfigSources, type Listed } from '../src/config-source.ts';
 import { bashCommand, classifyToolCall, toolOutput } from '../src/reactions.ts';
-import { closeTally, countAgentRun, countStep, countToolCall, openTally, statsBrief, usageReadingOf, type Tally, type TurnStats, type UsageReading } from '../src/stats.ts';
+import {
+  SHELL_FILE_MAX_BYTES, closeTally, countAgentRun, countShellChanges, countStep, countToolCall, openTally, shellChanges, shellTargets, statsBrief, usageReadingOf,
+  type Tally, type TurnStats, type UsageReading,
+} from '../src/stats.ts';
 import {
   choose, isCharacterFile, loadEntries, mergeRoster, startWarning, withEntry,
   type Entry, type LoadedFile, type Roster, type Source,
@@ -463,6 +466,71 @@ function rememberTurn(st: State, $: EngineInterface, turnId: string, turn: Turn,
 
 /** How long one read of the session's usage may take: past it, the turn's numbers go without its cost, context and limits. */
 const USAGE_DEADLINE_MS = 2_000;
+
+/** How long a shell command's files may take to read, before it runs and after: past it the command goes unmeasured, never held up. */
+const SHELL_MEASURE_MS = 300;
+
+/** A main-loop shell command's files as they were before it ran, and the tally their changes count into. */
+type ShellBefore = { tally: Tally; files: Map<string, string | null> };
+
+/**
+ * Each path's text, `null` when it does not exist (a file the command may
+ * make); a folder, a file past SHELL_FILE_MAX_BYTES or one that cannot be read
+ * is left out, unmeasured. The text is held only to compare, never logged.
+ */
+async function readShellFiles($: EngineInterface, paths: readonly string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  await Promise.all(
+    paths.map(async (p) => {
+      try {
+        if (!(await $.fs.exists(p))) {
+          out.set(p, null);
+          return;
+        }
+        const s = await $.fs.stat(p);
+        if (s.kind !== 'file' || s.size > SHELL_FILE_MAX_BYTES) return;
+        out.set(p, await $.fs.read(p));
+      } catch (error) {
+        lgT($, 'shell.measure', { outcome: 'unreadable', reason: message(error) });
+      }
+    }),
+  );
+  return out;
+}
+
+/** A main-loop shell command about to run while a turn is tallied: the files it names (shellTargets), read; null when there is nothing to measure or no time to. */
+async function shellBefore(st: State, $: EngineInterface, e: ToolCallInput): Promise<ShellBefore | null> {
+  try {
+    const tally = st.tally?.counts;
+    const call = e as unknown as { tool: string; command?: unknown; input?: unknown; [argument: string]: unknown };
+    if (!tally || call.tool !== 'Bash' || !isMainLoop(e.agentId)) return null;
+    const command = bashCommand(call);
+    if (!command) return null;
+    const files = await within(sleeper($), (async () => readShellFiles($, shellTargets(command, await $.session.cwd(), (await $.env.get('HOME')) ?? '')))(), SHELL_MEASURE_MS);
+    if (files === 'timeout') {
+      lgT($, 'shell.measure', { outcome: 'timeout', when: 'before' });
+      return null;
+    }
+    return files.size > 0 ? { tally, files } : null;
+  } catch (error) {
+    log($, "reading a shell command's files before it runs", error);
+    return null;
+  }
+}
+
+/** The command ran, however it ended: its files read again, and each one it really changed counted (shellChanges). */
+async function shellAfter($: EngineInterface, before: ShellBefore): Promise<void> {
+  try {
+    const now = await within(sleeper($), readShellFiles($, [...before.files.keys()]), SHELL_MEASURE_MS);
+    if (now === 'timeout') {
+      lgT($, 'shell.measure', { outcome: 'timeout', when: 'after' });
+      return;
+    }
+    countShellChanges(before.tally, shellChanges(before.files, now));
+  } catch (error) {
+    log($, 'measuring what a shell command changed', error);
+  }
+}
 
 /** The session's usage now ($.session.usage()), checked; null when it failed, came back malformed, or took past USAGE_DEADLINE_MS; `when` names the read in a failure. */
 async function readUsage(st: State, $: EngineInterface, when: string): Promise<UsageReading | null> {
@@ -2094,9 +2162,12 @@ export const register: Register = (on: On, options: PluginOptions) => {
     }
   });
 
+  // A main-loop shell command's own edits are measured: the files it names, read before it runs and after.
   on('tool.call', async ($, e, next) => {
+    const shell = await shellBefore(st, $, e);
     const r = await next(e);
     onToolCall(st, $, e, r);
+    if (shell) await shellAfter($, shell);
     return r;
   });
 
