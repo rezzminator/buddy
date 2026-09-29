@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
-  cleanAnswer, cleanPrompt,
+  NOTIFICATION_RESULT_HEAD, NOTIFICATION_RESULT_TAIL, cleanAnswer, cleanPrompt,
   BUDDY_PROMPT, NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, memoryStats, render, storeKey, type Block, type Exchange,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
+import { DID_LINE_CAP, DID_TEXT_CAP, FAIL_REASON_CAP } from '../plugins/buddy/src/did.ts';
 
 const qa = (question: string, answer?: string): Exchange => (answer === undefined ? { kind: 'question', question } : { kind: 'question', question, answer });
 const line = (text: string): Exchange => ({ kind: 'line', text });
@@ -90,6 +91,11 @@ describe('the timeline', () => {
     const b = addTurn([], 't1', { prompt: 'go', answer: 'ok', did: ['Run the tests', 'edited a.ts'] }, 4);
     expect(b[0]!.turn!.did).toEqual(['Run the tests', 'edited a.ts']);
     expect(addTurn([], 't1', { prompt: 'go', answer: 'ok', did: [] }, 4)[0]!.turn).toEqual({ prompt: 'go', answer: 'ok' });
+  });
+  test('a failed step is kept whole, its reason past the step cap included; cut only past DID_LINE_CAP', () => {
+    const failed = `${'z'.repeat(DID_TEXT_CAP - 1)}… (failed: ${'r'.repeat(FAIL_REASON_CAP)})`;
+    expect(addTurn([], 't1', { prompt: 'go', answer: 'ok', did: [failed] }, 4)[0]!.turn!.did).toEqual([failed]);
+    expect(addTurn([], 't1', { prompt: 'go', answer: 'ok', did: ['w'.repeat(300)] }, 4)[0]!.turn!.did).toEqual([`${'w'.repeat(DID_LINE_CAP - 1)}…`]);
   });
   test('an exchange that says nothing is not one; an empty answer leaves the question alone', () => {
     const b = addTurn([], 't1', turn('one'), 4);
@@ -198,8 +204,13 @@ describe('the store', () => {
     expect(chatTurnsToReadOf({ at: 1, blocks: b, notes: ['x'] }).error).toBe('the stored chatTurnsToRead had 1 malformed entry, dropped');
   });
   test('cleanNotes keeps at most NOTES_MAX, the first ones', () => {
-    expect(NOTES_MAX).toBe(6);
-    expect(cleanNotes(['a', 'b', 'c', 'd', 'e', 'f', 'g'])).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+    expect(NOTES_MAX).toBe(8);
+    expect(cleanNotes(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'])).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']);
+  });
+  test('cleanNotes past NOTES_MAX drops doubts first, then facts and untyped notes, then open items; a rule of the user goes last', () => {
+    const notes = ['rule: r1', 'open: o1', 'fact: f1', 'doubt: d1', 'fact: f2', 'doubt: d2', 'plain', 'open: o2', 'rule: r2', 'fact: f3'];
+    expect(cleanNotes(notes)).toEqual(['rule: r1', 'open: o1', 'fact: f1', 'fact: f2', 'plain', 'open: o2', 'rule: r2', 'fact: f3']);
+    expect(cleanNotes([...Array.from({ length: 8 }, (_, i) => `fact: f${i}`), 'rule: kept'])).toEqual([...Array.from({ length: 7 }, (_, i) => `fact: f${i}`), 'rule: kept']);
   });
   test('the notes lead what the character remembers, before its timeline; notes alone still render', () => {
     const b = addTurn([], 't1', turn('go'), 4);
@@ -262,5 +273,51 @@ describe("the buddy's own prompt to the main chat, remembered", () => {
   test('the turn it started is labelled as the buddy\'s own', () => {
     const b = addTurn([], 't2', { prompt: 'run the tests and show the output', answer: 'Ran them: 2 fail.', from: BUDDY_PROMPT }, 4);
     expect(render(b, 'cat', 4)).toContain('Turn 1. From the buddy (you), sent to Claude:\nrun the tests and show the output\n');
+  });
+});
+
+describe('a task notification keeps its report', () => {
+  const note = (inner: string) => `<task-notification>\n<task-id>a1</task-id>\n${inner}\n</task-notification>`;
+  test('its summary, then its result, the result\'s tags stripped like any prompt\'s, one-spaced', () => {
+    expect(cleanPrompt(note('<status>completed</status>\n<summary>Agent "Map the store" completed</summary>\n<result>Found <b>3</b> writers.\n\nAll in <code>store.ts</code>.<system-reminder>rules</system-reminder></result>'))).toBe('Agent "Map the store" completed Its report: Found 3 writers. All in store.ts .');
+    const blocks = addTurn([], 't1', { prompt: note('<status>completed</status><summary>Agent done</summary><result>The report.</result>'), answer: 'Read it.' }, 4);
+    expect(render(chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks }))).blocks, 'fixy', 4)).toContain('Agent done Its report: The report.');
+  });
+  test('a long result is cut to its start and end', () => {
+    expect([NOTIFICATION_RESULT_HEAD, NOTIFICATION_RESULT_TAIL]).toEqual([1200, 400]);
+    const result = 'H'.repeat(3000) + 'T'.repeat(2000);
+    expect(cleanPrompt(note(`<status>completed</status><summary>done</summary><result>${result}</result>`))).toBe(`done Its report: ${'H'.repeat(NOTIFICATION_RESULT_HEAD)} … ${'T'.repeat(NOTIFICATION_RESULT_TAIL)}`);
+  });
+  test('a status other than completed is shown', () => {
+    expect(cleanPrompt(note('<status>failed</status><summary>Agent "Fix it" failed</summary><result>It threw.</result>'))).toBe('Agent "Fix it" failed (status: failed) Its report: It threw.');
+  });
+  test('a completed notification without a result is its summary, as before', () => {
+    expect(cleanPrompt(note('<status>completed</status>\n<summary>Background command "Run the proofs" completed (exit code 0)</summary>'))).toBe('Background command "Run the proofs" completed (exit code 0)');
+  });
+});
+
+describe('an interrupted turn', () => {
+  test('its answer is said to be what Claude answered before the user interrupted, empty or not', () => {
+    const blocks = addTurn([], 't1', { prompt: 'refactor it', answer: 'Starting on the', interrupted: true }, 4);
+    const r = render(blocks, 'fixy', 4);
+    expect(r).toContain('Claude answered, before the user interrupted the turn:\nStarting on the');
+    expect(r).not.toContain('Claude answered:');
+    expect(render(addTurn([], 't2', { prompt: 'go', answer: '', interrupted: true }, 4), 'fixy', 4)).toContain('Claude answered, before the user interrupted the turn:\n(no text)');
+  });
+  test('kept through the store; false is no interruption, a non-boolean malformed, an older record without it still reads', () => {
+    const blocks = addTurn([], 't1', { prompt: 'refactor it', answer: 'Starting', interrupted: true }, 4);
+    const back = chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks })));
+    expect(back.error).toBeUndefined();
+    expect(back.blocks[0]!.turn).toMatchObject({ prompt: 'refactor it', answer: 'Starting', interrupted: true });
+    const stored = (interrupted: unknown) => ({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a', interrupted }, characters: {} }] });
+    const off = chatTurnsToReadOf(stored(false));
+    expect(off.error).toBeUndefined();
+    expect(off.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
+    const bad = chatTurnsToReadOf(stored('yes'));
+    expect(bad.error).toMatch(/1 malformed entry/);
+    expect(bad.blocks).toEqual([]);
+    const old = chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a' }, characters: {} }] });
+    expect(old.error).toBeUndefined();
+    expect(old.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
   });
 });

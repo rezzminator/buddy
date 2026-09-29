@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  ANSWER_MS, COMPLETE_DEADLINE_MS, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
+  ANSWER_MS, COMPLETE_DEADLINE_MS, LAST_BASH_MAX, BUBBLE_MS, ERROR_MS, SLEEP_IDLE_MS, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
   failAnswer, farewell, holdsAnswer, sayLine, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
@@ -58,6 +58,11 @@ describe('brain', () => {
     expect(currentPose(b)).toBe('oops');
     expect(react(b, { tool: 'Read', isError: false, denied: false, output: '', command: '' }, never)).toBeNull();
     expect(b.turn).toEqual({ tools: ['Bash', 'Edit', 'Read'], failures: 1, lastBash: 'npm test', actions: [] });
+    const long = `node -e "${'x'.repeat(1500)}"`;
+    react(b, { tool: 'Bash', isError: false, denied: false, output: '', command: long }, never);
+    expect(b.turn.lastBash).toBe(long);
+    react(b, { tool: 'Bash', isError: false, denied: false, output: '', command: 'y'.repeat(LAST_BASH_MAX + 500) }, never);
+    expect(b.turn.lastBash).toBe('y'.repeat(LAST_BASH_MAX));
     ticks(b, 2000 / 200);
     expect(b.confetti).toBeNull();
   });

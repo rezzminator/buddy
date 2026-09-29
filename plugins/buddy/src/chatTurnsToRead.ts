@@ -16,7 +16,7 @@
 // words. Before 1.0.0 it was kept in $.store under storeKey(sessionId): the
 // adapter moves it into the file the first time the chat is opened again.
 
-import { DID_MAX, DID_TEXT_CAP } from './did.ts';
+import { DID_LINE_CAP, DID_MAX } from './did.ts';
 import type { Turn } from './prompts.ts';
 import { renderStats, turnStatsOf, type TurnStats } from './stats.ts';
 
@@ -31,6 +31,9 @@ export const CHAT_TURNS_TO_READ_MAX = 10;
  */
 export const TURN_PROMPT_HEAD = 4800;
 export const TURN_PROMPT_TAIL = 2400;
+/** How much of a task notification's result, the report it brought, is kept from its start and from its end. */
+export const NOTIFICATION_RESULT_HEAD = 1200;
+export const NOTIFICATION_RESULT_TAIL = 400;
 /** How much of a remembered turn's answer is kept from its start, where Claude says what came of it, and from its end, where it says what is next. */
 export const TURN_ANSWER_HEAD = 8000;
 export const TURN_ANSWER_TAIL = 3200;
@@ -71,19 +74,28 @@ export type Block = { turnId?: string; turn?: Turn; at?: number; full?: number; 
 export type Notes = Record<string, string[]>;
 export type Stored = { at: number; blocks: Block[]; notes?: Notes };
 
-/** The most notes a character keeps: past it, the first ones stay. */
-export const NOTES_MAX = 6;
+/** The most notes a character keeps: past it, notes go by their kind (noteRank). */
+export const NOTES_MAX = 8;
 /** The longest note kept: past it, it is not one sentence, and it is dropped. */
 export const NOTE_MAX_CHARS = 300;
 
-/** Notes as the buddy wrote them, cleaned: each trimmed, a leading bullet or number stripped, empty, too long and repeated ones dropped, the first NOTES_MAX kept. */
+/** How soon a note goes when there are too many, by the kind it starts with (MEMORY_LINE): a doubt first, then a fact or an untyped note, then an open item; a rule of the user's last. */
+function noteRank(note: string): number {
+  const kind = /^(rule|open|fact|doubt)\s*:/i.exec(note)?.[1]?.toLowerCase();
+  return kind === 'doubt' ? 3 : kind === 'open' ? 1 : kind === 'rule' ? 0 : 2;
+}
+
+/** Notes as the buddy wrote them, cleaned: each trimmed, a leading bullet or number stripped, empty, too long and repeated ones dropped; past NOTES_MAX, the latest of the kind that goes first (noteRank) dropped until they fit, the rest in their order. */
 export function cleanNotes(lines: readonly string[]): string[] {
   const kept: string[] = [];
   for (const raw of lines) {
     const note = raw.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').trim();
     if (note === '' || note.length > NOTE_MAX_CHARS || kept.includes(note)) continue;
     kept.push(note);
-    if (kept.length === NOTES_MAX) break;
+  }
+  while (kept.length > NOTES_MAX) {
+    const worst = Math.max(...kept.map(noteRank));
+    kept.splice(kept.findLastIndex((n) => noteRank(n) === worst), 1);
   }
   return kept;
 }
@@ -102,15 +114,29 @@ export function ends(text: string, head: number, tail: number): string {
   return text.length > head + tail + 3 ? `${text.slice(0, head)} … ${text.slice(text.length - tail)}` : text;
 }
 
+/** A text without markup: a system reminder goes whole, every other tag goes and its text stays; folded to one line. */
+function stripped(text: string): string {
+  return text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ').replace(/<\/?[a-zA-Z][\w-]*(?:\s[^<>]*)?\/?>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 /**
  * A prompt without the markup the chat wraps around it: a task notification
- * is its summary, a system reminder goes whole, every other tag goes and its
- * text stays; folded to one line.
+ * is its summary, its status when not `completed`, and its result, cut to its
+ * start and end, as the report it brought; a system reminder goes whole, every
+ * other tag goes and its text stays; folded to one line.
  */
 export function cleanPrompt(text: string): string {
-  const note = /<task-notification>[\s\S]*?<summary>([\s\S]*?)<\/summary>/.exec(text);
-  const t = note ? note[1]! : text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, ' ').replace(/<\/?[a-zA-Z][\w-]*(?:\s[^<>]*)?\/?>/g, ' ');
-  return t.replace(/\s+/g, ' ').trim();
+  const at = text.indexOf('<task-notification>');
+  const note = at < 0 ? null : /<summary>([\s\S]*?)<\/summary>/.exec(text.slice(at));
+  if (!note) return stripped(text);
+  const body = text.slice(at);
+  const result = /<result>([\s\S]*)<\/result>/.exec(body);
+  const rest = result ? body.replace(result[0], ' ') : body;
+  const summary = /<summary>([\s\S]*?)<\/summary>/.exec(rest)?.[1] ?? note[1]!;
+  const status = /<status>([\s\S]*?)<\/status>/.exec(rest)?.[1]?.trim();
+  const report = result ? stripped(result[1]!) : '';
+  const parts = [summary, status && status !== 'completed' ? `(status: ${status})` : '', report ? `Its report: ${ends(report, NOTIFICATION_RESULT_HEAD, NOTIFICATION_RESULT_TAIL)}` : ''];
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 /** An answer without the markdown that only draws: bold, heading marks, table rules and blank lines go; words, code and line breaks stay. */
@@ -147,8 +173,8 @@ function capped(x: Exchange): Exchange | null {
 /** The turn cleaned and kept to the start and end of its prompt and answer, with what it did, if anything, and its numbers; capping it again keeps it. */
 function cappedTurn(t: Turn): Turn {
   const turn: Turn = { prompt: ends(cleanPrompt(t.prompt), TURN_PROMPT_HEAD, TURN_PROMPT_TAIL), answer: ends(cleanAnswer(t.answer), TURN_ANSWER_HEAD, TURN_ANSWER_TAIL) };
-  const did = (t.did ?? []).slice(0, DID_MAX).map((d) => (d.length > DID_TEXT_CAP ? `${d.slice(0, DID_TEXT_CAP - 1)}…` : d)).filter((d) => d);
-  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }) };
+  const did = (t.did ?? []).slice(0, DID_MAX).map((d) => (d.length > DID_LINE_CAP ? `${d.slice(0, DID_LINE_CAP - 1)}…` : d)).filter((d) => d);
+  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }), ...(t.interrupted === true ? { interrupted: true } : {}) };
 }
 
 /** The timeline with the answered turn `turnId` added last, at `at`, kept to its last `n` blocks: a turnless first block goes once `n` turns follow it. */
@@ -208,7 +234,7 @@ function turnLines(t: Turn, k: number, prev?: TurnStats): string[] {
     : t.from === BUDDY_PROMPT ? `From ${BUDDY_PROMPT_LABEL}:`
     : UNKNOWN_ORIGINS.includes(t.from) ? 'Claude was sent, from an unknown origin:'
     : `Claude was sent, not by the user (${t.from}):`;
-  return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.did ? [`Claude did: ${t.did.join('; ')}`] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), 'Claude answered:', t.answer || '(no text)'];
+  return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.did ? [`Claude did: ${t.did.join('; ')}`] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), t.interrupted ? 'Claude answered, before the user interrupted the turn:' : 'Claude answered:', t.answer || '(no text)'];
 }
 
 /** The lines of one exchange, addressed to the character as "you": its first line a list item, the rest indented under it. */
@@ -280,9 +306,10 @@ function turnOf(v: unknown): Turn | null {
   const t = v as Record<string, unknown>;
   if (typeof t.prompt !== 'string' || typeof t.answer !== 'string' || (t.from !== undefined && typeof t.from !== 'string')) return null;
   if (t.did !== undefined && !(Array.isArray(t.did) && t.did.every((d) => typeof d === 'string'))) return null;
+  if (t.interrupted !== undefined && typeof t.interrupted !== 'boolean') return null;
   const stats = t.stats === undefined ? undefined : turnStatsOf(t.stats);
   if (stats === null) return null;
-  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}), ...(stats ? { stats } : {}) });
+  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}), ...(stats ? { stats } : {}), ...(t.interrupted === true ? { interrupted: true } : {}) });
 }
 
 /** Stored notes, each character's cleaned (cleanNotes); a character whose notes are not a list of text is dropped, counted in `dropped`. */

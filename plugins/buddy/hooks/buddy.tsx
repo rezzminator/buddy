@@ -13,7 +13,7 @@ import {
   type Block, type Exchange, type Notes, type Stored,
 } from '../src/chatTurnsToRead.ts';
 import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
-import { actionOf, didOf } from '../src/did.ts';
+import { actionOf, denialReason, didOf, failureReason, type Failure } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry } from '../src/feed.ts';
 import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, freeRoundSlot, oldestRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
@@ -1048,7 +1048,8 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
       return;
     }
     if (!st.b) return;
-    const action = actionOf(call, isError || denied);
+    const failure: Failure | null = denied ? { kind: 'denied', reason: denialReason(res.deny as string) } : isError ? { kind: 'failed', reason: failureReason(output) } : null;
+    const action = actionOf(call, failure);
     const reaction = react(st.b, { tool: call.tool, isError, denied, output, command, action }, Math.random);
     roundEvent(st, $, toolLines(Date.now(), { tool: call.tool, args: call, output, failed: isError || denied, step: action ? (didOf([action])[0] ?? null) : null, reaction }));
     refresh(st, $);
@@ -1182,14 +1183,14 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     wake(st.b, Math.random);
     // A turn ended, however: an earlier turn's call still running is stale, its commentAfterEachTurn and suggestNextPrompt never shown.
     const gen = ++st.turnGen;
-    // Only an answered turn is filed into the chatTurnsToRead, a prompt not the user's under its origin; a headless session (nobody at the prompt) files none, never pushing an interactive session's memory out of the store.
+    // An answered turn is filed into the chatTurnsToRead, and an interrupted one as interrupted (what Claude said before it its answer; it still makes no call), a prompt not the user's under its origin; a headless session (nobody at the prompt) files none, never pushing an interactive session's memory out of the store.
     const answered = e.reason === 'answer' && !e.isAborted;
     const did = didOf(st.b.turn.actions);
     const from = ended.from === undefined ? {} : { from: ended.from };
     // Its numbers, counted as it ran, once the session's usage is read: filed with the turn, and on its row in the drawer.
     const stats = ended.tally ? turnStats(st, $, ended.tally, e) : Promise.resolve(undefined);
-    if (answered && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from }, stats);
-    // The drawer says whether the buddy read the turn: one interrupted never reaches its memory.
+    if ((answered || e.isAborted) && st.interactive) rememberTurn(st, $, e.turnId, { prompt: ended.prompt, answer: e.answer, did, ...from, ...(answered ? {} : { interrupted: true as const }) }, stats);
+    // The drawer says whether the buddy read the turn: one interrupted is remembered, but never read by a call.
     changeFeed(st, $, 'the turn read', (f) => markRead(f, e.turnId, answered && st.interactive));
     stats.then((s) => {
       if (s) changeFeed(st, $, 'the turn numbers', (f) => markNumbers(f, e.turnId, statsBrief(s)));

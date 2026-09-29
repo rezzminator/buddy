@@ -58,7 +58,7 @@ const clock = (at: number) => new Date(at).toISOString().slice(11, 23);
 export function roundHead(at: number, sessionId: string, start: { turnId: string; prompt: string } | null): string {
   const when = new Date(at).toISOString();
   if (!start) return `═══ ROUND · ${when} · session ${sessionId} · before any turn this buddy saw ═══\n`;
-  return [`═══ ROUND · ${when} · session ${sessionId} · turn ${start.turnId} ═══`, '', rule('IN · the prompt the turn began with'), start.prompt || '(none)', ''].join('\n');
+  return [`═══ ROUND · ${when} · session ${sessionId} · turn ${start.turnId} ═══`, '', rule('IN · the prompt the turn began with'), unruled(start.prompt) || '(none)', ''].join('\n');
 }
 
 /** One moment of the timeline, one line: its time, then what happened. */
@@ -77,12 +77,17 @@ export function capValue(v: unknown): string {
   return s.length > ROUND_VALUE_CAP ? `${s.slice(0, ROUND_VALUE_CAP)}… (${s.length - ROUND_VALUE_CAP} more characters)` : s;
 }
 
+/** A value's text under its field: every line after the first indented, so no line of a tool's text starts a section or a moment of the round. */
+const underField = (text: string) => text.replace(/\n/g, '\n        ');
+/** A chat text set in a round file: a line of it that opens like a section rule (`─── `, `═══ `) is moved in two spaces, so it never reads as one. */
+const unruled = (text: string) => text.replace(/^(?=(?:───|═══) )/gm, '  ');
+
 /** A tool call the buddy heard: its tool, each argument, its output, what the buddy made of it (the step, the reaction). */
 export function toolLines(at: number, call: { tool: string; args: Record<string, unknown>; output: string; failed: boolean; step: string | null; reaction: string | null; agentId?: string }): string {
   const who = call.agentId ? ` · subagent ${call.agentId}, not the main turn's` : '';
   const lines = [eventLine(at, `IN · tool call ${call.tool}${call.failed ? ' (failed)' : ''}${who}`)];
-  for (const [k, v] of Object.entries(call.args)) if (k !== 'tool' && k !== 'tool_use_id' && k !== 'agentId') lines.push(`      ${k}: ${capValue(v)}\n`);
-  lines.push(`      output: ${capValue(call.output) || '(none)'}\n`);
+  for (const [k, v] of Object.entries(call.args)) if (k !== 'tool' && k !== 'tool_use_id' && k !== 'agentId') lines.push(`      ${k}: ${underField(capValue(v))}\n`);
+  lines.push(`      output: ${underField(capValue(call.output)) || '(none)'}\n`);
   if (!call.agentId) lines.push(`      → step: ${call.step ?? '(none, left out)'} · reaction: ${call.reaction ?? 'none'}\n`);
   return lines.join('');
 }
@@ -98,11 +103,11 @@ export function turnEndSection(at: number, turn: RoundTurn): string {
     '',
     rule(`IN · ${clock(at)} · the turn ended (${turn.reason}), as the buddy filed it`),
     `prompt (from ${origin}):`,
-    turn.prompt || '(none seen)',
+    unruled(turn.prompt) || '(none seen)',
     'steps (the Claude did: line):',
     turn.did.length > 0 ? turn.did.join('\n') : '(none)',
     "Claude's answer:",
-    turn.answer || '(no text)',
+    unruled(turn.answer) || '(no text)',
     '',
     '',
   ].join('\n');

@@ -183,13 +183,16 @@ export function currentPose(b: Brain): Pose {
   return 'idle';
 }
 
+/** How much of the turn's last shell command is kept: its start and end are what the prompt shows. */
+export const LAST_BASH_MAX = 2000;
+
 /** A finished tool call: counted for the turn, its step (`action`, actionOf) kept, and reacted to per REACTIONS. */
 export function react(b: Brain, call: ToolCall & { command: string; action?: Action | null }, rand: () => number): Outcome | null {
   const outcome = classifyToolCall(call);
   wake(b, rand, { silent: outcome !== null });
   b.turn.tools.push(call.tool);
   if (call.isError || call.denied) b.turn.failures++;
-  if (call.tool === 'Bash' && call.command) b.turn.lastBash = call.command.slice(0, 120);
+  if (call.tool === 'Bash' && call.command) b.turn.lastBash = call.command.slice(0, LAST_BASH_MAX);
   if (call.action) b.turn.actions.push(call.action);
   if (!outcome) return null;
   const r = REACTIONS[outcome];

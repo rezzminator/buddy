@@ -16,9 +16,11 @@ describe('prompts', () => {
     expect(oneLineSystem('You are X.', 4)).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${memoryRule(4)}\n\n${ONE_LINE_RULE} ${ASKED_PROMPT_RULE}`);
     expect(questionPrompt('hi')).toBe('The user asks you directly: hi');
   });
-  test('the turn prompt counts tools and caps the command', () => {
+  test('the turn prompt counts tools and keeps the start and end of a long command', () => {
     const p = turnPrompt({ tools: ['Bash', 'Read', 'Bash'], failures: 1, lastBash: 'x'.repeat(200), actions: [] });
-    expect(p).toContain(`Tools used: Bash x2, Read. Failures: 1. Last shell command: ${'x'.repeat(120)}.`);
+    expect(p).toContain(`Tools used: Bash x2, Read. Failures: 1. Last shell command: ${'x'.repeat(200)}.`);
+    const long = `rsync -a src/ dst/ && ${'y'.repeat(600)} | grep -vE '(daemon|bg-spare)'`;
+    expect(turnPrompt({ tools: ['Bash'], failures: 0, lastBash: long, actions: [] })).toContain(`Last shell command: ${long.slice(0, 240)} … ${long.slice(-120)}.`);
     expect(turnPrompt({ tools: [], failures: 0, lastBash: '', actions: [] })).toBe('In the turn that just ended: Tools used: none. Failures: 0. Last shell command: none.');
   });
   test('oneLine takes the first non-empty line, unquoted, capped', () => {
@@ -126,7 +128,7 @@ describe('the end-of-turn call: the character and the suggestion combined', () =
   test("the last turn's desire is carried, kept unless the chat shows it changed; never without the second brain", () => {
     const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false }, 'ship buddy 1.1 with a second brain');
     expect(s).toContain("At the last turn's end you named the user's deepest desire: ship buddy 1.1 with a second brain");
-    expect(s).toContain('Keep it unless this chat shows it changed.');
+    expect(s).toContain("Keep it while the user's work still serves it; when the user turns to other work, name what that work is for.");
     expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: false, promptToMainChat: false }, 'ship it')).not.toContain('ship it');
   });
   test('parseTurnReply: every line, in any order and case, bullets tolerated', () => {
@@ -152,15 +154,32 @@ describe('the end-of-turn call: the character and the suggestion combined', () =
       expect(s.indexOf('MEMORY:')).toBeGreaterThan(s.lastIndexOf('COMMENT_AFTER_EACH_TURN:'));
       expect(s.indexOf('MEMORY:')).toBeGreaterThan(s.lastIndexOf('SUGGEST_NEXT_PROMPT:'));
     }
-    expect(MEMORY_LINE).toContain('Write up to 6 MEMORY lines');
-    expect(MEMORY_LINE).toContain('Keep what still matters, edit what changed, drop what no longer holds, add what this turn taught you');
+    expect(MEMORY_LINE).toContain('Write up to 8 MEMORY lines');
+    expect(MEMORY_LINE).toContain('each on a line of its own shaped MEMORY: kind: note, never a list under one MEMORY line');
+    for (const kind of ['rule:', 'open:', 'fact:', 'doubt:']) expect(MEMORY_LINE).toContain(kind);
+    expect(MEMORY_LINE).toContain("Copy a note word for word unless a turn in view changes it; a user's rule beats any doubt of yours.");
     expect(MEMORY_LINE).toContain('MEMORY: NONE');
   });
   test('parseTurnReply: every MEMORY line is a note, cleaned; NONE alone forgets them; no MEMORY line keeps them (null)', () => {
     expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hi.\nMEMORY: Wants main safe.\n- memory: - Tests before tags.\nMEMORY: Wants main safe.').memory).toEqual(['Wants main safe.', 'Tests before tags.']);
     expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hi.\nMEMORY: NONE').memory).toEqual([]);
     expect(parseTurnReply('COMMENT_AFTER_EACH_TURN: Hi.').memory).toBeNull();
-    expect(parseTurnReply(Array.from({ length: 8 }, (_, i) => `MEMORY: note ${i}.`).join('\n')).memory).toHaveLength(6);
+    expect(parseTurnReply(Array.from({ length: 8 }, (_, i) => `MEMORY: note ${i}.`).join('\n')).memory).toHaveLength(8);
+  });
+  test('the rules the audit asked for: nothing invented, no remade point, how not whether, no poll, no secret, a deletion alone', () => {
+    expect(CHARACTER_RULE).toContain('When the chat shows nothing missed, say so, or react to what did happen: never invent a miss.');
+    expect(CHARACTER_RULE).toContain('nor remake a point of your own (your earlier lines and notes are your views, not evidence) unless this turn brings new evidence for it');
+    const s = turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false }, 'ship it');
+    expect(s).toContain("Judge how Claude carried out the ask, never the ask itself: doing what the user ordered, or what your own suggestion they sent asked, the proper way, is RIGHT; a step Claude only proposes, awaiting the user's go, is not taken yet.");
+    expect(s).toContain('Never ask whether work Claude left running (a background command or agent, a push, a review) has finished: it reports back by itself');
+    expect(s).toContain('Safety first: never suggest searching for, printing, copying or checking a secret (a password, token or key)');
+    expect(s).toContain('a deletion is a prompt of its own, naming exactly what it deletes, never bundled with other work');
+    expect(memoryRule(4)).toContain("Asked about the main chat's past beyond it");
+  });
+  test('parseTurnReply: a list under a bare MEMORY line is the notes; a bare MEMORY line alone keeps them (a format slip never forgets)', () => {
+    expect(parseTurnReply('VERDICT: RIGHT\nMEMORY:\n- rule: Quit nothing first.\n- fact: Fix installed.\n\nWHY: ok').memory).toEqual(['rule: Quit nothing first.', 'fact: Fix installed.']);
+    expect(parseTurnReply('VERDICT: RIGHT\nMEMORY:\nWHY: ok').memory).toBeNull();
+    expect(parseTurnReply('VERDICT: RIGHT\nMEMORY: \nMEMORY: NONE').memory).toEqual([]);
   });
   test('one short call: 120 tokens, 30 s', () => {
     expect(TURN_MAX_TOKENS).toBe(2048);
@@ -322,7 +341,6 @@ describe('an empty reply to a question', () => {
   });
 });
 
-import { createHash } from 'node:crypto';
 import { BUDDY_PROMPT_CONTEXT, PROMPT_TO_MAIN_CHAT_MAX_CHARS, originOf } from '../plugins/buddy/src/prompts.ts';
 import { BUDDY_PROMPT } from '../plugins/buddy/src/chatTurnsToRead.ts';
 
@@ -332,21 +350,9 @@ describe('promptToMainChat: a prompt the buddy sends Claude itself', () => {
   /** The line with suggestNextPrompt off: no SUGGEST_NEXT_PROMPT to route to. */
   const LINE_ALONE = LINE.replace('those go in SUGGEST_NEXT_PROMPT.', 'those never go here.');
   const ADDENDUM = ' After a PROMPT_TO_MAIN_CHAT of yours, write SUGGEST_NEXT_PROMPT: NONE: Claude is about to act on it.';
-  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
-  /** turnSystem('You are X.', ...) as it was before the option, by commentAfterEachTurn, suggestNextPrompt and desire. */
-  const BEFORE: Record<string, string> = {
-    'false false null': '1224e41882227acaca4a3b1f85e0e46ea834a78d6f37920a8fdfff3749eba57f',
-    'false false a release nobody rolls back': '1224e41882227acaca4a3b1f85e0e46ea834a78d6f37920a8fdfff3749eba57f',
-    'false true null': '17786a1142a1b1b4149541b77950962737edbe21ae4c1643bb7747c13bece24a',
-    'false true a release nobody rolls back': 'b2e36a56d72209f05f8252ad466b16559de696a16274b3ed1424868843735a09',
-    'true false null': '2ee6ab365f7ec8246f2e6e6bdd82a3284de74e5a90e9c1d4f8cf9e0db9cc422b',
-    'true false a release nobody rolls back': '2ee6ab365f7ec8246f2e6e6bdd82a3284de74e5a90e9c1d4f8cf9e0db9cc422b',
-    'true true null': '4ebd5c53d92471d4ca373491ee231aac411be985faf79c8c33f9b66623cc3b2c',
-    'true true a release nobody rolls back': '52594f5f93c3f2469913d645266aa86db5124b339a0400c4ee32620be0dee189',
-  };
-  test('off, every end-of-turn system prompt is byte-identical to the one before the option', () => {
-    for (const c of [false, true]) for (const s of [false, true]) for (const d of [null, 'a release nobody rolls back']) {
-      expect(sha(turnSystem('You are X.', { commentAfterEachTurn: c, suggestNextPrompt: s, promptToMainChat: false }, d))).toBe(BEFORE[`${c} ${s} ${d}`]);
+  test('off, no end-of-turn system prompt asks for or mentions PROMPT_TO_MAIN_CHAT', () => {
+    for (const c of [false, true]) for (const g of [false, true]) for (const d of [null, 'a release nobody rolls back']) {
+      expect(turnSystem('You are X.', { commentAfterEachTurn: c, suggestNextPrompt: g, promptToMainChat: false }, d)).not.toContain('PROMPT_TO_MAIN_CHAT');
     }
   });
   test('on, its line is asked for verbatim, after the comment and before the suggestion', () => {
@@ -362,7 +368,7 @@ describe('promptToMainChat: a prompt the buddy sends Claude itself', () => {
     expect(s).not.toContain('COMMENT_AFTER_EACH_TURN');
   });
   test("the suggestion's addendum only when both are wanted", () => {
-    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: true })).toContain(`Write SUGGEST_NEXT_PROMPT: NONE only when the work is plainly finished and nothing follows.${ADDENDUM}\n`);
+    expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: true })).toContain(`Write SUGGEST_NEXT_PROMPT: NONE when the work is finished, or waiting on such a report with nothing for the user to decide.${ADDENDUM}\n`);
     expect(turnSystem('You are X.', { commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false })).not.toContain(ADDENDUM);
   });
   test('the reply line: its text, unquoted and one-spaced; NONE, an empty line, none at all or past its cap is null', () => {

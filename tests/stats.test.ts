@@ -197,20 +197,21 @@ describe("a shell command's own edits", () => {
     expect(fileLineDelta('', 'x\ny\n')).toEqual({ added: 2, removed: 0 });
     expect(fileLineDelta('same\n', 'same\n')).toEqual({ added: 0, removed: 0 });
   });
-  test('only a real change counts: a file made is written, one changed or deleted edited, its lines counted', () => {
+  test('only a real change counts: a file made is written, one changed edited, one deleted deleted, its lines counted', () => {
     const before = new Map<string, string | null>([['/a.ts', 'one\ntwo\n'], ['/new.txt', null], ['/same.md', 'x\n'], ['/gone.txt', 'p\nq\n'], ['/never.txt', null]]);
     const after = new Map<string, string | null>([['/a.ts', 'one\n2\nthree\n'], ['/new.txt', 'x\ny\n'], ['/same.md', 'x\n'], ['/gone.txt', null], ['/never.txt', null]]);
     const changes = shellChanges(before, after);
     expect(changes).toEqual([
       { file: '/a.ts', made: false, added: 2, removed: 1 },
       { file: '/new.txt', made: true, added: 2, removed: 0 },
-      { file: '/gone.txt', made: false, added: 0, removed: 2 },
+      { file: '/gone.txt', made: false, added: 0, removed: 2, gone: true },
     ]);
     const t = openTally('t1', 0);
     countShellChanges(t, changes);
     countShellChanges(t, [{ file: '/a.ts', made: false, added: 1, removed: 0 }]);
-    expect([...t.edited].sort()).toEqual(['/a.ts', '/gone.txt']);
+    expect([...t.edited]).toEqual(['/a.ts']);
     expect([...t.wrote]).toEqual(['/new.txt']);
+    expect([...t.deleted]).toEqual(['/gone.txt']);
     expect(t.edits.get('/a.ts')).toBe(2);
     expect([t.added, t.removed]).toEqual([5, 3]);
   });
@@ -233,7 +234,7 @@ describe("a shell command's own edits", () => {
     expect(sweptShellChange('/a.js', 'changed', 'a\nb\n', 'a\nB\n')).toEqual({ file: '/a.js', made: false, added: 1, removed: 1 });
     expect(sweptShellChange('/a.js', 'changed', 'a\n', 'a\n')).toBeNull();
     expect(sweptShellChange('/n.js', 'made', null, 'x\ny\n')).toEqual({ file: '/n.js', made: true, added: 2, removed: 0 });
-    expect(sweptShellChange('/g.js', 'gone', 'p\nq\n', null)).toEqual({ file: '/g.js', made: false, added: 0, removed: 2 });
+    expect(sweptShellChange('/g.js', 'gone', 'p\nq\n', null)).toEqual({ file: '/g.js', made: false, added: 0, removed: 2, gone: true });
     expect(sweptShellChange('/logo.png', 'changed', undefined, undefined)).toEqual({ file: '/logo.png', made: false, added: 0, removed: 0, unmeasured: true });
     expect(sweptShellChange('/big.json', 'made', null, undefined)).toEqual({ file: '/big.json', made: true, added: 0, removed: 0, unmeasured: true });
   });
@@ -249,5 +250,26 @@ describe("a shell command's own edits", () => {
     countShellChanges(only, [{ file: '/x.bin', made: false, added: 0, removed: 0, unmeasured: true }, { file: '/y.bin', made: false, added: 0, removed: 0, unmeasured: true }]);
     expect(renderStats(closeTally(only, { ms: 1000 }, null, null))).toContain('lines unmeasured in 2 files');
     expect(turnStatsOf({ ms: 1, lines: { added: 1, removed: 0, unmeasured: -1 } })).toBeNull();
+  });
+});
+
+describe('a deleted file', () => {
+  test('a sweep that deletes a file counts it deleted, never edited, and no edit of it', () => {
+    const gone = sweptShellChange('/g.js', 'gone', 'p\nq\n', null)!;
+    expect(gone).toEqual({ file: '/g.js', made: false, added: 0, removed: 2, gone: true });
+    expect(sweptShellChange('/big.bin', 'gone', undefined, null)).toEqual({ file: '/big.bin', made: false, added: 0, removed: 0, unmeasured: true, gone: true });
+    const t = openTally('t1', 0);
+    countShellChanges(t, [gone]);
+    expect(t.edits.get('/g.js')).toBeUndefined();
+    const s = closeTally(t, { ms: 1000 }, null, null);
+    expect(s.files).toEqual({ read: 0, edited: 0, wrote: 0, deleted: 1 });
+    expect(renderStats(s)).toContain('files 1 deleted');
+    expect(renderStats(s)).not.toContain('edited');
+    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual(s);
+  });
+  test('the numbers read and render all three kinds with deletions; old numbers without deleted still read; a non-number is malformed', () => {
+    expect(renderStats({ ms: 1000, files: { read: 3, edited: 1, wrote: 0, deleted: 2 } })).toContain('files 3 read, 1 edited, 2 deleted');
+    expect(turnStatsOf({ ms: 1, files: { read: 1, edited: 1, wrote: 0 } })).toEqual({ ms: 1, files: { read: 1, edited: 1, wrote: 0 } });
+    expect(turnStatsOf({ ms: 1, files: { read: 1, edited: 1, wrote: 0, deleted: 'two' } })).toBeNull();
   });
 });

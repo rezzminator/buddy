@@ -70,8 +70,11 @@ server of its own.
   suggests your next prompt to match: a right call gets a "yes, go on", a
   shortcut a yellow warning, a wrong move a red scream in the bubble.
 - 📝 **Its own notes.** The same call rewrites the buddy's own memory of the
-  chat, at most 6 one-sentence notes it keeps, edits and drops itself, read
-  first by every later call and shown in the drawer when they change.
+  chat, at most 8 one-sentence notes it keeps, edits and drops itself, each
+  of a kind: `rule:` your standing orders in your words, `open:` what you
+  asked for that is unfinished, `fact:` what the chat showed, `doubt:` its own
+  unchecked suspicion, never stated as fact. Read first by every later call
+  and shown in the drawer when they change.
 - 📊 **The numbers of every turn.** Each turn it remembers comes with one
   line counted in code, never by a model: time and the pause before it,
   model requests, tool calls by tool with failures and refusals, subagents,
@@ -270,9 +273,12 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   level (default `low`), with the character's persona, the character rule,
   and its `chatTurnsToRead`: the chat's last turns (default 4), each filtered
   to what carries meaning: your prompt without the markup around it (a
-  background task's notification is its one-line summary), what Claude did as
+  background task's notification is its summary and the start and end of its
+  report), what Claude did as
   one short line per step (a shell command's description, the files it read or
-  edited; never a tool's output or a diff), and Claude's answer. A prompt
+  edited, work left running in the background; a failed or denied step with
+  one redacted line of why, never a tool's whole output or a diff), and
+  Claude's answer. A prompt
   longer than 7,200 characters keeps its first 4,800 and last 2,400, an
   answer longer than 11,200 its first 8,000 and last 3,200: that cuts 3.6% of
   real turns (see [docs/design/chatTurnsToRead.md](docs/design/chatTurnsToRead.md#how-much-of-a-turn-is-kept)).
@@ -378,7 +384,7 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 | `secondsBetweenComments` | number | `0` | Minimum seconds between two `commentAfterEachTurn`; 0 = every answered turn |
 | `suggestNextPrompt` | boolean | `true` | The buddy's second brain, in the same end-of-turn call: it names what you most deeply want, judges Claude's last move `RIGHT`, `SHORTCUT` (warned in yellow) or `WRONG` (screamed in red), and writes your next prompt to match (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
 | `promptToMainChat` | boolean | `false` | The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, from the same end-of-turn call: only on evidence inside the turn that your own ask is unmet or unproven (a failed step or test run the answer passes over, a conclusion that rests on less than it names, an instruction in your ask not followed, a part of the ask never addressed); the buddy's own doubts, and a gap Claude named, stay a suggestion. Claude reads it as the buddy's, never yours, with a note saying so; the turn it starts never sends another, and with `suggestNextPrompt` on the suggestion after one is none. Logs `promptToMainChat.sent`. |
-| `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest answered turns it remembers, 1 to 10, after its own notes on the chat (at most 6, rewritten by itself at every turn's end). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; each turn with its numbers (time, requests, tool calls, subagents, files, lines, tests, commits, tokens, cost, context); anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`), so reopening a chat brings it back, and per character; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
+| `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest answered turns it remembers, 1 to 10, after its own notes on the chat (at most 8, each a rule, open item, fact or doubt, rewritten by itself at every turn's end). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; each turn with its numbers (time, requests, tool calls, subagents, files, lines, tests, commits, tokens, cost, context); anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`), so reopening a chat brings it back, and per character; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
 | `logLevel` | string | `"info"` | Log level: error, info or debug |
 | `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, capped at 1 MB with one rotation; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
 | `saveRounds` | boolean | `true` | One text file per main-chat turn in the chat's own folder, beside its transcript and next to `memory.json`, the buddy's memory of that chat (`{config}/projects/{project}/{session id}/buddy/`), at most 150 per chat (`round-001.txt` to `round-150.txt`; once all are used the least recently written is overwritten, so `ls -t` lists them newest first), holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim (they hold what the transcript beside them holds: your prompts, Claude's answers and tool output); `false` = no files |

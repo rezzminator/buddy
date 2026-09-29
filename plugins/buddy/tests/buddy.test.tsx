@@ -968,6 +968,18 @@ describe('core fixes', () => {
 });
 
 describe('hook paths', () => {
+  test("a failed tool call's step in the end-of-turn prompt says why it failed, redacted", async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    on('tool.call', async () => ({ result: { stdout: '', stderr: '' }, text: "Exit code 1\n\nsome log\nError: ENOENT: no such file, open 'x.json' token=abc123", isError: true }) as never);
+    await $.session.start(START);
+    await band($);
+    await prompt($, 'run the tests', 't1');
+    await $.tool.call({ tool: 'Bash', command: 'npm test', description: 'Run the tests' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes[0]?.prompt).toContain("Claude did: Run the tests (failed: exit 1: Error: ENOENT: no such file, open 'x.json' token=[redacted])\n");
+    expect(w.completes[0]?.prompt).not.toContain('abc123');
+  });
   test('turn.complete (commentAfterEachTurn and suggestNextPrompt on by default): one call on `model` reads the prompt, the answer and the tally', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     on('tool.call', async () => ({ result: { stdout: 'ok', stderr: '' }, text: 'ok', isError: false }) as never);
@@ -1370,6 +1382,25 @@ describe('suggestNextPrompt', () => {
     expect(w.completes).toEqual([]);
     expect(w.suggested).toEqual([]);
     await ui.unmount();
+  });
+  test('an interrupted turn is remembered as interrupted, and still makes no call', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    await prompt($, 'refactor the store', 't1');
+    await $.turn.complete({ reason: 'aborted', answer: 'Starting on the', isAborted: true, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toEqual([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const blocks = (memory(w) as any).blocks;
+    expect(blocks.at(-1)).toMatchObject({ turnId: 't1', turn: { prompt: 'refactor the store', answer: 'Starting on the', interrupted: true } });
+  });
+  test('an interrupted turn in a headless session files nothing', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start({ ...START, isInteractive: false });
+    await prompt($, 'refactor the store', 't1');
+    await $.turn.complete({ reason: 'aborted', answer: 'Starting', isAborted: true, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(memory(w)).toBeUndefined();
   });
   test('a held /buddy answer keeps the bubble over the turn\'s commentAfterEachTurn, and suggestNextPrompt still goes out', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'Forty-two, friend.' }, { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Should not show.\nSUGGEST_NEXT_PROMPT: commit this' }] });

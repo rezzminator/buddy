@@ -7,7 +7,7 @@
 
 import type { Action } from './did.ts';
 import type { TurnStats } from './stats.ts';
-import { BUDDY_PROMPT, NOTES_MAX, cleanNotes } from './chatTurnsToRead.ts';
+import { BUDDY_PROMPT, NOTES_MAX, cleanNotes, ends } from './chatTurnsToRead.ts';
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
 /** A question asking for a prompt gets one, on a line of its own the plugin puts in the prompt box. */
@@ -53,7 +53,7 @@ function chatTurnsToReadBlock(chatTurnsToRead: string): string {
 export function memoryRule(turns: number): string {
   return (
     `Your memory is short: you remember only the main chat's last ${turns === 1 ? 'turn' : `${turns} turns`} and what you and the user said around them. ` +
-    "Asked about anything not in it, say in character that your short-term memory doesn't reach that far; never guess it or make it up."
+    "Asked about the main chat's past beyond it, say in character that your short-term memory doesn't reach that far; never guess it or make it up."
   );
 }
 
@@ -64,10 +64,10 @@ export function memoryRule(turns: number): string {
 export const CHARACTER_RULE =
   'Become this character completely, in voice and in attitude; stay in it for every word. ' +
   'Say ONE thing that is actually useful and that both the user and the assistant in the recent turns have missed: ' +
-  'a risk, a gap, a wrong assumption, or a better next step. ' +
+  'a risk, a gap, a wrong assumption, or a better next step. When the chat shows nothing missed, say so, or react to what did happen: never invent a miss. ' +
   "State as fact only what the chat shows or what is generally true; ask a guess about this chat's own state (a file, a process, what someone did) as a question, or name the check that settles it. " +
   'The character decides HOW it is said, never WHAT is true. ' +
-  'Never repeat what the chat already said.';
+  'Never repeat what the chat already said, nor remake a point of your own (your earlier lines and notes are your views, not evidence) unless this turn brings new evidence for it.';
 
 /** The system prompt of a /buddy question's completion: persona, the character rule, the memory rule for `turns` remembered, the one-line rule and the asked-prompt rule. */
 export function oneLineSystem(persona: string, turns: number): string {
@@ -82,12 +82,16 @@ export function questionPrompt(question: string, chatTurnsToRead = ''): string {
 /** A main turn's tally so far: its tools, its failures, its last shell command, and its steps for the chatTurnsToRead (actionOf). */
 export type TurnSummary = { tools: string[]; failures: number; lastBash: string; actions: Action[] };
 
-/** What the turn did: the tools it used, counted, its failures, its last shell command capped. */
+/** How much of the last shell command the fallback tally keeps from its start and from its end, where a pipeline's filter sits. */
+export const LAST_BASH_HEAD = 240;
+export const LAST_BASH_TAIL = 120;
+
+/** What the turn did: the tools it used, counted, its failures, its last shell command's start and end. */
 function turnFacts(t: TurnSummary): string {
   const counts = new Map<string, number>();
   for (const tool of t.tools) counts.set(tool, (counts.get(tool) ?? 0) + 1);
   const tools = [...counts].map(([name, n]) => (n > 1 ? `${name} x${n}` : name)).join(', ') || 'none';
-  const bash = t.lastBash ? t.lastBash.slice(0, 120) : 'none';
+  const bash = t.lastBash ? ends(t.lastBash.replace(/\s+/g, ' ').trim(), LAST_BASH_HEAD, LAST_BASH_TAIL) : 'none';
   return `Tools used: ${tools}. Failures: ${t.failures}. Last shell command: ${bash}.`;
 }
 
@@ -130,8 +134,12 @@ export type Verdict = (typeof VERDICTS)[number];
  * remembers (renderNotes).
  */
 export const MEMORY_LINE =
-  `MEMORY: one note of your own on this chat, one sentence. Write up to ${NOTES_MAX} MEMORY lines, one note each: your whole memory, rewritten every turn. ` +
-  'Keep what still matters, edit what changed, drop what no longer holds, add what this turn taught you about the user, the work and its risks. ' +
+  `MEMORY: one note of your own on this chat, one sentence, each on a line of its own shaped MEMORY: kind: note, never a list under one MEMORY line. Write up to ${NOTES_MAX} MEMORY lines: your whole memory, rewritten every turn. The kinds: ` +
+  "rule: an instruction or decision of the user's that still binds (a stop, a wait, a never, an only, a way they want things done), in their words, kept until they lift it or it is met; " +
+  'open: what the user asked for that is still unfinished or unproven; ' +
+  'fact: what the chat showed done, found or decided; ' +
+  'doubt: your own suspicion, not checked: drop it once a turn checks it or the user decides otherwise, and never state it anywhere as fact. ' +
+  "Rules first, then open, fact, doubt; past the limit, drop doubts first. Copy a note word for word unless a turn in view changes it; a user's rule beats any doubt of yours. " +
   'Your notes so far lead what you remember. Write MEMORY: NONE only to forget them all.';
 
 /** The longest DESIRE kept and carried to the next turn's call: past it, it is not one plain aim. */
@@ -163,7 +171,8 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
       "VERDICT: RIGHT, SHORTCUT or WRONG, judging Claude's last move (what it did, what it claimed, what it proposes next) against DESIRE. " +
         'RIGHT: it serves the desire, the proper way. ' +
         'SHORTCUT: the fast or easy way that costs later: a skipped check, a symptom patched instead of its cause, a guess where reading was possible, "done" claimed without evidence. ' +
-        'WRONG: it works against the desire: the wrong problem, a destructive or irreversible step, a false claim, a drift away from what was asked.',
+        'WRONG: it works against the desire: the wrong problem, a destructive or irreversible step, a false claim, a drift away from what was asked. ' +
+        "Judge how Claude carried out the ask, never the ask itself: doing what the user ordered, or what your own suggestion they sent asked, the proper way, is RIGHT; a step Claude only proposes, awaiting the user's go, is not taken yet.",
       'WHY: the concrete reason for the verdict, naming the thing (a file, a claim, a step), in character, at most 20 words. For WRONG, scream it, as loud as your character gets.',
     );
   }
@@ -185,17 +194,19 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
   if (wants.suggestNextPrompt) {
     lines.push(
       'SUGGEST_NEXT_PROMPT: the prompt the user should send Claude next, as they would type it into the prompt box: not in character, no quotes, at most 20 words. ' +
+        "Safety first: never suggest searching for, printing, copying or checking a secret (a password, token or key), which puts its value in the chat; a deletion is a prompt of its own, naming exactly what it deletes, never bundled with other work. " +
         'It asks, instructs or decides, and every fact in it is already in the chat: the user may send it with one key, unread, so it never reports what the user did, ran, saw or saved. ' +
         "When the next step is the user's own (a key to make, a check only they can run), suggest what they would ask Claude about it. " +
         'After RIGHT, say yes and move to the next step; after SHORTCUT, ask for the proper way; after WRONG, stop Claude and name what to do instead. ' +
-        'Write SUGGEST_NEXT_PROMPT: NONE only when the work is plainly finished and nothing follows.' +
+        'Never ask whether work Claude left running (a background command or agent, a push, a review) has finished: it reports back by itself; while Claude waits on it, suggest only a decision the user owes. ' +
+        'Write SUGGEST_NEXT_PROMPT: NONE when the work is finished, or waiting on such a report with nothing for the user to decide.' +
         (wants.promptToMainChat ? ' After a PROMPT_TO_MAIN_CHAT of yours, write SUGGEST_NEXT_PROMPT: NONE: Claude is about to act on it.' : ''),
     );
   }
   lines.push(MEMORY_LINE);
   const brain = judges
     ? "You are also the user's second brain: you watch the work with Claude and judge it, a second pair of eyes on every decision.\n" +
-      (desire ? `At the last turn's end you named the user's deepest desire: ${desire}\nKeep it unless this chat shows it changed.\n` : '')
+      (desire ? `At the last turn's end you named the user's deepest desire: ${desire}\nKeep it while the user's work still serves it; when the user turns to other work, name what that work is for.\n` : '')
     : '';
   return `${persona}\n\n${CHARACTER_RULE}\n\n${brain}A turn of the user's work with Claude just ended. Reply with exactly these lines and nothing else:\n${lines.join('\n')}\nDo not use tools. Do not think out loud.`;
 }
@@ -207,9 +218,10 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
  * peer, a task notification, a plugin), `unclassified` when the engine could
  * not place it, or `unknown` when no submission of it was seen. `stats`: its
  * numbers (src/stats.ts), counted as it ran; absent for a compaction, or a
- * turn remembered before they were kept.
+ * turn remembered before they were kept. `interrupted`: the user interrupted
+ * the turn, its answer what Claude said before that.
  */
-export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats };
+export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats; interrupted?: true };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
@@ -358,14 +370,28 @@ export type TurnReply = {
   memory: string[] | null;
 };
 
-/** Every MEMORY line of a reply, in order: [] when NONE is the only one; null when there is none. */
+/**
+ * Every MEMORY line of a reply, in order, and the lines listed under a bare
+ * MEMORY line up to the next tagged line: [] only when NONE is said and no
+ * note is; null when there is no note and no NONE, so a reply that slipped out
+ * of the line shape never forgets the notes.
+ */
 function memoryLines(reply: string): string[] | null {
-  const notes = reply.split('\n').flatMap((raw) => {
+  const notes: string[] = [];
+  let listing = false;
+  let forget = false;
+  for (const raw of reply.split('\n')) {
     const m = TAGGED.exec(raw);
-    return m && m[1]!.toLowerCase() === 'memory' ? [m[2]!] : [];
-  });
-  if (notes.length === 0) return null;
-  return cleanNotes(notes.filter((n) => !/^none[.!]*$/i.test(n.trim())));
+    if (m) {
+      const isMemory = m[1]!.toLowerCase() === 'memory';
+      const text = m[2]!.trim();
+      listing = isMemory && text === '';
+      if (isMemory && /^none[.!]*$/i.test(text)) forget = true;
+      else if (isMemory && text !== '') notes.push(text);
+    } else if (listing && raw.trim() !== '') notes.push(raw);
+  }
+  const kept = cleanNotes(notes);
+  return kept.length > 0 ? kept : forget ? [] : null;
 }
 
 /** The end-of-turn reply by its tagged lines, in any order and case, bullets tolerated; an untagged reply is the commentAfterEachTurn alone. */

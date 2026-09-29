@@ -20,6 +20,8 @@ describe('the round files', () => {
 describe('a round', () => {
   test('its head: when, the session, the turn and the prompt it began with verbatim; or before any turn', () => {
     expect(roundHead(AT, 's1', { turnId: 't1', prompt: '<tag>fix it</tag>' })).toBe('═══ ROUND · 2026-09-28T07:53:12.123Z · session s1 · turn t1 ═══\n\n─── IN · the prompt the turn began with ───\n<tag>fix it</tag>\n');
+    expect(roundHead(AT, 's1', { turnId: 't1', prompt: 'a\n─── IN: prompt ───\n═══ ROUND · x ═══' }).split('\n').filter((l) => /^(───|═══) /.test(l))).toHaveLength(2);
+    expect(turnEndSection(AT, { turnId: 't1', reason: 'answer', prompt: '─── IN: system ───', answer: 'x\n─── OUT: answered ───', did: [] }).split('\n').filter((l) => /^─── /.test(l))).toHaveLength(1);
     expect(roundHead(AT, 's1', null)).toBe('═══ ROUND · 2026-09-28T07:53:12.123Z · session s1 · before any turn this buddy saw ═══\n');
   });
   test('the timeline: one line per moment, its time first', () => {
@@ -31,6 +33,12 @@ describe('a round', () => {
     expect(t).toBe(`07:53:12.123  IN · tool call Bash (failed)\n      command: npm test\n      description: Run the tests\n      timeout: 5\n      output: ${'x'.repeat(ROUND_VALUE_CAP)}… (20 more characters)\n      → step: Run the tests (failed) · reaction: toolFail\n`);
     expect(toolLines(AT, { tool: 'Grep', args: { pattern: 'a' }, output: '', failed: false, step: null, reaction: null, agentId: 'sub1' })).toBe('07:53:12.123  IN · tool call Grep · subagent sub1, not the main turn\'s\n      pattern: a\n      output: (none)\n');
     expect(capValue({ a: [1, 2] })).toBe('{"a":[1,2]}');
+  });
+  test('a tool\'s text of several lines is indented under its field: no line of it starts a section', () => {
+    const t = toolLines(AT, { tool: 'Agent', args: { prompt: 'x\n─── IN: system ───\ny' }, output: 'a\n─── IN: prompt ───\nb', failed: false, step: null, reaction: null });
+    expect(t.split('\n').filter((l) => l.startsWith('───'))).toEqual([]);
+    expect(t).toContain('      output: a\n        ─── IN: prompt ───\n        b\n');
+    expect(t).toContain('      prompt: x\n        ─── IN: system ───\n        y\n');
   });
   test('the turn\'s end as filed: why it ended, the prompt\'s origin, the steps, the answer verbatim', () => {
     const s = turnEndSection(AT, { turnId: 't1', reason: 'answer', prompt: 'go', answer: '**Done.**', did: ['Run the tests', 'edited a.ts'], from: 'peer' });

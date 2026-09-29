@@ -60,8 +60,8 @@ export type TurnStats = {
   reruns?: number;
   /** The subagent runs that ended during the turn, their tool calls, and every token they spent. */
   agents?: { runs: number; tools: number; tokens: number };
-  /** Distinct files read, edited and written. */
-  files?: { read: number; edited: number; wrote: number };
+  /** Distinct files read, edited and written, and deleted by a shell command (only when some were). */
+  files?: { read: number; edited: number; wrote: number; deleted?: number };
   /** The file edited most, by name, once edited HOT_EDITS times or more. */
   hot?: { file: string; edits: number };
   /** Lines added and removed by edits and writes; a write counts all its lines as added. `unmeasured`: the files a shell command changed whose lines could not be counted. */
@@ -104,6 +104,7 @@ export type Tally = {
   read: Set<string>;
   edited: Set<string>;
   wrote: Set<string>;
+  deleted: Set<string>;
   edits: Map<string, number>;
   added: number;
   removed: number;
@@ -175,6 +176,7 @@ export function openTally(turnId: string, now: number, lastEndAt?: number): Tall
     read: new Set(),
     edited: new Set(),
     wrote: new Set(),
+    deleted: new Set(),
     edits: new Map(),
     added: 0,
     removed: 0,
@@ -269,7 +271,7 @@ export function changedLines(tool: string, args: Record<string, unknown>): { add
 }
 
 /** One file a shell command really changed: `made` when it did not exist before; its lines as fileLineDelta counts them, or `unmeasured` when its text was not read. */
-export type ShellChange = { file: string; made: boolean; added: number; removed: number; unmeasured?: true };
+export type ShellChange = { file: string; made: boolean; added: number; removed: number; unmeasured?: true; gone?: true };
 
 /** A file as a tree sweep marks it: a change of its size or its modification time is a change. */
 export type FileMark = { size: number; mtimeMs: number };
@@ -369,7 +371,7 @@ export function shellChanges(before: ReadonlyMap<string, string | null>, after: 
     if (!after.has(file)) continue;
     const now = after.get(file) ?? null;
     if (was === now) continue;
-    out.push({ file, made: was === null, ...fileLineDelta(was ?? '', now ?? '') });
+    out.push({ file, made: was === null, ...fileLineDelta(was ?? '', now ?? ''), ...(was !== null && now === null ? { gone: true as const } : {}) });
   }
   return out;
 }
@@ -402,16 +404,20 @@ export function sweptShellChange(file: string, kind: 'changed' | 'made' | 'gone'
   const made = kind === 'made';
   const before = made ? '' : was;
   const after = kind === 'gone' ? '' : now;
-  if (typeof before !== 'string' || typeof after !== 'string') return { file, made, added: 0, removed: 0, unmeasured: true };
+  const gone = kind === 'gone' ? { gone: true as const } : {};
+  if (typeof before !== 'string' || typeof after !== 'string') return { file, made, added: 0, removed: 0, unmeasured: true, ...gone };
   if (kind === 'changed' && before === after) return null;
-  return { file, made, ...fileLineDelta(before, after) };
+  return { file, made, ...fileLineDelta(before, after), ...gone };
 }
 
-/** A shell command's changes into the tally: a file made is written, one changed or deleted edited, each an edit of that file, its lines counted or kept as unmeasured. */
+/** A shell command's changes into the tally: a file made is written, one changed edited, each an edit of that file; one deleted is deleted, no edit of it; its lines counted or kept as unmeasured. */
 export function countShellChanges(t: Tally, changes: readonly ShellChange[]): void {
   for (const c of changes) {
-    (c.made ? t.wrote : t.edited).add(c.file);
-    t.edits.set(c.file, (t.edits.get(c.file) ?? 0) + 1);
+    if (c.gone) t.deleted.add(c.file);
+    else {
+      (c.made ? t.wrote : t.edited).add(c.file);
+      t.edits.set(c.file, (t.edits.get(c.file) ?? 0) + 1);
+    }
     t.added += c.added;
     t.removed += c.removed;
     if (c.unmeasured) t.unmeasured.add(c.file);
@@ -476,7 +482,7 @@ export function closeTally(
     ...(t.denied > 0 ? { denied: t.denied } : {}),
     ...(t.reruns > 0 ? { reruns: t.reruns } : {}),
     ...(some(t.agentRuns, t.agentTools) ? { agents: { runs: t.agentRuns, tools: t.agentTools, tokens: t.agentTokens } } : {}),
-    ...(some(t.read.size, t.edited.size, t.wrote.size) ? { files: { read: t.read.size, edited: t.edited.size, wrote: t.wrote.size } } : {}),
+    ...(some(t.read.size, t.edited.size, t.wrote.size, t.deleted.size) ? { files: { read: t.read.size, edited: t.edited.size, wrote: t.wrote.size, ...(t.deleted.size > 0 ? { deleted: t.deleted.size } : {}) } } : {}),
     ...(hot && hot[1] >= HOT_EDITS ? { hot: { file: hot[0].replace(/\/+$/, '').split('/').pop() ?? hot[0], edits: hot[1] } } : {}),
     ...(some(t.added, t.removed, t.unmeasured.size) ? { lines: { added: t.added, removed: t.removed, ...(t.unmeasured.size > 0 ? { unmeasured: t.unmeasured.size } : {}) } } : {}),
     ...(some(t.passed, t.failedTests) ? { tests: { passed: t.passed, failed: t.failedTests } } : {}),
@@ -544,7 +550,7 @@ export function renderStats(s: TurnStats, prev?: TurnStats): string {
     parts.push(`${s.agents.runs ? plural(s.agents.runs, 'subagent run') : 'subagents'}${spent ? `: ${spent}` : ''}`);
   }
   if (s.files) {
-    const f = [s.files.read ? `${count(s.files.read)} read` : '', s.files.edited ? `${count(s.files.edited)} edited` : '', s.files.wrote ? `${count(s.files.wrote)} written` : ''].filter(Boolean);
+    const f = [s.files.read ? `${count(s.files.read)} read` : '', s.files.edited ? `${count(s.files.edited)} edited` : '', s.files.wrote ? `${count(s.files.wrote)} written` : '', s.files.deleted ? `${count(s.files.deleted)} deleted` : ''].filter(Boolean);
     parts.push(`files ${f.join(', ')}${s.hot ? `; ${s.hot.file} edited ${s.hot.edits}×` : ''}`);
   }
   if (s.lines) {
@@ -594,7 +600,7 @@ export function turnStatsOf(v: unknown): TurnStats | null {
     [s.gapMs, s.requests, s.failed, s.denied, s.reruns, s.web, s.usd].every((n) => n === undefined || isCount(n)) &&
     (s.tools === undefined || (counts(s.tools, Object.keys(s.tools as object)) && Object.keys(s.tools as object).length > 0)) &&
     (s.agents === undefined || counts(s.agents, ['runs', 'tools', 'tokens'])) &&
-    (s.files === undefined || counts(s.files, ['read', 'edited', 'wrote'])) &&
+    (s.files === undefined || (counts(s.files, ['read', 'edited', 'wrote']) && counts(s.files, ['deleted'], true))) &&
     (s.hot === undefined || (typeof (s.hot as { file?: unknown }).file === 'string' && counts(s.hot, ['edits']))) &&
     (s.lines === undefined || (counts(s.lines, ['added', 'removed']) && counts(s.lines, ['unmeasured'], true))) &&
     (s.tests === undefined || counts(s.tests, ['passed', 'failed'])) &&
