@@ -1,21 +1,21 @@
 import { atom, read, update } from 'claude-code';
 import type { RenderElement, EngineInterface, ModelCompleteResult, On, PluginOptions, PromptSubmitInput, PromptSubmitResult, Register, Timer, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStartInput, TurnStepInput, TurnStepResult } from 'claude-code';
 import {
-  COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, isMainLoop, observeBand, period, pet,
+  COMPLETE_DEADLINE_MS, ERROR_MS, answer, beginQuestion, createBrain, deadlineReason, endQuestion, noAnswerReason, refuseQuestion, endTurn, failAnswer, farewell, greet, isMainLoop, observeBand, period,
   currentPose, react, sceneOf, setCharacter, speak, tick, wake,
   type Brain,
 } from '../src/brain.ts';
 import { frameAt, type Character, type Pose } from '../src/character.ts';
 import { DRAWER_KEYS, USAGE, parseCommand, type Action } from '../src/command.ts';
-import { allItems, buildMenu, currentKeyOf, findItem, type Item, type Originals } from '../src/menu.ts';
+import { allItems, buildMenu, currentKeyOf, findItem, paneRows, type Item, type Menu, type Originals } from '../src/menu.ts';
 import {
-  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, BUDDY_PROMPT, TAKEN_SUGGESTION, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, render, storeKey,
+  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, BUDDY_PROMPT, TAKEN_SUGGESTION, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, memoryText, render, storeKey,
   type Block, type Exchange, type Notes, type Stored,
 } from '../src/chatTurnsToRead.ts';
-import { MEMORY_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
+import { MEMORY_FILE, MEMORY_TEXT_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, denialReason, didOf, failureReason, type Action as Step, type Failure } from '../src/did.ts';
-import { answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
-import { drawDrawer, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
+import { answerSuggestions, feedOfMemory, isTaken, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
+import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { within, type Sleep } from '../src/deadline.ts';
@@ -77,16 +77,17 @@ type State = {
   /** Why characters/ or the customCharactersDir could not be listed: the menu says it in the group. */
   shippedError: string | undefined;
   customCharactersDirError: string | undefined;
-  /** The drawer's personality tab, while it is built: the characters to pick from and the one the preview shows. */
+  /** The personality pane's, once built: the characters to pick from and the one the preview shows. */
   menu: MenuState | null;
+  /** What the last look for your original companion found: the personality pane is sized from it while the next look runs; null before the first. */
+  originals: Originals | null;
   hidden: boolean;
-  pets: number;
   timer: Timer | null;
   clockPeriod: number;
   lastKey: string;
   lastTickError: string;
   /** This session's chatTurnsToRead timeline as last loaded or written, and its file; loaded again when the session id changes (a start, a /clear, a resume, a reload). */
-  chatTurnsToRead: { sessionId: string; path: string; blocks: Block[]; notes: Notes } | null;
+  chatTurnsToRead: Memory | null;
   /** The buddy's folder in this session's chat folder, once its transcript was found there (chatFolderFor). */
   chatFolder: { sessionId: string; dir: string } | null;
   /** Every chatTurnsToRead read and write, one after another, in the order made. */
@@ -165,13 +166,16 @@ type State = {
   calls: number;
   /** Every write of the drawer's feed, one after another, in the order made. */
   feedChain: Promise<void>;
+  /** The feed's last message to you (lastMessageOf), read as the band draws: the hover card's while the brain has said none of its own (after a reload). */
+  lastInFeed: string | null;
   drawer: Drawer;
 };
 
-/** The drawer: open or not, its tab, its clock, the animation's tick, the ask box's unsent text, the band's id once drawn (to scroll it). */
-type Drawer = { open: boolean; tab: 'talk' | 'personality'; timer: Timer | null; frame: number; draft: string; bandId: string };
+/** The drawer: open or not, its clock, the animation's tick, the ask box's unsent text, the band's id once drawn (to scroll it). */
+type Drawer = { open: boolean; timer: Timer | null; frame: number; draft: string; bandId: string };
 
 type BandProps = { hasSurvey: boolean; isWorking: boolean; maxRows: number; bodyColumns: number };
+type PaneProps = { isFocused: boolean; scroll: { bodyRows: number } };
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -286,13 +290,19 @@ function applyChoice(st: State, $: EngineInterface): void {
   const warning = startWarning(choice.error, st.roster.errors, st.warned ? [] : st.options.errors);
   st.warned = true;
   if (!st.b) st.b = createBrain(choice.character, st.options.walkOverPromptBar, st.options.ambiguousCharacterWidth);
-  st.b.pets = st.pets;
   setCharacter(st.b, choice.character, warning, Math.random);
   L.context.character = choice.character.id;
   lg($, 'info', 'character.switch', { id: choice.character.id, via: 'start' });
 }
 
 // ---- chatTurnsToRead ------------------------------------------------------
+
+/**
+ * A session's chatTurnsToRead: its timeline and notes, memory.json's `path`,
+ * and memory.md's (`textPath`): whether it is there (`hasText`), and the
+ * character it was last written for here (`textFor`), null before.
+ */
+type Memory = { sessionId: string; path: string; textPath: string; hasText: boolean; textFor: string | null; blocks: Block[]; notes: Notes };
 
 function chatTurnsToReadFailed(st: State, $: EngineInterface, what: string, error: unknown): void {
   log($, what, error, { area: 'chatTurnsToRead' });
@@ -335,10 +345,12 @@ async function chatFolderFor(st: State, $: EngineInterface, sessionId: string): 
  * `live` false, was abandoned while the file answered: a later link may have
  * loaded and written since, and this stale read never replaces that.
  */
-async function chatTurnsToReadFor(st: State, $: EngineInterface, live: () => boolean): Promise<{ sessionId: string; path: string; blocks: Block[]; notes: Notes } | null> {
+async function chatTurnsToReadFor(st: State, $: EngineInterface, live: () => boolean): Promise<Memory | null> {
   const sessionId = await $.session.id();
   if (st.chatTurnsToRead?.sessionId === sessionId) return st.chatTurnsToRead;
-  const path = `${await chatFolderFor(st, $, sessionId)}/${MEMORY_FILE}`;
+  const dir = await chatFolderFor(st, $, sessionId);
+  const path = `${dir}/${MEMORY_FILE}`;
+  const textPath = `${dir}/${MEMORY_TEXT_FILE}`;
   let value: unknown;
   let legacy = false;
   let unreadable = '';
@@ -353,18 +365,40 @@ async function chatTurnsToReadFor(st: State, $: EngineInterface, live: () => boo
     value = await $.store.get(storeKey(sessionId));
     legacy = value !== undefined;
   }
+  const hasText = await $.fs.exists(textPath);
   if (!live()) return null;
   const loaded = chatTurnsToReadOf(value);
   if (unreadable || loaded.error) chatTurnsToReadFailed(st, $, 'reading the chatTurnsToRead', new Error(unreadable || loaded.error));
-  st.chatTurnsToRead = { sessionId, path, blocks: loaded.blocks, notes: loaded.notes };
+  st.chatTurnsToRead = { sessionId, path, textPath, hasText, textFor: null, blocks: loaded.blocks, notes: loaded.notes };
   seedFeed(st, $, loaded.blocks);
   if (legacy) {
     // Moved into the chat's folder, then out of the store; a failed write leaves the store's copy for the next start.
     await st.chatTurnsToReadWrites(path, { at: Date.now(), blocks: loaded.blocks, notes: loaded.notes }, (p, v) => $.fs.write(p, JSON.stringify(v)));
+    await writeMemoryText(st, $, st.chatTurnsToRead);
     await $.store.delete(storeKey(sessionId));
     lg($, 'info', 'chatTurnsToRead.moved', { blocks: loaded.blocks.length });
   }
   return st.chatTurnsToRead;
+}
+
+/**
+ * memory.md beside memory.json: what the character drawn now reads of `m`
+ * (memoryText), for you to read. A failure is logged, never thrown:
+ * memory.json stands without it, and the next write tries again.
+ */
+async function writeMemoryText(st: State, $: EngineInterface, m: Memory): Promise<void> {
+  const c = st.b?.character;
+  if (!c) return;
+  try {
+    await $.fs.write(m.textPath, memoryText(c.name, m.blocks, c.id, st.options.chatTurnsToRead, m.notes[c.id] ?? [], Date.now()));
+    m.textFor = c.id;
+    if (m.hasText) return;
+    // Its first: the drawer's last row names it now.
+    m.hasText = true;
+    $.ui.invalidate('ui.render');
+  } catch (error) {
+    log($, 'writing memory.md', error, { area: 'chatTurnsToRead' });
+  }
 }
 
 /**
@@ -434,6 +468,7 @@ function changeChatTurnsToRead(st: State, $: EngineInterface, what: string, chan
       }
       const stored: Stored = { at: Date.now(), blocks: m.blocks, notes: m.notes };
       await st.chatTurnsToReadWrites(m.path, stored, (p, v) => $.fs.write(p, JSON.stringify(v)));
+      if (live()) await writeMemoryText(st, $, m);
     })
       .then((landed) => {
         if (landed) {
@@ -731,16 +766,15 @@ function rememberExchange(st: State, $: EngineInterface, characterId: string, x:
 
 /**
  * `characterId`'s own notes on this chat, as it rewrote them at a turn's end,
- * replacing the ones it had; said in the drawer when they changed. Logs
+ * replacing the ones it had; memory.md then shows them. Logs
  * `notes.outcome`: rewritten, cleared or unchanged, with the count.
  */
-function rememberNotes(st: State, $: EngineInterface, characterId: string, voiced: { who?: string; color?: string }, notes: string[]): void {
+function rememberNotes(st: State, $: EngineInterface, characterId: string, notes: string[]): void {
   const had = st.chatTurnsToRead?.notes[characterId] ?? [];
   const same = had.length === notes.length && had.every((n, i) => n === notes[i]);
   lg($, 'info', 'notes.outcome', { outcome: same ? 'unchanged' : notes.length === 0 ? 'cleared' : 'rewritten', count: notes.length });
   if (same) return;
   changeChatTurnsToRead(st, $, 'remembering the notes', (m) => ({ ...m, notes: { ...m.notes, [characterId]: notes } }));
-  feedAdd(st, $, { at: Date.now(), kind: 'memory', text: notes.length > 0 ? notes.join('\n') : 'forgot every note', ...voiced });
 }
 
 // ---- the feed: what the drawer draws -------------------------------------
@@ -814,11 +848,16 @@ async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, 
 /**
  * The session's memory loaded now, and the drawer drawn back from it: at a
  * session's start and when the drawer opens, so a reopened chat shows what the
- * buddy remembers before any turn, question or greeting touches it.
+ * buddy remembers before any turn, question or greeting touches it. memory.md
+ * is rewritten when it was written here for another character, or not yet
+ * though there is a memory (notes are each character's own): so again
+ * whenever the drawn character changes.
  */
 function loadMemory(st: State, $: EngineInterface): void {
   chainChatTurnsToRead(st, $, 'loading the chatTurnsToRead', CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, async (live) => {
-    await chatTurnsToReadFor(st, $, live);
+    const m = await chatTurnsToReadFor(st, $, live);
+    const c = st.b?.character;
+    if (m && c && live() && m.textFor !== c.id && (m.textFor !== null || m.blocks.length > 0)) await writeMemoryText(st, $, m);
   }).catch((error: unknown) => log($, 'loading the chatTurnsToRead', error));
 }
 
@@ -856,7 +895,7 @@ function refresh(st: State, $: EngineInterface): void {
     if (bubble !== null) roundEvent(st, $, eventLine(Date.now(), `OUT · bubble${st.hidden ? ' (hidden, not drawn)' : ''}: ${JSON.stringify(bubble)}`));
   }
   if (!st.b || st.hidden) return;
-  const key = JSON.stringify(sceneOf(st.b));
+  const key = JSON.stringify(sceneOf(st.b, lastMessage(st)));
   if (key === st.lastKey) return;
   st.lastKey = key;
   $.ui.invalidate('ui.render');
@@ -913,12 +952,6 @@ function syncHidden(st: State, $: EngineInterface): void {
 // ---- session.start ------------------------------------------------------
 
 async function readStore(st: State, $: EngineInterface): Promise<void> {
-  try {
-    const pets = await $.store.get('pets');
-    st.pets = typeof pets === 'number' && Number.isFinite(pets) ? pets : 0;
-  } catch (error) {
-    log($, 'reading the pet count', error);
-  }
   try {
     st.hidden = (await $.store.get('hidden')) === true;
   } catch (error) {
@@ -985,12 +1018,22 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
 
 // ---- ui.render: AbovePrompt ---------------------------------------------
 
+/** What the hover card says the buddy last told you: the brain's own, else the feed's. */
+function lastMessage(st: State): string | null {
+  return st.b?.lastToYou ?? st.lastInFeed;
+}
+
+/** A brain new since the reload has said nothing to you yet: the card says the feed's last message to you. */
+async function readLastInFeed(st: State, $: EngineInterface): Promise<void> {
+  if (st.b && st.b.lastToYou === null) st.lastInFeed = lastMessageOf(await read($, FEED));
+}
+
 function bandScene(st: State, $: EngineInterface, p: BandProps): Scene | null {
   if (p.hasSurvey || !st.b || st.hidden) return null;
   st.bandSeen = true;
   observeBand(st.b, { cols: p.bodyColumns, maxRows: p.maxRows, isWorking: p.isWorking }, Math.random);
   heard(st, $);
-  const scene = sceneOf(st.b);
+  const scene = sceneOf(st.b, lastMessage(st));
   lgT($, 'band.scene', { pose: st.b.lastPose, bubble: st.b.talk?.text.length ?? 0, cols: p.bodyColumns, working: p.isWorking });
   st.lastKey = JSON.stringify(scene);
   return scene;
@@ -1006,7 +1049,7 @@ function drawBand(Box: Component, Text: Component, s: Scene) {
   ) : null;
   const card = s.card ? (
     <Box position="absolute" top={0} left={s.card.left} width={s.card.width} display="none" hover={{ display: 'flex' }} borderStyle="round" flexDirection="column" paddingX={1}>
-      {s.card.lines.map((line, i) => <Text bold={i === 0} dimColor={i === 2} wrap="truncate-end">{line}</Text>)}
+      {s.card.lines.map((line, i) => <Text bold={i === 0} wrap="truncate-end">{line}</Text>)}
     </Box>
   ) : null;
   const sprite = (
@@ -1514,7 +1557,7 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
     );
   }
   // The buddy's own notes, rewritten; a reply with no MEMORY line keeps the ones it had.
-  if (reply?.memory) rememberNotes(st, $, c.id, voice(c), reply.memory);
+  if (reply?.memory) rememberNotes(st, $, c.id, reply.memory);
   if (promptToMainChat !== null) sendPromptToMainChat(st, $, c, promptToMainChat);
 }
 
@@ -1806,7 +1849,7 @@ async function restoreOriginal(st: State, $: EngineInterface): Promise<void> {
   let error = '';
   try {
     const saved = st.saved;
-    if (!saved) error = `no original companion saved; the drawer's personality tab (/${COMMAND}) picks one`;
+    if (!saved) error = `no original companion saved; ctrl+x t in /${COMMAND} picks one`;
     else {
       const config = await readConfig($);
       if ('error' in config) error = config.error;
@@ -1824,52 +1867,89 @@ async function restoreOriginal(st: State, $: EngineInterface): Promise<void> {
   if (st.original) st.roster = withEntry(st.roster, st.original);
 }
 
-// ---- the drawer's personality tab -----------------------------------------
+// ---- the personality pane: ctrl+x t in the drawer ----------------------------
 
-/** The personality tab: every character to pick from, the focus and the preview on the one drawn now. */
-async function openPersonality(st: State, $: EngineInterface): Promise<void> {
-  const b = st.b;
-  if (!b) return;
-  st.drawer.tab = 'personality';
-  lg($, 'info', 'personality.open', { current: b.character.id });
-  $.ui.invalidate('ui.render');
-  const originals = await findOriginals($);
-  const model = buildMenu({ roster: st.roster, shippedError: st.shippedError, customCharactersDir: { isSet: Boolean(st.options.customCharactersDir), error: st.customCharactersDirError }, originals });
-  const current = currentKeyOf(b.character.id, st.saved?.variant);
-  const focused = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
-  // Left for the talk tab while it was built: never drawn over it.
-  if (st.drawer.tab !== 'personality') return;
-  st.menu = { model, current, focused, soul: originals.kind === 'found' ? originals.soul : null };
-  $.ui.invalidate('ui.render');
-}
+/** The personality pane's id: one pane, opened again by each ctrl+x t. */
+const PICKER = 'personality';
 
-/** Back to the talk tab. */
-function showTalk(st: State, $: EngineInterface): void {
-  st.drawer.tab = 'talk';
-  st.menu = null;
-  $.ui.invalidate('ui.render');
-  scrollDrawerToEnd(st, $);
+/** Every character to pick from, with `originals` as the look for your original companion found it. */
+function menuOf(st: State, originals: Originals): Menu {
+  return buildMenu({ roster: st.roster, shippedError: st.shippedError, customCharactersDir: { isSet: Boolean(st.options.customCharactersDir), error: st.customCharactersDirError }, originals });
 }
 
 /**
- * ctrl+x n (`by` 1) or b (-1): the personality tab, opened if it is not,
- * lights the next or previous character, round the list, and switches to it
- * at once; one that cannot be drawn is lit, its preview saying why, and not picked.
+ * ctrl+x t: the personality pane opened from the press, holding the keyboard
+ * (Esc closes it), sized to the list as last found; the list is then built
+ * afresh, the pane grown when it needs more rows.
  */
-async function stepCharacter(st: State, $: EngineInterface, by: 1 | -1): Promise<void> {
-  if (st.drawer.tab !== 'personality' || !st.menu) await openPersonality(st, $);
-  const m = st.menu;
-  if (!m) return;
-  const items = allItems(m.model);
-  if (items.length === 0) return;
-  const at = items.findIndex((i) => i.key === m.focused);
-  const item = items[(Math.max(0, at) + by + items.length) % items.length]!;
-  m.focused = item.key;
+function openPicker(st: State, $: EngineInterface): void {
+  const b = st.b;
+  if (!b) return;
+  const current = currentKeyOf(b.character.id, st.saved?.variant);
+  const rows = paneRows(menuOf(st, st.originals ?? { kind: 'none', notes: [] }), current);
+  lg($, 'info', 'personality.open', { current: b.character.id, rows });
+  openPane($, rows);
+  buildPicker(st, $, current, rows).catch((error: unknown) => log($, 'building the personality pane', error));
+}
+
+/** The personality pane opened, or brought forward, `rows` tall and holding the keyboard. */
+function openPane($: EngineInterface, rows: number): void {
+  $.ui
+    .open({ id: PICKER, title: 'personality', focus: true, closeOnEscape: true, rows })
+    .then((r) => lg($, 'info', 'personality.pane', { placed: r.isPlaced }))
+    .catch((error: unknown) => log($, 'opening the personality pane', error));
+}
+
+/** The pane's list built afresh, lit on the one drawn now; the pane asked for more rows than `asked` when it needs them. */
+async function buildPicker(st: State, $: EngineInterface, current: string, asked: number): Promise<void> {
+  st.menu = null;
   $.ui.invalidate('ui.render');
+  const originals = await findOriginals($);
+  st.originals = originals;
+  // Folded while it was built: the pane closed with the drawer.
+  if (!st.drawer.open) return;
+  const model = menuOf(st, originals);
+  const focused = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
+  st.menu = { model, current, focused, litAt: st.drawer.frame, soul: originals.kind === 'found' ? originals.soul : null };
+  const rows = paneRows(model, focused);
+  if (rows > asked) openPane($, rows);
+  $.ui.invalidate('ui.render');
+}
+
+/** The row `key` lit, its preview begun again at its first frame: the engine moves the ring without drawing, so the pane is drawn again. */
+function lightRow(st: State, $: EngineInterface, key: string): void {
+  const m = st.menu;
+  if (!m || m.focused === key || !findItem(m.model, key)) return;
+  m.focused = key;
+  m.litAt = st.drawer.frame;
+  $.ui.invalidate('ui.render');
+}
+
+/** Enter on a row: it is lit, and a character that can be drawn is picked; one that cannot stays lit only, its preview saying why. */
+async function pressRow(st: State, $: EngineInterface, key: string): Promise<void> {
+  const item = st.menu ? findItem(st.menu.model, key) : undefined;
+  if (!item) return;
+  lightRow(st, $, key);
   if (item.character) await pickItem(st, $, item);
 }
 
-/** A character picked: switches and remembers the choice (the store's `character`); the new one greets, the tab stays open on it. */
+/** The personality pane closed, with the drawer. */
+function closePicker(st: State, $: EngineInterface): void {
+  st.menu = null;
+  $.ui.close({ id: PICKER }).catch((error: unknown) => log($, 'closing the personality pane', error));
+}
+
+/** The personality pane's body, drawn from the list as it stands. */
+function drawPickerPane(st: State, $: EngineInterface, e: { surface: string; requestId: string; props: PaneProps }): RenderElement {
+  const E = $.ui.resolve(e as never) as unknown as Elements;
+  const m = st.menu;
+  const view = { menu: m, frame: m ? Math.max(0, st.drawer.frame - m.litAt) : 0, now: Date.now(), isFocused: e.props.isFocused, rows: e.props.scroll.bodyRows };
+  return drawPicker(E, view, (key) => {
+    pressRow(st, $, key).catch((error: unknown) => log($, 'picking a character', error));
+  });
+}
+
+/** A character picked: switches and remembers the choice (the store's `character`); the new one greets, the pane stays open on it. */
 async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void> {
   const b = st.b;
   const menu = st.menu;
@@ -1900,6 +1980,7 @@ async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void
   lg($, 'info', 'personality.pick', { id: c.id, kind: item.pick.kind, saved: !note });
   if (note) speak(b, `${c.name} is here${note}`, 'oops', ERROR_MS);
   menu.current = item.key;
+  loadMemory(st, $);
   startClock(st, $);
   st.lastKey = '';
   $.ui.invalidate('ui.render');
@@ -1923,10 +2004,8 @@ function drawerView(st: State, feed: readonly FeedEntry[], cols: number, rows: n
     sprite: frameAt(b.character, pose, st.drawer.frame),
     status,
     engine: `${st.options.model} · ${st.options.effort}`,
-    pets: b.pets,
     turnsRemembered: st.options.chatTurnsToRead,
-    tab: st.drawer.tab,
-    menu: st.drawer.tab === 'personality' ? st.menu : null,
+    memoryPath: st.chatTurnsToRead?.hasText ? st.chatTurnsToRead.textPath : null,
     cols,
     rows,
   };
@@ -1966,7 +2045,7 @@ function askBox(st: State, $: EngineInterface): { draft: string; setDraft: (text
 /** The drawer's window over its thread moved to the newest, once it is drawn. */
 function scrollDrawerToEnd(st: State, $: EngineInterface): void {
   const id = st.drawer.bandId;
-  if (!id || st.drawer.tab !== 'talk') return;
+  if (!id) return;
   $.clock.after(0, () => {
     $.ui.scroll({ to: 'end', in: id }).catch((error: unknown) => log($, 'scrolling the drawer to its newest', error));
   });
@@ -1987,8 +2066,7 @@ function toggleDrawer(st: State, $: EngineInterface): { text: string } {
   } else {
     d.timer?.cancel();
     d.timer = null;
-    d.tab = 'talk';
-    st.menu = null;
+    closePicker(st, $);
   }
   lg($, 'info', d.open ? 'drawer.open' : 'drawer.close', {});
   $.ui.invalidate('ui.render');
@@ -2008,16 +2086,7 @@ async function drawDrawerBand(st: State, $: EngineInterface, e: { surface: strin
     use: (text) => useSuggestion($, text),
     ...askBox(st, $),
     close: () => toggleDrawer(st, $),
-    pet: () => {
-      runCommand(st, $, '', false, true).catch((error: unknown) => log($, 'petting from the drawer', error));
-    },
-    tab: () => {
-      if (st.drawer.tab === 'talk') openPersonality(st, $).catch((error: unknown) => log($, 'opening the personality tab', error));
-      else showTalk(st, $);
-    },
-    step: (by) => {
-      stepCharacter(st, $, by).catch((error: unknown) => log($, 'switching the character', error));
-    },
+    personality: () => openPicker(st, $),
   });
 }
 
@@ -2166,7 +2235,7 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
   refresh(st, $);
 }
 
-/** The prompt a /buddy question asked for, into the prompt box and the drawer as an idea ctrl+x u uses; one too long to take is said, never dropped quietly. Never throws. */
+/** The prompt a /buddy question asked for, into the prompt box and the drawer as a suggested prompt ctrl+x u uses; one too long to take is said, never dropped quietly. Never throws. */
 async function putAskedPrompt(st: State, $: EngineInterface, c: Character, asked: { prompt: string | null; tooLong: boolean }): Promise<void> {
   try {
     if (asked.tooLong) {
@@ -2177,7 +2246,7 @@ async function putAskedPrompt(st: State, $: EngineInterface, c: Character, asked
     }
     if (asked.prompt === null) return;
     feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: asked.prompt, ...voice(c) });
-    // A turn running now owns the prompt box: the idea waits in the drawer for ctrl+x u.
+    // A turn running now owns the prompt box: the suggested prompt waits in the drawer for ctrl+x u.
     if (st.mainTurn !== undefined) {
       lg($, 'info', 'ask.prompt.outcome', { outcome: 'turn-running', length: asked.prompt.length });
       return;
@@ -2192,10 +2261,10 @@ async function putAskedPrompt(st: State, $: EngineInterface, c: Character, asked
 }
 
 /** /buddy with `args`; `asQuestion` (the drawer's ask box) takes them as a question whatever they say, `off` or `help` too. */
-async function runCommand(st: State, $: EngineInterface, args: string, asQuestion = false, petting = false): Promise<{ text: string }> {
+async function runCommand(st: State, $: EngineInterface, args: string, asQuestion = false): Promise<{ text: string }> {
   const b = st.b;
   if (!b) return { text: 'buddy is still starting; try again in a moment' };
-  const action: Action = asQuestion ? { kind: 'question', text: args.trim() } : petting ? { kind: 'pet' } : parseCommand(args);
+  const action: Action = asQuestion ? { kind: 'question', text: args.trim() } : parseCommand(args);
   lg($, 'info', 'command', { name: COMMAND, kind: action.kind, argsLength: args.trim().length });
   // This call took the one question slot: a failure before its ask ends frees it and ends the thinking line.
   let began = false;
@@ -2203,20 +2272,6 @@ async function runCommand(st: State, $: EngineInterface, args: string, asQuestio
     switch (action.kind) {
       case 'drawer':
         return toggleDrawer(st, $);
-      case 'pet': {
-        // Another session sharing the store may have petted it since: its count is the floor.
-        try {
-          const stored = await $.store.get('pets');
-          if (typeof stored === 'number' && Number.isFinite(stored) && stored > b.pets) b.pets = stored;
-        } catch (error) {
-          log($, 'reading the pet count back', error);
-        }
-        pet(b, Math.random);
-        st.pets = b.pets;
-        const note = await save($, 'pets', b.pets);
-        refresh(st, $);
-        return { text: `${b.character.name}: ${b.pets} pets${note}` };
-      }
       case 'off': {
         const line = farewell(b, Math.random);
         heard(st, $);
@@ -2243,6 +2298,7 @@ async function runCommand(st: State, $: EngineInterface, args: string, asQuestio
       case 'reload': {
         await loadRoster(st, $);
         applyChoice(st, $);
+        if (st.interactive) loadMemory(st, $);
         startClock(st, $);
         refresh(st, $);
         const bad = st.roster.entries.filter((e) => !e.character).length;
@@ -2251,7 +2307,7 @@ async function runCommand(st: State, $: EngineInterface, args: string, asQuestio
       case 'help':
         return { text: [USAGE, ...st.options.errors].join('\n') };
       case 'moved':
-        return { text: `Switching characters moved to the drawer's personality tab: /${COMMAND} opens it.` };
+        return { text: `Switching characters moved to the personality picker: ctrl+x t in /${COMMAND}.` };
       case 'log': {
         if (!L.file) return { text: 'No log file: the option logFile is empty (failures still go to the debug log).' };
         try {
@@ -2315,8 +2371,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     shippedError: undefined,
     customCharactersDirError: undefined,
     menu: null,
+    originals: null,
     hidden: false,
-    pets: 0,
     timer: null,
     clockPeriod: 0,
     lastKey: '',
@@ -2362,7 +2418,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     roundsFailed: false,
     calls: 0,
     feedChain: Promise.resolve(),
-    drawer: { open: false, tab: 'talk', timer: null, frame: 0, draft: '', bandId: '' },
+    lastInFeed: null,
+    drawer: { open: false, timer: null, frame: 0, draft: '', bandId: '' },
   };
   // Every log record, at any level, joins the round being written; the drawing's per-second records and a round write's own failure do not.
   tapped = st;
@@ -2385,6 +2442,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     try {
       if (st.hidden && Date.now() - st.sharedAt >= SHARED_MS) syncHidden(st, $);
+      await readLastInFeed(st, $);
       const scene = bandScene(st, $, e.props);
       // The drawer takes the band's place, hidden buddy or not; a survey still wins.
       if (st.drawer.open && !e.props.hasSurvey) {
@@ -2398,6 +2456,27 @@ export const register: Register = (on: On, options: PluginOptions) => {
       log($, 'drawing the band', error);
       return next(e);
     }
+  });
+
+  // The personality pane ctrl+x t opens; another plugin's pane passes.
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
+    if (e.requestId !== PICKER) return next(e);
+    try {
+      return drawPickerPane(st, $, e);
+    } catch (error) {
+      log($, 'drawing the personality pane', error);
+      return next(e);
+    }
+  });
+
+  // ↑ and ↓ in the pane move the engine's ring without drawing it again: the row it lands on is lit, the preview following.
+  on('ui.focus', { component: 'Pane', requestId: PICKER }, async ($, e, next) => {
+    try {
+      if (e.element) lightRow(st, $, e.element);
+    } catch (error) {
+      log($, "following the personality pane's ring", error);
+    }
+    return next(e);
   });
 
   // A main-loop shell command's own edits are measured: the files it names, read before it runs and after.

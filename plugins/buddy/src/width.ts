@@ -60,8 +60,8 @@ const AMBIGUOUS: readonly number[] = [
   0x1f130, 0x1f169, 0x1f170, 0x1f18d, 0x1f18f, 0x1f190, 0x1f19b, 0x1f1ac, 0xf0000, 0x10fffd
 ];
 /**
- * Neutral in Unicode, counted as ambiguous anyway: ░ sits in the card's stat
- * bar beside █, and ◉ and ✦ are hatch eyes beside × · °; each set keeps one
+ * Neutral in Unicode, counted as ambiguous anyway: ░ sits in the picker's
+ * preview's stat bar beside █, and ◉ and ✦ are hatch eyes beside × · °; each set keeps one
  * width, so a bar or a sprite row never changes width with its value or roll.
  */
 const AMBIGUOUS_TOO: ReadonlySet<number> = new Set([0x2591, 0x25c9, 0x2726]);

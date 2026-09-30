@@ -11,7 +11,7 @@ export function raw(overrides: Record<string, unknown> = {}): Record<string, unk
       walkRight: [['(o)>', '/|\\'], ['(o)>', '/ \\']],
       yay: [['\\o/']],
     },
-    lines: { greeting: ['Hi from Fixy.'], petted: ['Purr.', 'Again!'] },
+    lines: { greeting: ['Hi from Fixy.'] },
     ...overrides,
   };
 }

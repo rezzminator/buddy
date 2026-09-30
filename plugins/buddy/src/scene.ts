@@ -31,7 +31,7 @@ export type Scene = {
   bubble: { text: string; width: number; side: 'left' | 'right'; tone?: Tone; to?: Addressee } | null;
   /** Rows drawn above the sprite: a bubble with no room beside him (its words, full width), then confetti or the sleep drift. */
   effects: Seg[][];
-  /** The hover card, placed against the sprite's Box. */
+  /** The hover card, placed against the sprite's Box: the name, then the buddy's last message to the user wrapped to `width` less CARD_FRAME_COLS and cut with `…` to the band's rows. */
   card: { lines: string[]; left: number; width: number } | null;
 };
 
@@ -50,7 +50,8 @@ export type SceneInput = {
   confetti: { seed: number; tick: number } | null;
   sleeping: boolean;
   zTick: number;
-  stats: { pets: number; questions: number };
+  /** The buddy's last message to the user, for the hover card; none yet when null or absent. */
+  lastMessage?: string | null;
   /** The brain's clock in ms: a shiny sprite's color cycles with it. */
   now?: number;
   /** The terminal draws East Asian Ambiguous characters (★ █ × ·) two cells wide; default one. */
@@ -60,7 +61,14 @@ export type SceneInput = {
 export const MIN_BUBBLE_COLS = 40;
 export const MAX_BUBBLE_WIDTH = 60;
 export const MIN_EFFECT_COLS = 40;
-const CARD_MAX_WIDTH = 44;
+const CARD_MAX_WIDTH = 72;
+/** The narrowest card worth drawing on a side; below it, the other side, else none. */
+const CARD_MIN_WIDTH = 20;
+/** The card Box's frame in drawBand (`borderStyle="round" paddingX={1}`): border and padding columns, border rows. */
+const CARD_FRAME_COLS = 4;
+const CARD_FRAME_ROWS = 2;
+/** The card's message before the buddy has said anything to the user. */
+export const NOTHING_SAID = 'Nothing said to you yet.';
 /** The bubble Box's frame in drawBand (`borderStyle="round" paddingX={1}`): border and padding columns, border rows. */
 export const BUBBLE_FRAME_COLS = 4;
 export const BUBBLE_FRAME_ROWS = 2;
@@ -71,19 +79,6 @@ export const SHINY_STEP_MS = 200;
 export function spriteColor(c: Character, now: number): string {
   return c.shiny ? RAINBOW[Math.floor(now / SHINY_STEP_MS) % RAINBOW.length]! : c.color;
 }
-
-export const MOODS: Record<Pose, string> = {
-  idle: 'curious',
-  walkRight: 'strolling',
-  walkLeft: 'strolling',
-  rest: 'resting',
-  oops: 'flustered',
-  yay: 'delighted',
-  thinking: 'pondering',
-  petted: 'happy',
-  working: 'reading along',
-  sleep: 'asleep',
-};
 
 export function bubbleWidth(cols: number, width: number): number {
   return Math.min(MAX_BUBBLE_WIDTH, cols - width - 4);
@@ -175,13 +170,19 @@ export function buildScene(i: SceneInput): Scene | null {
     effects.push(toSegs([{ col, text, color: 'gray' }]));
   }
 
-  const lines = [c.name, c.card?.subtitle ?? c.description, `pets ${i.stats.pets} | questions ${i.stats.questions} | ${MOODS[i.pose]}`, ...(c.card?.rows ?? [])];
-  const cw = Math.min(CARD_MAX_WIDTH, Math.max(...lines.map((l) => cellWidth(l, o))) + 4);
-  const fitsRight = x + sw + 1 + cw <= i.cols;
-  const fitsLeft = x - cw - 1 >= 0;
-  const preferLeft = bubble?.side === 'right';
-  const left = preferLeft ? (fitsLeft ? -(cw + 1) : fitsRight ? sw + 1 : null) : fitsRight ? sw + 1 : fitsLeft ? -(cw + 1) : null;
-  const card = left === null ? null : { lines, left, width: cw };
+  // The card, away from the bubble when that side has room: as wide as its side leaves past a column's gap, at most CARD_MAX_WIDTH; its message cut to the rows the band draws below the sprite's top, less the frame and the name.
+  const roomRight = Math.min(CARD_MAX_WIDTH, i.cols - x - sw - 1);
+  const roomLeft = Math.min(CARD_MAX_WIDTH, x - 1);
+  const sides = bubble?.side === 'right' ? (['left', 'right'] as const) : (['right', 'left'] as const);
+  const side = sides.find((s) => (s === 'right' ? roomRight : roomLeft) >= CARD_MIN_WIDTH);
+  let card: Scene['card'] = null;
+  if (side) {
+    const room = side === 'right' ? roomRight : roomLeft;
+    const maxLines = Math.max(1, Math.max(c.height, bubbleRows) - CARD_FRAME_ROWS - 1);
+    const lines = [c.name, ...wrapCells(i.lastMessage ?? NOTHING_SAID, room - CARD_FRAME_COLS, { ...o, maxLines })];
+    const width = Math.min(room, Math.max(...lines.map((l) => cellWidth(l, o))) + CARD_FRAME_COLS);
+    card = { lines, left: side === 'right' ? sw + 1 : -(width + 1), width };
+  }
 
   return { color, rows: frameAt(c, i.pose, i.frame).map((row) => padEndCells(row, sw, o)), x, rowX, bubble, effects, card };
 }

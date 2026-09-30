@@ -1,13 +1,14 @@
 import { describe, expect, test } from 'vitest';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { CONFETTI_ROWS } from '../plugins/buddy/src/particles.ts';
-import { BUBBLE_FRAME_ROWS, BUBBLE_INK, MOODS, TONE_COLOR, bubbleWidth, buildScene, type Scene, type SceneInput } from '../plugins/buddy/src/scene.ts';
+import { BUBBLE_FRAME_ROWS, BUBBLE_INK, TONE_COLOR, bubbleWidth, buildScene, type Scene, type SceneInput } from '../plugins/buddy/src/scene.ts';
+import { cellWidth } from '../plugins/buddy/src/width.ts';
 import { raw } from './fixtures.ts';
 
 const v = validateCharacter(raw({ poses: { idle: [['(o)', '/|\\'], ['   ', '(o)']], walkRight: [['a'], ['b']] } }));
 if (!v.ok) throw new Error(v.error);
 const c: Character = v.character;
-const base: SceneInput = { character: c, pose: 'idle', frame: 0, x: 10, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0, stats: { pets: 2, questions: 1 } };
+const base: SceneInput = { character: c, pose: 'idle', frame: 0, x: 10, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0 };
 /** The effect rows as the text they draw. */
 const textOf = (s: Scene): string[] => s.effects.map((segs) => segs.map((g) => ' '.repeat(g.pad) + g.text).join(''));
 
@@ -103,13 +104,34 @@ describe('buildScene', () => {
     expect(b.effects[0]![0]!.text).toBe('Z z');
     expect(a.effects[0]![0]!.pad).not.toBe(b.effects[0]![0]!.pad);
   });
-  test('the hover card: name, description, pets, questions, mood; away from the bubble', () => {
+  test('the hover card: the name, then the last message to you, none yet said so; away from the bubble', () => {
     const s = buildScene(base)!;
-    expect(s.card?.lines).toEqual(['Fixy', 'A test fixture.', 'pets 2 | questions 1 | curious']);
+    expect(s.card?.lines).toEqual(['Fixy', 'Nothing said to you yet.']);
     expect(s.card?.left).toBe(c.width + 1);
+    expect(buildScene({ ...base, lastMessage: 'Forty-two.' })!.card).toMatchObject({ lines: ['Fixy', 'Forty-two.'], width: 'Forty-two.'.length + 4 });
     const withBubble = buildScene({ ...base, x: 40, bubble: 'hi' })!;
     expect(withBubble.card!.left).toBeLessThan(0);
-    expect(MOODS.sleep).toBe('asleep');
+  });
+  test('the hover card\'s message: wrapped to the room on its side, at most 72 wide, cut with … to the rows the band draws', () => {
+    const six = validateCharacter(raw({ poses: { idle: [['a', 'b', 'c', 'd', 'e', 'f']], walkRight: [['a'], ['b']] } }));
+    if (!six.ok) throw new Error(six.error);
+    const said = Array.from({ length: 40 }, (_, n) => `word${n}`).join(' ');
+    // Six rows from the sprite's top: the frame's two and the name leave three for the message.
+    const narrow = buildScene({ ...base, character: six.character, x: 0, cols: 30, lastMessage: said })!.card!;
+    expect(narrow.left).toBe(2);
+    expect(narrow.width).toBeLessThanOrEqual(30 - 1 - 1 - 1);
+    expect(narrow.lines).toHaveLength(4);
+    for (const line of narrow.lines) expect(cellWidth(line)).toBeLessThanOrEqual(narrow.width - 4);
+    expect(narrow.lines[1]).toMatch(/^word0 word1 /);
+    expect(narrow.lines[3]).toMatch(/…$/);
+    const wide = buildScene({ ...base, character: six.character, x: 0, cols: 200, lastMessage: said })!.card!;
+    // Wrapped to 72 less the frame, then as wide as its widest line.
+    expect(wide.width).toBeLessThanOrEqual(72);
+    expect(wide.width).toBeGreaterThan(72 - 'word39'.length);
+    // A bubble beside him, taller than the sprite, gives the card its rows too.
+    const tall = buildScene({ ...base, x: 0, cols: 100, maxRows: 12, bubble: said.repeat(3), lastMessage: said.repeat(3) })!;
+    const rows = tall.bubble!.text.split('\n').length + BUBBLE_FRAME_ROWS;
+    expect(tall.card!.lines).toHaveLength(rows - 2);
   });
 });
 

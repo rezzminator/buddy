@@ -35,7 +35,6 @@ const FILES: Record<string, string> = {
   'duck.json': fixture('duck', 'Duck Fixture', 'd_d', { greeting: ['Duck fixture here.'] }),
   'fixy.json': fixture('fixy', 'Fixy', 'f_f', {
     greeting: ['Fixy says hi.'],
-    petted: ['Fixy purrs.'],
     toolFail: ['Fixy: oh no.'],
     testPass: ['Fixy: green!'],
     testFail: ['Fixy: red!'],
@@ -48,8 +47,8 @@ const FILES: Record<string, string> = {
 
 /** `delayMs`: this answer alone comes that long later; `error`: the completion rejects with it instead. */
 type Answer = { isAnswered: boolean; text?: string; reason?: string; status?: number | null; usage?: object; delayMs?: number; error?: string };
-/** Files by absolute path (with their mtimes), whether listing the home folder is refused, whether writes of memory.json are refused (the first that many only), character files shipped beside FILES. */
-type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseMemory?: boolean; refuseMemoryTimes?: number; env?: Record<string, string>; builtins?: Record<string, string>; messages?: unknown[] | Error };
+/** Files by absolute path (with their mtimes), whether listing the home folder is refused, whether writes of memory.json are refused (the first that many only), whether writes of memory.md are, character files shipped beside FILES. */
+type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseMemory?: boolean; refuseMemoryTimes?: number; refuseMemoryText?: boolean; env?: Record<string, string>; builtins?: Record<string, string>; messages?: unknown[] | Error };
 
 const HOME = '/test-home';
 const SESSION = 'test-session';
@@ -120,6 +119,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     return { value: (disk.messages ?? []) as never };
   });
   on('fs.write', async (_$, e) => {
+    if (disk.refuseMemoryText && e.path.endsWith('/memory.md')) throw new Error('EACCES');
     if (e.path.endsWith('/memory.json')) {
       // refuseMemoryTimes: only the first that many writes are refused.
       if (disk.refuseMemory && (disk.refuseMemoryTimes === undefined || refused++ < disk.refuseMemoryTimes)) throw new Error(`EACCES: not allowed to write ${e.path}`);
@@ -238,12 +238,30 @@ async function band($: any, props: Partial<typeof BAND> = {}) {
   return $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'AbovePrompt', requestId: BAND_ID, props: { ...BAND, ...props } });
 }
 
-/** The band's instance: the drawer scrolls it, the personality tab's focus names it. */
+/** The band's instance: the drawer scrolls it. */
 const BAND_ID = 'band';
+
+/** The rows a drawn tree takes on the terminal: a Box its height when set, else its children stacked (a column) or side by side (a row, Ink's default) and its border's two; a Text, Button or Input one. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function rowsOf(el: any): number {
+  if (typeof el !== 'object' || el === null) return 0;
+  if (el.type !== 'Box') return 1;
+  const p = el.props ?? {};
+  if (typeof p.height === 'number') return p.height;
+  const kids: number[] = [el.children ?? []].flat(Infinity).map(rowsOf);
+  return (p.flexDirection === 'column' ? kids.reduce((a, b) => a + b, 0) : Math.max(0, ...kids)) + (p.borderStyle ? 2 : 0);
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function shows(ui: any, text: RegExp): Promise<boolean> {
   return (await ui.find({ type: 'Text', text })) !== undefined;
+}
+
+/** The bubble's Text showing `text`: the hover card, its lines cut at their end, shows the same words. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function bubbleText(ui: any, text: RegExp): Promise<any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (await ui.findAll({ type: 'Text', text })).find((t: any) => t.props.wrap !== 'truncate-end');
 }
 
 describe('the band', () => {
@@ -265,6 +283,31 @@ describe('the band', () => {
     await ui.unmount();
   });
 
+  test('hovering the band shows the last message to you: none before the first, then the answer, kept once its bubble is gone', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'Forty-two, friend.' } });
+    await $.session.start(START);
+    const ui = await band($);
+    // The greeting is a canned line: never the card's.
+    expect(await shows(ui, /^Nothing said to you yet\.$/)).toBe(true);
+    await $.command.run(run('what is it?'));
+    await w.clock.settle();
+    await w.clock.advance(20_000);
+    expect(await shows(ui, /^Forty-two, friend\.$/)).toBe(true);
+    expect(await shows(ui, /Nothing said to you yet/)).toBe(false);
+    await ui.unmount();
+  });
+
+  test('after a reload, the card says the last message to you the memory holds', async ($, on) => {
+    const said = { at: 1, blocks: [{ characters: { fixy: [{ kind: 'question', question: 'why?', answer: 'Because, friend.' }] } }] };
+    const w = world(on, { character: 'fixy' }, {}, { files: { [`${chatDir()}/memory.json`]: JSON.stringify(said) } });
+    await $.session.start(START);
+    const ui = await band($);
+    await w.clock.settle();
+    await w.clock.advance(1000);
+    expect(await shows(ui, /^Because, friend\.$/)).toBe(true);
+    await ui.unmount();
+  });
+
   test('an invalid choice draws the duck and says why, in the bubble and the log', async ($, on) => {
     const w = world(on, { character: 'broken' });
     await $.session.start(START);
@@ -282,16 +325,16 @@ describe('the band', () => {
     await $.session.start(START);
     const ui = await band($);
     // A long bubble wraps to its inner width: the same words, a line break where a space was.
-    expect(await shows(ui, /Couldn't[ \n]load[ \n]ghost:[ \n]no[ \n]such[ \n]character;[ \n]the[ \n]personality[ \n]tab[ \n]in[ \n]\/buddy[ \n]picks[ \n]another/)).toBe(true);
+    expect(await shows(ui, /Couldn't[ \n]load[ \n]ghost:[ \n]no[ \n]such[ \n]character;[ \n]ctrl\+x[ \n]t[ \n]in[ \n]\/buddy[ \n]picks[ \n]another/)).toBe(true);
     await ui.unmount();
   });
 
-  test('a character file taking the reserved id "original" is said in the first greeting, pointing at the personality tab', async ($, on) => {
+  test('a character file taking the reserved id "original" is said in the first greeting, pointing at the personality picker', async ($, on) => {
     const w = world(on, {}, {}, { builtins: { 'original.json': fixture('original', 'Impostor', 'i_i') } });
     await $.session.start(START);
     const ui = await band($);
     expect(await shows(ui, /\(d_d\)/)).toBe(true);
-    expect(await shows(ui, /^original\.json[ \n]\(builtin\):[ \n]"original"[ \n]is[ \n]reserved[ \n]for[ \n]your[ \n]original[ \n]companion;[ \n]rename[ \n]the[ \n]file[ \n]and[ \n]its[ \n]id;[ \n]the[ \n]personality[ \n]tab[ \n]in[ \n]\/buddy[ \n]lists[ \n]your[ \n]characters$/)).toBe(true);
+    expect(await shows(ui, /^original\.json[ \n]\(builtin\):[ \n]"original"[ \n]is[ \n]reserved[ \n]for[ \n]your[ \n]original[ \n]companion;[ \n]rename[ \n]the[ \n]file[ \n]and[ \n]its[ \n]id;[ \n]ctrl\+x[ \n]t[ \n]in[ \n]\/buddy[ \n]lists[ \n]your[ \n]characters$/)).toBe(true);
     expect(w.logs).toContain('buddy: original.json (builtin): "original" is reserved for your original companion; rename the file and its id');
     await ui.unmount();
   });
@@ -332,20 +375,6 @@ describe('/buddy', () => {
     const w = world(on);
     await $.session.start(START);
     expect(w.commands).toEqual(['buddy']);
-  });
-
-  test("ctrl+x p pets, counts and remembers", async ($, on) => {
-    const w = world(on, { character: 'fixy', pets: 4 });
-    await $.session.start(START);
-    const ui = await band($);
-    expect((await $.command.run(run(''))).text).toMatch(/^The drawer is open above your prompt/);
-    await ui.press({ key: 'key-pet' });
-    await w.clock.settle();
-    expect(w.saved.get('pets')).toBe(5);
-    expect(await shows(ui, /^♥ 5$/)).toBe(true);
-    await fold(ui, w);
-    expect(await shows(ui, /Fixy purrs\./)).toBe(true);
-    await ui.unmount();
   });
 
   test('off hides and persists; on shows again', async ($, on) => {
@@ -444,8 +473,7 @@ describe('/buddy', () => {
     const ui = await band($);
     await $.command.run(run('remember the word pineapple'));
     await w.clock.settle();
-    await personality($, w, ui);
-    await pick(ui, w, 'use:duck');
+    await pick($, await personality($, w, ui), w, 'use:duck');
     await w.clock.settle();
     await ui.unmount();
     const again = await band($);
@@ -482,16 +510,16 @@ describe('/buddy', () => {
     expect(w.completes[0]!.prompt).not.toContain('old shape');
   });
 
-  test("/buddy list and /buddy use {id}, from 0.1.0, point to the drawer's personality tab with no model call", async ($, on) => {
+  test("/buddy list and /buddy use {id}, from 0.1.0, point to the personality picker with no model call", async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
-    expect((await $.command.run(run('list'))).text).toBe("Switching characters moved to the drawer's personality tab: /buddy opens it.");
-    expect((await $.command.run(run('use cat'))).text).toBe("Switching characters moved to the drawer's personality tab: /buddy opens it.");
+    expect((await $.command.run(run('list'))).text).toBe("Switching characters moved to the personality picker: ctrl+x t in /buddy.");
+    expect((await $.command.run(run('use cat'))).text).toBe("Switching characters moved to the personality picker: ctrl+x t in /buddy.");
     await w.clock.settle();
     expect(w.completes).toEqual([]);
   });
 
-  test('a question asking for a prompt: the answer in the bubble, the prompt in the prompt box and the drawer as the idea ctrl+x u uses', async ($, on) => {
+  test('a question asking for a prompt: the answer in the bubble, the prompt in the prompt box and the drawer as the suggested prompt ctrl+x u uses', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'Quote every evicted turn verbatim.\nSUGGEST_NEXT_PROMPT: design the memory ledger extractive, quotes checked as substrings' } });
     await $.session.start(START);
     const ui = await band($);
@@ -687,7 +715,7 @@ describe('reactions', () => {
   });
 });
 
-// ---- the drawer's personality tab --------------------------------------------
+// ---- the personality pane -----------------------------------------------------
 
 // An invented account and companion: never a real ~/.claude.json.
 const UUID = '7e57ab1e-0000-4c0d-9e11-5eedf00dcafe';
@@ -723,23 +751,32 @@ function eyesOf(variant: 'native' | 'npm'): RegExp {
   return new RegExp(`<${e}${e}>`);
 }
 
-/** /buddy opens the drawer on `ui`, the band, and its personality tab is pressed and built. */
+/** The personality pane's id, and its props as the terminal draws it inline above the prompt, holding the keyboard (the composer empty). */
+const PICKER = 'personality';
+const PANE = { title: 'personality', isFocused: true, bodyColumns: 100, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 20 }, view: {} };
+
+/** /buddy opens the drawer on `ui`, the band; ctrl+x t opens the personality pane, drawn here with `props`, its list built. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function personality($: any, w: { clock: { settle: () => Promise<void> } }, ui: any): Promise<void> {
-  if (!(await ui.find({ key: 'key-tab' }))) await $.command.run(run(''));
-  await ui.press({ key: 'key-tab' });
+async function personality($: any, w: { clock: { settle: () => Promise<void> } }, ui: any, props: Partial<typeof PANE> = {}): Promise<any> {
+  if (!(await ui.find({ key: 'key-personality' }))) await $.command.run(run(''));
+  await ui.press({ key: 'key-personality' });
+  await w.clock.settle();
+  return $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'Pane', requestId: PICKER, props: { ...PANE, ...props } });
+}
+
+/** ↓ or ↑ in the focused pane: the ring moving onto `key`'s row, as the engine raises it. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function arrow($: any, w: { clock: { settle: () => Promise<void> } }, key: string): Promise<void> {
+  await $.ui.focus({ component: 'Pane', requestId: PICKER, plugin: 'buddy', element: key, origin: { kind: 'person' } });
   await w.clock.settle();
 }
 
-/** ctrl+x n until `key`'s row is lit: each step switches to the character it lands on, one that cannot be drawn only lit. */
+/** The ring onto `key`'s row, then Enter on it: a character that can be drawn is switched to, one that cannot only lit. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function pick(ui: any, w: { clock: { settle: () => Promise<void> } }, key: string): Promise<void> {
-  for (let i = 0; i < 40; i++) {
-    if (JSON.stringify((await ui.find({ key }))?.children ?? null).includes('"inverse":true')) return;
-    await ui.press({ key: 'key-next' });
-    await w.clock.settle();
-  }
-  throw new Error(`ctrl+x n never lit ${key}`);
+async function pick($: any, pane: any, w: { clock: { settle: () => Promise<void> } }, key: string): Promise<void> {
+  await arrow($, w, key);
+  await pane.press({ key });
+  await w.clock.settle();
 }
 
 /** The drawer's close button: the band draws the buddy and its bubble again. */
@@ -755,86 +792,102 @@ async function label(ui: any, key: string): Promise<unknown> {
   return found?.props.label ?? found?.text;
 }
 
-describe("the drawer's personality tab", () => {
-  test('the groups titled, the current one marked and previewed; no pane opens', async ($, on) => {
+describe('the personality pane', () => {
+  test('ctrl+x t opens it holding the keyboard, Esc closing it: the groups titled, each character a Button, the current one marked, ringed and previewed', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
-    const pane = await band($);
-    await personality($, w, pane);
-    expect(w.opens).toEqual([]);
+    const ui = await band($);
+    const pane = await personality($, w, ui);
+    // Shipped, its three characters, a gap, Yours and its line: taller than Fixy's preview.
+    expect(w.opens).toMatchObject([{ id: 'personality', title: 'personality', focus: true, closeOnEscape: true, rows: 7 }]);
     for (const title of [/^Shipped$/, /^Yours$/]) expect(await shows(pane, title)).toBe(true);
     expect(await shows(pane, /^customCharactersDir$/)).toBe(false);
-    expect(await label(pane, 'use:fixy')).toBe('* Fixy (fixy)');
-    expect(await label(pane, 'use:duck')).toBe('  Duck Fixture (duck)');
-    expect(await label(pane, 'use:broken')).toBe('  broken (invalid)');
+    const rows = (await pane.findAll({ type: 'Button' })) as { key: string; props: { label: string; autoFocus?: boolean } }[];
+    expect(rows.map((r) => [r.key, r.props.label, r.props.autoFocus === true])).toEqual([
+      ['use:broken', '  broken (invalid)', false],
+      ['use:duck', '  Duck Fixture (duck)', false],
+      ['use:fixy', '* Fixy (fixy)', true],
+    ]);
     expect(await shows(pane, /^Fixy$/)).toBe(true);
     expect(await shows(pane, /^Fixy, a test fixture\.$/)).toBe(true);
     expect(await shows(pane, /You are Fixy/)).toBe(false);
     expect(await shows(pane, /^“Fixy says hi\.”$/)).toBe(true);
     expect(await shows(pane, /^None yet: set customCharactersDir to a folder of your own character files\.$/)).toBe(true);
+    expect(await shows(pane, /clear your prompt/)).toBe(false);
     await pane.unmount();
+    await ui.unmount();
   });
 
-  test('ctrl+x n lights the next character and switches to it at once, the preview following; the tab stays open on it', async ($, on) => {
+  test('the ring moved onto another row lights it, the preview following; Enter on it switches, saved and greeted, the * moved and the pane still open; folding the drawer closes it', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
-    await personality($, w, ui);
-    await pick(ui, w, 'use:duck');
-    expect(await shows(ui, /^Duck Fixture$/)).toBe(true);
+    const pane = await personality($, w, ui);
+    await arrow($, w, 'use:duck');
+    expect(await shows(pane, /^Duck Fixture$/)).toBe(true);
+    expect(await shows(pane, /^Fixy$/)).toBe(false);
+    expect(w.saved.get('character')).toBe('fixy');
+    await pane.press({ key: 'use:duck' });
+    await w.clock.settle();
     expect(w.saved.get('character')).toBe('duck');
-    expect(await label(ui, 'use:duck')).toBe('* Duck Fixture (duck)');
-    expect(await label(ui, 'use:fixy')).toBe('  Fixy (fixy)');
+    expect(await label(pane, 'use:duck')).toBe('* Duck Fixture (duck)');
+    expect(await label(pane, 'use:fixy')).toBe('  Fixy (fixy)');
     expect(await shows(ui, /^D U C K {3}F I X T U R E$/)).toBe(true);
+    expect(w.closes).toEqual([]);
     await fold(ui, w);
+    expect(w.closes).toEqual(['personality']);
     expect(await shows(ui, /\(d_d\)/)).toBe(true);
     expect(await shows(ui, /Duck fixture here\./)).toBe(true);
     await ui.unmount();
   });
 
-  test('ctrl+x b goes back; a character that cannot be drawn is lit, its preview saying why, and never picked', async ($, on) => {
+  test('a character that cannot be drawn is lit, its preview saying why, and Enter never picks it', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
-    await personality($, w, ui);
-    await pick(ui, w, 'use:broken');
-    expect(await shows(ui, /^Can't draw it: persona: required$/)).toBe(true);
-    expect(w.saved.get('character')).not.toBe('broken');
-    expect(w.logs.filter((l) => /Can't pick/.test(l))).toEqual([]);
-    await pick(ui, w, 'use:fixy');
-    await ui.press({ key: 'key-back' });
-    await w.clock.settle();
-    const before = (await label(ui, 'use:fixy')) as string;
-    expect(before.startsWith('  ')).toBe(true);
-    await ui.press({ key: 'key-next' });
-    await w.clock.settle();
+    const pane = await personality($, w, ui);
+    await pick($, pane, w, 'use:broken');
+    expect(await shows(pane, /^Can't draw it: persona: required$/)).toBe(true);
     expect(w.saved.get('character')).toBe('fixy');
-    expect(await label(ui, 'use:fixy')).toBe('* Fixy (fixy)');
+    expect(await label(pane, 'use:fixy')).toBe('* Fixy (fixy)');
+    expect(w.logs.filter((l) => /Can't pick/.test(l))).toEqual([]);
     await ui.unmount();
   });
 
-  test('ctrl+x t goes back to the thread', async ($, on) => {
+  test('with text in the composer the pane does not hold the keyboard: its first row says how to reach it', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
-    await personality($, w, ui);
-    expect(await label(ui, 'use:fixy')).toBe('* Fixy (fixy)');
-    await ui.press({ key: 'key-tab' });
-    await w.clock.settle();
-    expect(await ui.find({ key: 'use:fixy' })).toBeUndefined();
-    expect(await shows(ui, /Nothing between you and Fixy yet/)).toBe(true);
+    const pane = await personality($, w, ui, { isFocused: false });
+    expect(await shows(pane, /^clear your prompt, then ctrl\+x t to choose with ↑ ↓ and Enter$/)).toBe(true);
+    const drawn = JSON.stringify(await pane.drawn());
+    expect(drawn.indexOf('clear your prompt')).toBeLessThan(drawn.indexOf('Shipped'));
     await ui.unmount();
   });
 
-  test('a companion in ~/.claude.json: two Yours entries; ctrl+x n onto one draws it, saves soul and roll, and its preview animates with its card', async ($, on) => {
+  test('a list taller than the pane: a window round the lit row, the rows before and after it drawn, the rest counted', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
+    await $.session.start(START);
+    const ui = await band($);
+    const pane = await personality($, w, ui, { scroll: { offset: 0, bodyRows: 5 } });
+    expect(await pane.find({ key: 'use:duck' })).toBeDefined();
+    expect(await pane.find({ key: 'use:broken' })).toBeUndefined();
+    expect(await shows(pane, /^↑ 2 more$/)).toBe(true);
+    expect(await shows(pane, /^↓ 2 more$/)).toBe(true);
+    // The ring onto duck: broken, the row above it, is drawn for the ring to move onto next.
+    await arrow($, w, 'use:duck');
+    expect(await pane.find({ key: 'use:broken' })).toBeDefined();
+    await ui.unmount();
+  });
+
+  test('a companion in ~/.claude.json: two Yours entries; Enter on one draws it, saves soul and roll, and its preview animates with its card', async ($, on) => {
     const w = world(on, {}, {}, { files: { [CONFIG]: config(MOCHI) } });
     await $.session.start(START);
     const ui = await band($);
-    await personality($, w, ui);
-    const pane = ui;
+    const pane = await personality($, w, ui);
     expect(await label(pane, 'original:native')).toBe('  Mochi — native install');
     expect(await label(pane, 'original:npm')).toBe('  Mochi — npm install');
-    await pick(pane, w, 'original:npm');
+    await pick($, pane, w, 'original:npm');
     expect(await shows(pane, /^Mochi$/)).toBe(true);
     expect(await shows(pane, eyesOf('npm'))).toBe(true);
     expect(await shows(pane, /^hatched 2026-04-01$/)).toBe(true);
@@ -891,8 +944,7 @@ describe("the drawer's personality tab", () => {
     const mtimes = { [`${HOME}/.claude.json.bak-20260401`]: 1, [`${HOME}/.claude/backups/.claude.json.backup.1775`]: 4, [`${HOME}/.claude.json.lock`]: 5 };
     const w = world(on, {}, {}, { files, mtimes });
     await $.session.start(START);
-    const pane = await band($);
-    await personality($, w, pane);
+    const pane = await personality($, w, await band($));
     expect(await label(pane, 'original:native')).toBe('  Newest — native install');
     expect(await shows(pane, /^From the backup ~\/\.claude\/backups\/\.claude\.json\.backup\.1775\.$/)).toBe(true);
   });
@@ -900,8 +952,7 @@ describe("the drawer's personality tab", () => {
   test('an unreadable ~/.claude.json is a plain line in Yours', async ($, on) => {
     const w = world(on);
     await $.session.start(START);
-    const pane = await band($);
-    await personality($, w, pane);
+    const pane = await personality($, w, await band($));
     expect(await shows(pane, /^couldn't read ~\/\.claude\.json: \S/)).toBe(true);
     expect(await pane.find({ key: 'original:native' })).toBeUndefined();
   });
@@ -909,8 +960,7 @@ describe("the drawer's personality tab", () => {
   test('an invalid ~/.claude.json is a plain line in Yours, never its contents', async ($, on) => {
     const w = world(on, {}, {}, { files: { [CONFIG]: '{"secretToken": oops' } });
     await $.session.start(START);
-    const pane = await band($);
-    await personality($, w, pane);
+    const pane = await personality($, w, await band($));
     expect(await shows(pane, /^couldn't parse ~\/\.claude\.json: not valid JSON \(SyntaxError\)$/)).toBe(true);
     expect(w.logs.join('\n')).not.toContain('secretToken');
   });
@@ -918,8 +968,7 @@ describe("the drawer's personality tab", () => {
   test('no companion anywhere takes no line: Yours holds only your own characters, or says how to add some', async ($, on) => {
     const w = world(on, {}, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);
-    const pane = await band($);
-    await personality($, w, pane);
+    const pane = await personality($, w, await band($));
     expect(await shows(pane, /No companion/)).toBe(false);
     expect(await shows(pane, /^None yet: set customCharactersDir to a folder of your own character files\.$/)).toBe(true);
   });
@@ -945,8 +994,7 @@ describe('core fixes', () => {
     await $.session.start(START);
     const ui = await band($);
     await $.command.run(run('what is up'));
-    await personality($, w, ui);
-    await pick(ui, w, 'use:duck');
+    await pick($, await personality($, w, ui), w, 'use:duck');
     await w.clock.settle();
     await fold(ui, w);
     await w.clock.advance(5000);
@@ -957,16 +1005,10 @@ describe('core fixes', () => {
     await ui.unmount();
   });
 
-  test('two sessions on one store: a pet counts on from the other one\'s count, and /buddy off there hides the band here', async ($, on) => {
-    const w = world(on, { character: 'fixy', pets: 3 });
+  test('two sessions on one store: /buddy off there hides the band here', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($);
-    w.saved.set('pets', 10);
-    await $.command.run(run(''));
-    await ui.press({ key: 'key-pet' });
-    await w.clock.settle();
-    expect(w.saved.get('pets')).toBe(11);
-    await fold(ui, w);
     expect(await shows(ui, /f_f/)).toBe(true);
     w.saved.set('hidden', true);
     await w.clock.advance(20_000);
@@ -979,8 +1021,7 @@ describe('core fixes', () => {
     const ccd = '/test-ccd';
     const w = world(on, { character: 'fixy' }, {}, { files: { [`${ccd}/.claude.json`]: config(MOCHI) }, env: { CLAUDE_CONFIG_DIR: ccd } });
     await $.session.start(START);
-    const pane = await band($);
-    await personality($, w, pane);
+    const pane = await personality($, w, await band($));
     expect({ native: await label(pane, 'original:native'), logs: w.logs }).toMatchObject({ native: expect.any(String) });
     expect(await label(pane, 'original:npm')).toBeDefined();
     await pane.unmount();
@@ -1267,11 +1308,11 @@ describe('hook paths', () => {
     expect(reads()).toBe(off);
     await $.command.run(run('on'));
     const ui = await band($);
-    await personality($, w, ui);
-    await pick(ui, w, 'use:duck');
+    await pick($, await personality($, w, ui), w, 'use:duck');
     await fold(ui, w);
     const drawn = JSON.stringify(await ui.drawn());
-    expect(drawn).not.toContain('tab-personality');
+    expect(drawn).not.toContain('"guide"');
+    expect(await shows(ui, /\(d_d\)/)).toBe(true);
     await ui.unmount();
   });
 });
@@ -1569,7 +1610,7 @@ describe('the second brain: one call, the character and the suggestion combined'
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Pushed.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    const scream = await ui.find({ type: 'Text', text: /YOU ARE FORCE-PUSHING MAIN!/ });
+    const scream = await bubbleText(ui, /YOU ARE FORCE-PUSHING MAIN!/);
     expect(scream?.props.color).toBe('blue');
     expect(scream?.props.bold).toBe(true);
     expect((await ui.find({ type: 'Box', key: 'bubble' }))?.props.borderColor).toBe('red');
@@ -1592,7 +1633,7 @@ describe('the second brain: one call, the character and the suggestion combined'
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect((await ui.find({ type: 'Text', text: /called it done without running the suite/ }))?.props.color).toBe('blue');
+    expect((await bubbleText(ui, /called it done without running the suite/))?.props.color).toBe('blue');
     expect((await ui.find({ type: 'Box', key: 'bubble' }))?.props.borderColor).toBe('yellow');
     expect(await shows(ui, /Fixy likes that\./)).toBe(false);
     expect(w.suggested).toEqual(['run the full suite before we call it done']);
@@ -1636,7 +1677,7 @@ describe('the second brain: one call, the character and the suggestion combined'
 });
 
 describe("the buddy's own notes", () => {
-  test('the reply\'s MEMORY lines are its notes: kept in the chat\'s memory.json, said in the drawer when they change, leading every later call; a reply without them keeps them, NONE forgets them', async ($, on) => {
+  test('the reply\'s MEMORY lines are its notes: kept in the chat\'s memory.json and readable in memory.md beside it, rewritten for whichever character is drawn, leading every later call; a reply without them keeps them, NONE forgets them', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [
       { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nMEMORY: Wants main safe.\nMEMORY: Tests before tags.' },
       { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Again.\nMEMORY: Wants main safe.\nMEMORY: Tests before tags.' },
@@ -1664,17 +1705,21 @@ describe("the buddy's own notes", () => {
     await w.clock.settle();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((memory(w) as any).notes).toEqual({ fixy: ['Wants main safe.', 'Tests before tags.'] });
-    await $.command.run(run(''));
-    await w.clock.settle();
-    expect(await shows(ui, /Fixy's notes/)).toBe(true);
-    expect(await shows(ui, /^• Tests before tags\.$/)).toBe(true);
-    await fold(ui, w);
+    // memory.md beside memory.json: the same text Fixy reads before every reply, for you to read.
+    const md = () => w.files[`${chatDir()}/memory.md`] ?? '';
+    expect(md().startsWith('# What Fixy remembers\n')).toBe(true);
+    expect(md()).toContain('Your own notes on this chat, which you keep and rewrite yourself:\n- Wants main safe.\n- Tests before tags.\n');
     await prompt($, 'four', 't4');
     await $.turn.complete({ reason: 'answer', answer: 'Four.', isAborted: false, turnId: 't4' } as never);
     await w.clock.settle();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((memory(w) as any).notes).toEqual({ fixy: [] });
     expect(records(w).filter((r) => r.event === 'notes.outcome').map((r) => r.outcome)).toEqual(['rewritten', 'unchanged', 'cleared']);
+    expect(md()).toContain('Claude answered:\nFour.');
+    expect(md()).not.toContain('Tests before tags.');
+    // Notes are each character's own: another drawn, memory.md is rewritten as it remembers.
+    await pick($, await personality($, w, ui), w, 'use:duck');
+    expect(md().startsWith('# What Duck Fixture remembers\n')).toBe(true);
     await ui.unmount();
   });
 });
@@ -1706,8 +1751,7 @@ describe('the end-of-turn call, turn by turn', () => {
     await $.session.start(START);
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
-    await personality($, w, ui);
-    await pick(ui, w, 'use:duck');
+    await pick($, await personality($, w, ui), w, 'use:duck');
     await w.clock.settle();
     await fold(ui, w);
     await w.clock.advance(5_000);
@@ -2032,8 +2076,12 @@ describe('the re-audit fixes', () => {
 });
 
 describe('the round-3 audit fixes', () => {
+  /** Fixy with two greetings: /buddy on says the one it did not say last, a canned line the memory has not got yet. */
+  const TWO_GREETINGS = { builtins: { 'fixy.json': fixture('fixy', 'Fixy', 'f_f', { greeting: ['Fixy says hi.', 'Fixy says hello.'] }) } };
+  const greetings = (w: { files: Record<string, string> }): string[] => ring(w, 'fixy').filter((x: { kind: string }) => x.kind === 'line').map((x: { text: string }) => x.text).sort();
+
   test('a write queued behind a hung read is never said failed while it waits, and lands once the read is abandoned', { timeoutMs: 20_000 }, async ($, on) => {
-    const w = world(on, { character: 'fixy' });
+    const w = world(on, { character: 'fixy' }, {}, TWO_GREETINGS);
     await $.session.start(START);
     const ui = await band($);
     await w.clock.settle();
@@ -2041,14 +2089,14 @@ describe('the round-3 audit fixes', () => {
     void $.command.run(run('what is up'));
     await w.clock.settle();
     w.slow.sessionIdMs = 0;
-    await $.command.run(run(''));
-    await ui.press({ key: 'key-pet' });
+    await $.command.run(run('off'));
+    await $.command.run(run('on'));
     await w.clock.advance(61_000);
     await w.clock.settle();
     expect(w.logs.filter((l) => /remembering the line failed/.test(l))).toEqual([]);
     await w.clock.advance(60_000);
     await w.clock.settle();
-    expect(ring(w, 'fixy')).toContainEqual({ kind: 'line', text: 'Fixy purrs.' });
+    expect(greetings(w)).toEqual(['Fixy says hello.', 'Fixy says hi.']);
     expect(w.logs.filter((l) => /remembering the line failed/.test(l))).toEqual([]);
     await ui.unmount();
   });
@@ -2074,20 +2122,20 @@ describe('the round-3 audit fixes', () => {
   });
 
   test('a chatTurnsToRead write abandoned at its deadline and landing late never overwrites a later one', { timeoutMs: 20_000 }, async ($, on) => {
-    const w = world(on, { character: 'fixy' });
+    const w = world(on, { character: 'fixy' }, {}, TWO_GREETINGS);
     await $.session.start(START);
     const ui = await band($);
     await w.clock.settle();
     w.slow.chatTurnsToReadSetMs = 70_000;
-    await $.command.run(run(''));
-    await ui.press({ key: 'key-pet' });
+    await $.command.run(run('off'));
+    await $.command.run(run('on'));
     await w.clock.advance(61_000);
     await w.clock.settle();
     w.slow.chatTurnsToReadSetMs = 0;
     await $.command.run(run('what is up'));
     await w.clock.advance(25_000);
     await w.clock.settle();
-    expect(ring(w, 'fixy')).toContainEqual({ kind: 'line', text: 'Fixy purrs.' });
+    expect(greetings(w)).toEqual(['Fixy says hello.', 'Fixy says hi.']);
     expect(ring(w, 'fixy')).toContainEqual(expect.objectContaining({ kind: 'question', question: 'what is up' }));
     await ui.unmount();
   });
@@ -2232,32 +2280,29 @@ describe('the drawer', () => {
     await w.clock.settle();
     const buttons = (await ui.findAll({ type: 'Button' })) as { key: string; props: { label: string; action?: string } }[];
     expect(buttons.map((b) => [b.key, b.props.label, b.props.action])).toEqual([
-      ['key-tab', 'talk/personality', 'pane:next'],
-      ['key-use', 'use the idea', 'pane:previous'],
-      ['key-next', 'next character', 'diff:back'],
-      ['key-back', 'previous character', 'app:cycleDiffBase'],
-      ['key-pet', 'pet', 'permission:toggleDebug'],
+      ['key-personality', 'personality', 'pane:next'],
+      ['key-use', 'use suggested prompt', 'pane:previous'],
       ['close', 'close', 'confirm:previousField'],
     ]);
     // Borrowed, never taken: each action one Claude Code handles only in a panel or dialog, each chord none it binds at the prompt.
-    const panelOnly = ['pane:next', 'pane:previous', 'diff:back', 'app:cycleDiffBase', 'permission:toggleDebug', 'confirm:previousField'];
+    const panelOnly = ['pane:next', 'pane:previous', 'confirm:previousField'];
     const itsCtrlX = ['ctrl+x ctrl+k', 'ctrl+x enter', 'ctrl+x ctrl+s', 'ctrl+x ctrl+e', 'ctrl+x ctrl+b', 'ctrl+x ctrl+a', 'ctrl+x tab', 'ctrl+x x', 'ctrl+x left', 'ctrl+x up', 'ctrl+x right', 'ctrl+x down'];
     for (const k of SHORTCUTS) {
       expect(panelOnly).toContain(k.action);
       expect(itsCtrlX).not.toContain(k.chord);
     }
-    // The bar under the body: the tabs and the guide at its left, the ask box last, at its right.
+    // The bar under the body: its numbers and the guide at its left, the ask box last, at its right.
     const drawn = JSON.stringify(await ui.drawn());
     expect(drawn.indexOf('"bar"')).toBeGreaterThan(drawn.indexOf('"body"'));
     expect(drawn.indexOf('"guide"')).toBeGreaterThan(drawn.indexOf('"bar"'));
     expect(drawn.indexOf('ask-input')).toBeGreaterThan(drawn.lastIndexOf('"close"'));
     // Each shortcut its whole chord: none leans on a ctrl+x said once.
-    expect((await ui.find({ key: 'guide' }))?.text).toMatch(/^ctrl\+x tab ask\s*ctrl\+x t talk\/personality\s*ctrl\+x u use the idea\s*ctrl\+x n next character/);
+    expect((await ui.find({ key: 'guide' }))?.text).toMatch(/^ctrl\+x tab ask\s*ctrl\+x t personality\s*ctrl\+x u use suggested prompt\s*ctrl\+x q close$/);
     expect(await shows(ui, /←|↑↓|Enter presses/)).toBe(false);
     await ui.unmount();
   });
 
-  test('/buddy alone opens the band above the prompt into the drawer, full width: the thread, the idea with use, the ask box; again folds it back into the buddy', async ($, on) => {
+  test('/buddy alone opens the band above the prompt into the drawer, full width: the thread, the suggested prompt with use, the ask box; again folds it back into the buddy', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: run the tests' }, { isAnswered: true, text: 'Because it passed.' }] });
     const filled: string[] = [];
     on('prompt.fill', async (_$, e) => {
@@ -2292,7 +2337,37 @@ describe('the drawer', () => {
     await ui.unmount();
   });
 
-  test('it fits the rows the band has: the thread its newest messages, saying how many older; the personality list round the lit character', async ($, on) => {
+  test('it fills the rows the band has, a short thread too, its last row saying where memory.md is once it is written', async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 140, maxRows: 20 });
+    await $.command.run(run(''));
+    await w.clock.settle();
+    // The greeting alone is remembered: memory.json and memory.md are written.
+    expect(rowsOf(await ui.drawn())).toBe(20);
+    expect(await shows(ui, new RegExp(`^memory {2}${chatDir()}/memory\\.md$`))).toBe(true);
+    await prompt($, 'one', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'One.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(rowsOf(await ui.drawn())).toBe(20);
+    await ui.unmount();
+  });
+
+  test('before memory.md is written, its row says who writes it and when; a refused write is said, memory.json kept', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 140, maxRows: 20 });
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(rowsOf(await ui.drawn())).toBe(20);
+    expect(await shows(ui, /^memory {2}not written yet: Fixy writes it at its first turn$/)).toBe(true);
+    // A thrown answer reaches the plugin as the kit's own rejection: its words are the kit's.
+    expect(w.logs.some((l) => l.startsWith('buddy: writing memory.md failed: '))).toBe(true);
+    expect(memory(w)).toBeDefined();
+    await ui.unmount();
+  });
+
+  test('it fits the rows the band has: the thread its newest messages, saying how many older', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($, { bodyColumns: 140, maxRows: 12 });
@@ -2308,14 +2383,9 @@ describe('the drawer', () => {
     expect(drawn).toContain('do lima');
     expect(drawn).not.toContain('do alpha');
     expect(await shows(ui, /^↑ \d+ older messages$/)).toBe(true);
+    expect(rowsOf(await ui.drawn())).toBe(12);
     // The guide wraps its shortcuts whole: one row wide, three narrow; the body gives up what it takes.
-    expect([guideRows(160, true), guideRows(130, true), guideRows(60, true)]).toEqual([1, 2, 3]);
-    await personality($, w, ui);
-    // The list is taller than the body: a window round the lit row, the rest counted.
-    expect(JSON.stringify((await ui.find({ key: 'use:fixy' }))?.children ?? null)).toContain('"inverse":true');
-    expect(await shows(ui, /^[↑↓] \d+ more$/)).toBe(true);
-    await pick(ui, w, 'use:duck');
-    expect(await ui.find({ key: 'use:duck' })).toBeDefined();
+    expect([guideRows(100, true), guideRows(60, true), guideRows(40, true)]).toEqual([1, 2, 3]);
     await ui.unmount();
   });
 });
@@ -2700,7 +2770,7 @@ describe('promptToMainChat', () => {
     await w.clock.settle();
     expect(w.submitted.map((x) => x.text)).toEqual(['fix the login bug', TO_CLAUDE]);
     // The turn's warning, to the user, keeps the bubble first: the steer waits its turn, never dropped.
-    expect((await ui.find({ type: 'Text', text: /claimed green, ran nothing/ }))?.props.color).toBe('blue');
+    expect((await bubbleText(ui, /claimed green, ran nothing/))?.props.color).toBe('blue');
     expect(await shows(ui, /run the tests and show their output/)).toBe(false);
     await w.clock.advance(10_200);
     await w.clock.settle();

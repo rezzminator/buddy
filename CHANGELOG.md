@@ -4,6 +4,22 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
+### Added
+- `memory.md` beside each chat's `memory.json` (`{config}/projects/{project}/{session id}/buddy/`): the buddy's memory as you can read it, headed `# What {name} remembers`, the same text the character drawn now reads before every reply, its own notes first. It is rewritten whenever `memory.json` is written and whenever the drawn character changes (a pick, `/buddy reload`, a session start); a failed write is logged and never stops the buddy. The drawer's last row gives its absolute path, `memory  {path}`.
+- Hovering the buddy shows the last thing it said to you: an answer, a comment, a warning or a failure, or `Nothing said to you yet.` before any. After a reload it is read back from the drawer's conversation.
+- The arrow keys choose a personality: ctrl+x t opens the personality picker holding your keys, ↑ and ↓ move between the characters with the preview following, Enter picks the lit one (saved, switched, greeted, the picker left open with its `*` moved), Esc closes it. A character that cannot be drawn is lit, its preview saying why, and never picked. With text in your prompt the picker says `clear your prompt, then ctrl+x t to choose with ↑ ↓ and Enter`.
+
+### Changed
+- The drawer is the conversation: no tabs, and its thread shows your turns with Claude and what you and the buddy said, no longer the buddy's notes, which stay in `memory.json` and its prompts and are readable in `memory.md`. It fills every row Claude Code gives the band, a ceiling Claude Code sets: in fullscreen what the bottom slot has left above the prompt, at most half the terminal; otherwise the terminal's height.
+- ctrl+x t, labelled `personality`, opens the personality picker as a pane instead of switching the drawer to a personality tab. Folding the drawer closes it. The messages that pointed at the tab now read `…; ctrl+x t in /buddy picks another` and `…; ctrl+x t in /buddy lists your characters`, and `/buddy list` and `/buddy use {id}` reply `Switching characters moved to the personality picker: ctrl+x t in /buddy.`
+- ctrl+x u is now labelled "use suggested prompt" (was "use the idea"), and the drawer counts `N of M suggested prompts used`.
+- The hover card no longer shows the description, the pets, the questions asked or the mood; an original's stat bars show in the picker's preview.
+
+### Removed
+- Petting: ctrl+x p, the `petted` pose and line event, the pet count and its `♥`. A character file carrying `petted` now fails the schema. To migrate, delete `poses.petted` and `lines.petted` from your own character files, and drop `"ctrl+x p"` from your `keybindings.json`.
+- ctrl+x n and ctrl+x b, the next and previous character: switch with ctrl+x t, ↑ ↓ and Enter instead. To migrate, drop `"ctrl+x n"` from your `keybindings.json`; ctrl+x b was Claude Code's own binding and needs nothing.
+- The `cat` character; the `cat` species stays for originals. A saved choice or a `character` option of `cat` now draws the duck with a bubble saying why. To migrate, pick another character with ctrl+x t in `/buddy`, or set `character` to another id.
+
 ## [1.1.0] — 2026-09-29
 
 ### Added

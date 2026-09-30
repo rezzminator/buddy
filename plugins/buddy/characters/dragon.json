@@ -209,22 +209,6 @@
         "     d b     "
       ]
     ],
-    "petted": [
-      [
-        "     ^ ^ <3  ",
-        " ___(^ ^)___ ",
-        " \\/\\(vvv)/\\/ ",
-        " <~~(___)    ",
-        "     d b     "
-      ],
-      [
-        " /\\  ^ ^  /\\ ",
-        "/  \\(^ ^)/  \\",
-        "\\/\\/(vvv)\\/\\/",
-        " <~~(___)    ",
-        "    d   b    "
-      ]
-    ],
     "working": [
       [
         "     ^ ^     ",
@@ -310,12 +294,6 @@
       "Red, like fire. But not the good kind.",
       "I could burn it all down. Or you could read the error.",
       "A worthy foe. Sharpen your claws, mortal."
-    ],
-    "petted": [
-      "I permit this. Do not tell the other dragons.",
-      "Careful, my scales are very sharp. Mostly.",
-      "Rawr. Softly.",
-      "A tribute! Very well."
     ],
     "thinking": [
       "A dragon ponders...",

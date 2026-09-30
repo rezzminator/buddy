@@ -216,22 +216,6 @@
         "   | |     "
       ]
     ],
-    "petted": [
-      [
-        "     __ <3 ",
-        " ___( ^)>  ",
-        " \\ <_. )   ",
-        "  `---'    ",
-        "   | |     "
-      ],
-      [
-        "     __ <3 ",
-        " ___( ^)<  ",
-        " \\ <_. )   ",
-        "  `---'    ",
-        "   | |     "
-      ]
-    ],
     "working": [
       [
         "     __ .  ",
@@ -296,12 +280,6 @@
       "Red. Explain the test to me like I'm a duck.",
       "Which line surprised you? Quack.",
       "Something smells fowl in there."
-    ],
-    "petted": [
-      "Quack!",
-      "Soft feathers, right? Quack.",
-      "Happy quack.",
-      "Quack quack. Again?"
     ],
     "thinking": [
       "Quack... thinking...",

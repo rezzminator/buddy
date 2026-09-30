@@ -60,9 +60,9 @@ server of its own.
   (default 4), a compaction of the chat counting as one, each with what it
   said after it and what you asked it, word for word; ask about anything
   older and it says it doesn't remember that far back.
-- 🗂️ **One command.** `/buddy` alone opens its drawer: the buddy, the whole
-  thread it remembers, and a personality tab with a live preview.
-- 🐣 **Your own buddy, back.** The drawer's personality tab: its "Yours" group recomputes the companion Claude Code
+- 🗂️ **One command.** `/buddy` alone opens its drawer: the buddy and your
+  conversation with it; ctrl+x t there opens a personality picker with a live preview.
+- 🐣 **Your own buddy, back.** The personality picker: its "Yours" group recomputes the companion Claude Code
   hatched for your account (species, rarity, eyes, hat, stats) with the name
   and personality it saved.
 - 🧠 **A second brain.** After each answered turn the buddy names what you
@@ -73,8 +73,8 @@ server of its own.
   chat, at most 8 one-sentence notes it keeps, edits and drops itself, each
   of a kind: `rule:` your standing orders in your words, `open:` what you
   asked for that is unfinished, `fact:` what the chat showed, `doubt:` its own
-  unchecked suspicion, never stated as fact. Read first by every later call
-  and shown in the drawer when they change.
+  unchecked suspicion, never stated as fact. Read first by every later call,
+  and kept for you to read in the chat's `memory.md`, its path at the drawer's foot.
 - 📊 **The numbers of every turn.** Each turn it remembers comes with one
   line counted in code, never by a model: time and the pause before it,
   model requests, tool calls by tool with failures and refusals, subagents,
@@ -82,7 +82,7 @@ server of its own.
   commits and pushes, web reads, tokens and cache, cost, how full the
   context is, and a rate limit past half used. The drawer shows each turn's
   time, tools and cost on its row.
-- 🤫 **Free unless you ask.** Walking, petting, switching and reactions never
+- 🤫 **Free unless you ask.** Walking, switching and reactions never
   call a model. Only a question you ask, and one short call at the end of
   each answered turn for `commentAfterEachTurn` and `suggestNextPrompt` (on by
   default; `commentAfterEachTurn: false` and `suggestNextPrompt: false` turn them off), spend tokens;
@@ -91,7 +91,7 @@ server of its own.
   duck, who says why; a hook that fails logs the error and steps aside.
   `/buddy off` hides it, and it stays hidden across restarts.
 
-Quack is the default. buddy also ships the Professor, a cat, a robot, a
+Quack is the default. buddy also ships the Professor, a robot, a
 ghost, a dragon and a yellow duck, and draws your own characters from a folder of JSON
 files (see [Characters](#-characters)).
 
@@ -142,43 +142,40 @@ the variable is set.
 
 | Command | What it does |
 | --- | --- |
-| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, status, its pets as `♥ N`, counts), sized to the rows the band has, a talk tab and a personality tab; its bottom row holds the tabs and the [shortcuts](#shortcuts) at the left and a box to ask it at the right. The talk tab is everything the buddy remembers, its newest messages that fit, the older ones counted above them: your last `chatTurnsToRead` turns with Claude, each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each next-prompt idea marked at its right `✓ you sent it` or `not sent`, and the newest open one `ctrl+x u uses it`. The drawer has no buttons: every act is a ctrl+x chord. ctrl+x q closes it from the prompt (while no pane is open), and so does `/buddy` again. |
+| `/buddy` | Open or fold the drawer: the band above your prompt opens full width into the buddy (sprite, name, status) beside your conversation with it, filling every row Claude Code gives the band (in fullscreen what the bottom of the screen has left above the prompt, at most half the terminal; otherwise the terminal's height. Claude Code sets that ceiling, and no plugin can draw taller); under them one bar: its numbers and the [shortcuts](#shortcuts) at the left, a box to ask it at the right; and last, `memory  {path}`, the absolute path of the chat's `memory.md`. The conversation is your last `chatTurnsToRead` turns with Claude, its newest messages that fit, the older ones counted above them: each prompt you sent opening a section (marked when the turn was interrupted and the buddy never read it), each compaction of the chat with the summary it read, each line naming who said it and how, each suggested prompt marked at its right `✓ you sent it` or `not sent`, and the newest open one `ctrl+x u uses it`. The drawer has no buttons: every act is a ctrl+x chord. ctrl+x q closes it from the prompt (while no pane is open), and so does `/buddy` again; either closes the personality picker with it. |
 | `/buddy {question}` | Ask it: it thinks, then answers in one line, in character; asked for a prompt ("put it in a prompt for me"), it also puts one in your prompt box. While hidden it replies `{name} is hidden; /buddy on first`. |
 | `/buddy off` / `/buddy on` | Hide or show it, remembered across restarts and shared with your other sessions. |
 | `/buddy reload` | Rescan the characters, after you edit one. |
 | `/buddy help` | Usage, then every option that was ignored or capped, and why. |
 | `/buddy log` | The log file's path and its last 20 lines, to paste into an issue. |
-| `/buddy list` / `/buddy use {id}` | `Switching characters moved to the drawer's personality tab: /buddy opens it.` — no model call. |
+| `/buddy list` / `/buddy use {id}` | `Switching characters moved to the personality picker: ctrl+x t in /buddy.` — no model call. |
 
 ### Shortcuts
 
 The drawer's bottom-left, beside the ask box, is its guide, each chord spelled whole and bright:
-`ctrl+x tab` ask · `ctrl+x t` talk/personality · `ctrl+x u` use the idea · `ctrl+x n` next character · `ctrl+x b` previous character · `ctrl+x p` pet · `ctrl+x q` close.
+`ctrl+x tab` ask · `ctrl+x t` personality · `ctrl+x u` use suggested prompt · `ctrl+x q` close.
 
 | Chord | Does |
 | --- | --- |
 | ctrl+x tab | steps into the ask box |
-| ctrl+x t | switches between the talk and personality tabs |
-| ctrl+x u | puts the newest open idea in your prompt box |
-| ctrl+x n / ctrl+x b | switches to the next or previous character in the personality tab |
-| ctrl+x p | pets the buddy |
+| ctrl+x t | opens the [personality picker](#-pick-a-personality): ↑ ↓ choose, Enter picks, Esc closes it |
+| ctrl+x u | puts the newest open suggested prompt in your prompt box |
 | ctrl+x q | closes the drawer |
 
 A plugin hears a chord only through a Claude Code keybinding action that
-nothing else holds at the prompt, so buddy borrows six that Claude Code
-handles only inside a panel or dialog: ctrl+x b (`app:cycleDiffBase`, the diff
-panel's) is Claude Code's own default, and ctrl+x tab is its own step-in. It
+nothing else holds at the prompt, so buddy borrows three that Claude Code
+handles only inside a panel or dialog; ctrl+x tab is Claude Code's own step-in. It
 never takes a chord Claude Code uses at the prompt: while one of those panels
 or dialogs is open, Claude Code's handler wins, and the drawer's chords are
-off while it is folded. The other five need these lines
+off while it is folded. The three need these lines
 in your `~/.claude/keybindings.json` (or `$CLAUDE_CONFIG_DIR/keybindings.json`
 when that is set); merge them into the file if you have one:
 
 ```json
-{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x n":"diff:back","ctrl+x p":"permission:toggleDebug","ctrl+x q":"confirm:previousField"}}]}
+{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x q":"confirm:previousField"}}]}
 ```
 
-Without them only ctrl+x b and ctrl+x tab work.
+Without them only ctrl+x tab works.
 
 ## 🎭 Characters
 
@@ -186,24 +183,24 @@ Without them only ctrl+x b and ctrl+x tab work.
 | --- | --- |
 | `duck` | Quack: a sarcastic little duck with a sharp tongue, waddling through your code with smug confidence. The default. |
 | `professor` | A warm, precise professor with a cup of tea. |
-| `cat` | An aloof cat who supervises your terminal and pretends not to care. |
 | `robot` | A literal little robot on one wheel that reports exactly what happened. |
 | `ghost` | A gentle ghost that drifts along your prompt line, softly spooky. |
 | `dragon` | A very small dragon with very large pride, guarding your code. |
 | `yellow-duck` | A listening duck: explain your bug out loud, get a quack back. |
 | `terry` | A lone-wolf systems programmer in a 640x480, 16-color world. Simplicity above all. |
 
-The choice is, in order: your last pick in the drawer's personality tab, then the
+The choice is, in order: your last pick in the personality picker, then the
 `character` option, then `duck`. Your own characters sit beside these, and one with
 a built-in's id replaces it. The id `original` is reserved for your original
 companion: a file that takes it is refused, never drawn, with an error
-naming the file in the personality tab's "Yours" group, and in
+naming the file in the picker's "Yours" group, and in
 the bubble when a session starts and after `/buddy reload`.
 
 ## 🐣 Pick a personality
 
-`/buddy` opens the drawer; ctrl+x t opens its personality tab. The entries
-sit on the left, a live preview of the lit one on the right, in two groups.
+`/buddy` opens the drawer; ctrl+x t there opens the personality picker, a
+pane that takes your keys while your prompt is empty. The entries sit on the
+left, a live preview of the lit one on the right, in two groups.
 
 - **Shipped**: the characters that come with the plugin.
 - **Yours**: first the companion Claude Code's own `/buddy` hatched for your
@@ -220,19 +217,21 @@ sit on the left, a live preview of the lit one on the right, in two groups.
   it says `None yet: set customCharactersDir to a folder of your own character files.`
   (or `No character files in customCharactersDir.` when it is set).
 
-ctrl+x n and ctrl+x b light the next or previous entry, round the list (the
-tab opens if it was not), and switch to it at once. The preview shows the lit one: the sprite in its idle
+↑ and ↓ light the next or previous entry, the preview following; Enter picks
+the lit one, and Esc closes the picker, your keys back in the prompt. With text
+in your prompt the picker opens without your keys and says
+`clear your prompt, then ctrl+x t to choose with ↑ ↓ and Enter`. The preview shows the lit one: the sprite in its idle
 animation, the name, its description (for your original, its saved personality) and a greeting in its voice;
 for your original companion also its rarity stars, shiny, the five stats as
 bars (`SNARK     ████████░░ 81`) and the day it hatched. `*` marks the one
-drawn now. The switch is remembered: it is still there after `/reload` and a
-restart; the tab stays open, its `*` moved. An entry that cannot be drawn is
-lit, its preview saying why, and never picked. ctrl+x t goes back to the thread.
+drawn now. A pick is remembered: it is still there after `/reload` and a
+restart; the picker stays open, its `*` moved, and the new character greets you. An entry that cannot be drawn is
+lit, its preview saying why, and never picked. Folding the drawer closes the picker.
 
-The tab only reads the config and its backups; it never writes them. A file it cannot
+The picker only reads the config and its backups; it never writes them. A file it cannot
 read shows as one line in the "Yours" group, saying why. Your account id is
 never shown, saved or logged. To go back to your usual character, pick it
-in the tab: the `character` option's one is listed under Shipped, or under
+in the picker: the `character` option's one is listed under Shipped, or under
 Yours when it is your own.
 
 ## 🧠 How it works
@@ -273,9 +272,11 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   rows it has. Text is measured in terminal cells, so CJK text and emoji
   line up; if your terminal draws East Asian ambiguous-width characters two
   columns wide, as a CJK locale often does, set `ambiguousCharacterWidth` to `wide`.
-- **Hover card.** Hover over the character to see its name, description,
-  pets, mood and the questions asked this session. It needs a terminal that
-  reports the mouse; elsewhere the card never shows.
+- **Hover card.** Hover over the character to see its name and the last
+  thing it said to you (an answer, a comment, a warning or a failure), or
+  `Nothing said to you yet.`; after a reload it is read back from the drawer's
+  conversation. It needs a terminal that reports the mouse; elsewhere the card
+  never shows.
 - **Questions.** `/buddy {question}` is
   one fast call on `model` (default `opus`) at the `effort` option's
   level (default `low`), with the character's persona, the character rule,
@@ -376,8 +377,8 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   and files that turn as its own.
 - **Errors are never silent.** A chosen character that is missing or invalid
   draws the duck with a bubble
-  `Couldn't load {id}: {error}; the personality tab in /buddy picks another`
-  for 10 seconds, and the personality tab marks it `(invalid)` with the error
+  `Couldn't load {id}: {error}; ctrl+x t in /buddy picks another`
+  for 10 seconds, and the personality picker marks it `(invalid)` with the error
   in its preview.
 
 ## ⚙️ Configuration
@@ -390,7 +391,7 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `character` | string | `"duck"` | Character id (see the personality tab in /buddy) |
+| `character` | string | `"duck"` | Character id (see the personality picker, ctrl+x t in /buddy) |
 | `customCharactersDir` | directory | `""` | `customCharactersDir`: the folder of your own character JSON files |
 | `walkOverPromptBar` | boolean | `true` | Walk back and forth over the prompt bar |
 | `commentAfterEachTurn` | boolean | `true` | The buddy says `commentAfterEachTurn` at the end of every answered turn, from one short `model` call that also writes `suggestNextPrompt` (spends tokens); `false` keeps it quiet |
@@ -399,7 +400,7 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 | `secondsBetweenComments` | number | `0` | Minimum seconds between two `commentAfterEachTurn`; 0 = every answered turn |
 | `suggestNextPrompt` | boolean | `true` | The buddy's second brain, in the same end-of-turn call: it names what you most deeply want, judges Claude's last move `RIGHT`, `SHORTCUT` (warned in yellow) or `WRONG` (screamed in red), and writes your next prompt to match (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
 | `promptToMainChat` | boolean | `false` | The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, from the same end-of-turn call: only on evidence inside the turn that your own ask is unmet or unproven (a failed step or test run the answer passes over, a conclusion that rests on less than it names, an instruction in your ask not followed, a part of the ask never addressed); the buddy's own doubts, and a gap Claude named, stay a suggestion. Claude reads it as the buddy's, never yours, with a note saying so; the turn it starts never sends another, and with `suggestNextPrompt` on the suggestion after one is none. Logs `promptToMainChat.sent`. |
-| `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest turns it remembers, 1 to 10, after its own notes on the chat (at most 8, each a rule, open item, fact or doubt, rewritten by itself at every turn's end). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; the last turn with its numbers (time, requests, tool calls, subagents, files, lines, tests, commits, tokens, cost, context), each older one told shorter, its numbers only its failed tool calls; anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`), so reopening a chat brings it back, and per character; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
+| `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest turns it remembers, 1 to 10, after its own notes on the chat (at most 8, each a rule, open item, fact or doubt, rewritten by itself at every turn's end). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; the last turn with its numbers (time, requests, tool calls, subagents, files, lines, tests, commits, tokens, cost, context), each older one told shorter, its numbers only its failed tool calls; anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`, and beside it `memory.md`, the same text as the character drawn now reads it, for you to read), so reopening a chat brings it back, and per character; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
 | `logLevel` | string | `"info"` | Log level: error, info or debug |
 | `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, archived whole to the next free `{logFile}.N` past 1 MB and never deleted; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
 | `saveRounds` | boolean | `true` | One text file per main-chat turn in the chat's own folder, beside its transcript and next to `memory.json`, the buddy's memory of that chat (`{config}/projects/{project}/{session id}/buddy/`), every turn kept (`round-001.txt` on, each new round numbered after the highest, none ever overwritten; `ls -t` lists them newest first), holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim (they hold what the transcript beside them holds: your prompts, Claude's answers and tool output); `false` = no files |
@@ -446,9 +447,9 @@ Put yours in a folder, point `customCharactersDir` at it, and `/buddy reload`.
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in built-ins |
-| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original` (reserved); the id the personality tab stores |
+| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original` (reserved); the id the personality picker stores |
 | `name` | string ≤ 40 | yes | display name |
-| `description` | string ≤ 100 | yes | one line for the personality tab's preview and the hover card |
+| `description` | string ≤ 100 | yes | one line for the personality picker's preview |
 | `author` | string ≤ 60 | no | credit |
 | `persona` | string ≤ 1200 | yes | the character's voice prompt, 2nd person ("You are …") |
 | `color` | Ink color name or `#rrggbb` | no | sprite color, default `"yellow"` |
@@ -468,7 +469,7 @@ working example, how to test it, and how to send it in to ship with buddy.
 No. buddy is an independent plugin, not a patch to Claude Code or a revival
 of the removed code. You choose a character, and its reactions come from its
 own lines and from your own model calls, not from a server. But the
-"Yours" group of the drawer's personality tab does bring back the companion the
+"Yours" group of the personality picker does bring back the companion the
 removed `/buddy` hatched for your account: the same species, rarity, eyes, hat and stats, recomputed
 from your account id, with the name and personality Claude Code's config (`~/.claude.json`, or
 `$CLAUDE_CONFIG_DIR/.claude.json`) kept.
@@ -477,7 +478,7 @@ from your account id, with the name and personality Claude Code's config (`~/.cl
 <details>
 <summary><b>Does it cost tokens?</b></summary>
 
-Only when a model answers. Walking, reactions, petting and every command
+Only when a model answers. Walking, reactions and every command
 except a question are local. A question
 sends `model`, at the `effort` level, the question, the character's
 persona and its `chatTurnsToRead` (the chat's last turns, with what
@@ -509,7 +510,7 @@ nothing happening. Anything that happens wakes it.
 <details>
 <summary><b>My character shows as invalid.</b></summary>
 
-The drawer's personality tab lists it as `{id} (invalid)`, and its preview names the
+The personality picker (ctrl+x t in `/buddy`) lists it as `{id} (invalid)`, and its preview names the
 first error in the file. Fix it, save, and run `/buddy reload`.
 </details>
 

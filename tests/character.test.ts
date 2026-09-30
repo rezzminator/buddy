@@ -66,7 +66,6 @@ describe('poses', () => {
   const c = ok(raw());
   test('fall back along their chain', () => {
     expect(framesFor(c, 'walkLeft')).toBe(c.poses.walkRight);
-    expect(framesFor(c, 'petted')).toBe(c.poses.yay);
     expect(framesFor(c, 'sleep')).toBe(c.poses.idle);
     expect(framesFor(c, 'oops')).toBe(c.poses.idle);
     expect(framesFor(c, 'working')).toBe(c.poses.idle);
@@ -86,33 +85,12 @@ describe('the shipped characters', () => {
   const dir = new URL('../plugins/buddy/characters/', import.meta.url);
   const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
 
-  test('the directory holds the eight shipped characters', () => {
-    expect(files).toEqual(['cat.json', 'dragon.json', 'duck.json', 'ghost.json', 'professor.json', 'robot.json', 'terry.json', 'yellow-duck.json']);
+  test('the directory holds the seven shipped characters', () => {
+    expect(files).toEqual(['dragon.json', 'duck.json', 'ghost.json', 'professor.json', 'robot.json', 'terry.json', 'yellow-duck.json']);
   });
 
   test.each(files)('%s validates', (f) => {
     const v = validateCharacter(JSON.parse(readFileSync(new URL(f, dir), 'utf8')), f.replace(/\.json$/, ''));
     expect(v.ok || v.error).toBe(true);
-  });
-});
-
-describe('the shipped duck', () => {
-  test('has its own petted pose: same width as idle, ASCII, and a petted pool; it validates', async () => {
-    const { readFileSync } = await import('node:fs');
-    const raw = JSON.parse(readFileSync(new URL('../plugins/buddy/characters/duck.json', import.meta.url), 'utf8'));
-    const v = validateCharacter(raw);
-    expect(v.ok ? 'valid' : v.error).toBe('valid');
-    const frames: string[][] = raw.poses.petted;
-    expect(frames.length).toBeGreaterThanOrEqual(1);
-    expect(frames.length).toBeLessThanOrEqual(2);
-    const width = raw.poses.idle[0][0].length;
-    for (const f of frames) {
-      expect(f).toHaveLength(raw.poses.idle[0].length);
-      for (const row of f) {
-        expect(row).toHaveLength(width);
-        expect(row).toMatch(/^[\x20-\x7e]+$/);
-      }
-    }
-    expect(raw.lines.petted.length).toBeGreaterThan(0);
   });
 });

@@ -62,7 +62,7 @@ describe('originalCharacter', () => {
     expect(frameAt(c, 'sleep', 0)).toEqual([' www  ', ' (--) ', ' (__) ']);
     expect(c.color).toBe('blue');
     expect(c.lines.greeting).toEqual(['Mochi blobs in.']);
-    expect(c.lines.petted).toEqual(['Mochi wobbles.', 'Again, says Mochi.']);
+    expect(c.lines.thinking).toEqual(['Mochi wobbles.', 'Hmm, says Mochi.']);
     expect(c.description).toBe('★★★ rare blob (native)');
     expect(c.shiny).toBeUndefined();
   });
@@ -89,26 +89,16 @@ describe('originalCharacter', () => {
     expect(originalCharacter({ soul, bones: bones({ species: 'duck' }), variant: 'npm', template, hats: HATS })).toMatchObject({ ok: false });
   });
 
-  test('the hover card: name, species and stars, the stats line, five bars, the hatch date', () => {
-    const s = buildScene({ character: original(bones({ shiny: true })), pose: 'idle', frame: 0, x: 0, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0, stats: { pets: 2, questions: 1 }, now: 0 })!;
-    expect(s.card?.lines).toEqual([
-      'Mochi',
-      'blob · ★★★ rare · shiny ✨',
-      'pets 2 | questions 1 | curious',
-      'DEBUGGING ███░░░░░░░ 30',
-      'PATIENCE  █░░░░░░░░░ 9',
-      'CHAOS     ████░░░░░░ 40',
-      'WISDOM    █████░░░░░ 50',
-      'SNARK     ████████░░ 81',
-      'hatched 2026-04-01',
-    ]);
+  test('the hover card: its name and the last message to you; the stat rows stay in the picker\'s preview', () => {
+    const s = buildScene({ character: original(bones({ shiny: true })), pose: 'idle', frame: 0, x: 0, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0, now: 0 })!;
+    expect(s.card?.lines).toEqual(['Mochi', 'Nothing said to you yet.']);
   });
 
   test('the card is measured in cells: ★ █ ░ · count twice on an ambiguous-wide terminal', () => {
-    const input = { character: original(bones({ shiny: true })), pose: 'idle', frame: 0, x: 0, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0, stats: { pets: 2, questions: 1 }, now: 0 } as const;
-    expect(buildScene(input)!.card!.width).toBe(34);
+    const input = { character: original(bones({ shiny: true })), pose: 'idle', frame: 0, x: 0, cols: 100, maxRows: 10, bubble: null, confetti: null, sleeping: false, zTick: 0, lastMessage: 'blob · ★★★ rare', now: 0 } as const;
+    expect(buildScene(input)!.card!.width).toBe(19);
     const wide = buildScene({ ...input, ambiguousCharacterWidth: 'wide' })!;
-    expect(wide.card!.width).toBe(37);
+    expect(wide.card!.width).toBe(23);
     for (const line of wide.card!.lines) expect(cellWidth(line, { ambiguousCharacterWidth: 'wide' })).toBeLessThanOrEqual(wide.card!.width - 4);
   });
 });

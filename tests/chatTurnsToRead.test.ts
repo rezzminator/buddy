@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
   NOTIFICATION_RESULT_HEAD, NOTIFICATION_RESULT_TAIL, cleanAnswer, cleanPrompt,
-  BUDDY_PROMPT, NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, didLine, ADDED_LABEL, memoryStats, render, storeKey, type Block, type Exchange,
+  BUDDY_PROMPT, NOTES_MAX, NOTE_MAX_CHARS, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, cleanNotes, didLine, ADDED_LABEL, memoryStats, memoryText, render, storeKey, type Block, type Exchange,
   STORY_ADDED_HEAD, STORY_ADDED_TAIL, STORY_ANSWER_HEAD, STORY_ANSWER_TAIL, STORY_COMPACTION_HEAD, STORY_COMPACTION_TAIL, STORY_DID_STEPS, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
 import { DID_LINE_CAP, DID_TEXT_CAP, FAIL_REASON_CAP } from '../plugins/buddy/src/did.ts';
@@ -192,6 +192,18 @@ describe('render', () => {
     b = addTurn(b, 't2', turn('second ask'), 4);
     expect(render(b, 'cat', 1)).not.toMatch(/\bone\b|Meow/);
     expect(render(b, 'cat', 1)).toContain('Turn 1. The user asked Claude:\nsecond ask');
+  });
+});
+
+describe('memory.md', () => {
+  test('a heading naming the character, when it was rewritten and that it is what the character reads before every reply, then that text', () => {
+    const b = addExchange(addTurn([], 't1', turn('ship it'), 4), 'cat', endOfTurn('Shipped.'));
+    const at = Date.UTC(2026, 8, 30, 14, 5);
+    expect(memoryText('Terry', b, 'cat', 4, ['Tests before tags.'], at)).toBe(
+      `# What Terry remembers\n\nRewritten 2026-09-30 14:05 UTC. This is the same text Terry reads before every reply.\n\n${render(b, 'cat', 4, ['Tests before tags.'])}\n`,
+    );
+    expect(memoryText('Terry', b, 'cat', 4, ['Tests before tags.'], at)).toContain('\n- Tests before tags.\n');
+    expect(memoryText('Terry', [], 'cat', 4, [], at).endsWith('reads before every reply.\n\nNothing yet.\n')).toBe(true);
   });
 });
 

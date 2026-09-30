@@ -11,7 +11,8 @@
 // compaction of the main chat is remembered as a turn of its own: its summary
 // is what Claude holds of everything before it.
 // No I/O: the adapter keeps a session's timeline in memory.json in the chat's
-// own folder, beside its transcript (src/chatFolder.ts), each character's
+// own folder, beside its transcript (src/chatFolder.ts), and what the drawn
+// character reads of it in memory.md beside it (memoryText), each character's
 // exchanges under its id, so a switched character never claims another's
 // words. Before 1.0.0 it was kept in $.store under storeKey(sessionId): the
 // adapter moves it into the file the first time the chat is opened again.
@@ -359,6 +360,21 @@ export function render(blocks: readonly Block[], characterId: string, n: number,
   });
   const timeline = parts.length > 0 ? ['What you remember, oldest first:', ...parts].join('\n\n') : '';
   return [renderNotes(notes), timeline].filter(Boolean).join('\n\n');
+}
+
+/** `at` as a person reads it anywhere: the UTC date and time to the minute. */
+function stamp(at: number): string {
+  return `${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+/**
+ * memory.md, the copy of the memory a person reads: a heading naming the
+ * character (`name`), when it was rewritten (`at`) and that it is the very
+ * text the character reads before every reply, then that text (render).
+ */
+export function memoryText(name: string, blocks: readonly Block[], characterId: string, n: number, notes: readonly string[], at: number): string {
+  const text = render(blocks, characterId, n, notes);
+  return [`# What ${name} remembers`, `Rewritten ${stamp(at)}. This is the same text ${name} reads before every reply.`, text || 'Nothing yet.'].join('\n\n') + '\n';
 }
 
 /** A stored exchange, checked field by field: its capped form, or null when malformed. */

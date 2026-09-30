@@ -18,4 +18,4 @@ assignees: ''
 
 **Does it spend tokens?**
 
-<!-- Walking, reactions and petting never call a model today. Say whether your idea would. -->
+<!-- Walking and reactions never call a model today. Say whether your idea would. -->

@@ -208,7 +208,7 @@ run_session() {
       while [ $((SECONDS - t0)) -lt 12 ]; do seen=$(bubble); grep -q "Couldn't load broken" <<<"$seen" && break; sleep 0.3; done
     fi
     pane > "$RUN/pane-error.txt"
-    if grep -q "Couldn't load broken" <<<"$seen" && grep -q 'personality tab' <<<"$seen" && shows_any "$RUN/duck.rows"; then check PASS "the duck is drawn with a bubble naming the error" "at $via: $seen"
+    if grep -q "Couldn't load broken" <<<"$seen" && grep -q 'ctrl+x t in /buddy' <<<"$seen" && shows_any "$RUN/duck.rows"; then check PASS "the duck is drawn with a bubble naming the error" "at $via: $seen"
     else check FAIL "the duck is drawn with a bubble naming the error" "at $via, bubble: ${seen:-empty}; duck drawn: $(shows_any "$RUN/duck.rows" && echo yes || echo no); pane in $RUN/pane-error.txt"; fi
   fi
 

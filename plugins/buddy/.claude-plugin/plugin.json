@@ -14,14 +14,14 @@
   "userConfig": {
     "character": {
       "type": "string",
-      "title": "Which character to show (see the personality tab in /buddy)",
-      "description": "The id of the character drawn above your prompt, such as duck or cat. A pick in the personality tab of /buddy overrides it on this machine; picking this same character there returns to it.",
+      "title": "Which character to show (see the personality picker in /buddy)",
+      "description": "The id of the character drawn above your prompt, such as duck or robot. A pick in the personality picker of /buddy overrides it on this machine; picking this same character there returns to it.",
       "default": "duck"
     },
     "customCharactersDir": {
       "type": "directory",
       "title": "customCharactersDir: the folder of your own characters (optional)",
-      "description": "A folder of character files, one {id}.json each, following the plugin's schema/character.schema.json. They join the built-in characters in the personality tab of /buddy; one with the same id as a built-in replaces it. Leave empty to use only the built-in characters.",
+      "description": "A folder of character files, one {id}.json each, following the plugin's schema/character.schema.json. They join the built-in characters in the personality picker of /buddy; one with the same id as a built-in replaces it. Leave empty to use only the built-in characters.",
       "default": ""
     },
     "walkOverPromptBar": {

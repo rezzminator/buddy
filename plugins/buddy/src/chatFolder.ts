@@ -2,7 +2,8 @@
 // beside the chat's transcript. Claude Code writes a session's transcript to
 // {config}/projects/{project}/{session id}.jsonl and its subagents and tool
 // results into the folder {session id}/ beside it; the buddy's memory
-// (memory.json) and round files (round-001.txt...) go into that folder's
+// (memory.json, and memory.md, the same memory for a person to read) and
+// round files (round-001.txt...) go into that folder's
 // buddy/, so reopening the chat finds them, and deleting the chat deletes them.
 // {project} is the project's path with every character but a letter or digit
 // made '-'; a path too long for that is named otherwise, so the adapter first
@@ -14,6 +15,8 @@ import { configDir, type ConfigEnv } from './config-source.ts';
 export const BUDDY_FOLDER = 'buddy';
 /** The file of the buddy's memory of this chat, in BUDDY_FOLDER. */
 export const MEMORY_FILE = 'memory.json';
+/** The file of what the drawn character reads of that memory, for a person to read, beside MEMORY_FILE. */
+export const MEMORY_TEXT_FILE = 'memory.md';
 
 /** The folder of every project's transcripts; null when neither CLAUDE_CONFIG_DIR nor HOME is set. */
 export function projectsDir(env: ConfigEnv): string | null {

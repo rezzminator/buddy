@@ -195,22 +195,6 @@
         "   (|)  "
       ]
     ],
-    "petted": [
-      [
-        "    *   ",
-        "   _|_  ",
-        "  [^_^] ",
-        " d|<3 |b",
-        "   (|)  "
-      ],
-      [
-        "    o   ",
-        "   _|_  ",
-        "  [^_^] ",
-        " d| <3|b",
-        "   (|)  "
-      ]
-    ],
     "working": [
       [
         "    o   ",
@@ -296,12 +280,6 @@
       "FAIL detected. Probability of a bug: 1.0.",
       "One or more assertions are false. Correction advised.",
       "Tests report failure. I recommend fixing it."
-    ],
-    "petted": [
-      "Physical contact detected. Classified as friendly.",
-      "Pet counter incremented.",
-      "Thank you. My casing is now 0.3 percent shinier.",
-      "Beep boop. That means thank you."
     ],
     "thinking": [
       "Processing...",

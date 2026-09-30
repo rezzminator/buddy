@@ -1,12 +1,25 @@
 import { describe, expect, test } from 'vitest';
 import {
-  answerSuggestions, feedOfMemory, isTaken, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
+  answerSuggestions, feedOfMemory, isTaken, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
   type FeedEntry,
 } from '../plugins/buddy/src/feed.ts';
 
 const at = 1_000;
 
 describe('the feed', () => {
+  test('its last message to you: the newest answer, comment or failure, a failure as the thread says it; none, null', () => {
+    let f = pushEntry([], { at, kind: 'ask', text: 'why?' });
+    expect(lastMessageOf(f)).toBeNull();
+    f = pushEntry(f, { at, kind: 'answer', text: 'Because.' });
+    f = pushEntry(f, { at, kind: 'line', text: 'Hi.' });
+    f = pushEntry(f, { at, kind: 'suggest', text: 'run it' });
+    f = pushEntry(f, { at, kind: 'you', text: 'run it' });
+    expect(lastMessageOf(f)).toBe('Because.');
+    f = pushEntry(f, { at, kind: 'comment', text: 'Tidy.' });
+    expect(lastMessageOf(f)).toBe('Tidy.');
+    f = pushEntry(f, { at, kind: 'failed', text: 'api-error 529' });
+    expect(lastMessageOf(f)).toBe("couldn't answer: api-error 529");
+  });
   test('an entry is numbered after the last, its text whole but for the blank space around it', () => {
     const one = pushEntry([], { at, kind: 'ask', text: '  hi  ' });
     expect(one).toEqual([{ id: 1, at, kind: 'ask', text: 'hi' }]);

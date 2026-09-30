@@ -43,8 +43,8 @@ live_isolate() {
   mkdir -p "$LIVE_CONFIG"
   # A fresh config dir would open on the first-run screens.
   printf '%s\n' '{ "hasCompletedOnboarding": true, "theme": "dark" }' > "$LIVE_CONFIG/.claude.json"
-  # The drawer's five chords the engine does not bind itself (README: Shortcuts).
-  printf '%s\n' '{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x n":"diff:back","ctrl+x p":"permission:toggleDebug","ctrl+x q":"confirm:previousField"}}]}' > "$LIVE_CONFIG/keybindings.json"
+  # The drawer's three chords the engine does not bind itself (README: Shortcuts).
+  printf '%s\n' '{"bindings":[{"context":"Global","bindings":{"ctrl+x t":"pane:next","ctrl+x u":"pane:previous","ctrl+x q":"confirm:previousField"}}]}' > "$LIVE_CONFIG/keybindings.json"
   LIVE_CLAUDE=$RUN/claude
   cat > "$LIVE_CLAUDE" <<LAUNCH
 #!/bin/sh

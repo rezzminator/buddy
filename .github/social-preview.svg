@@ -20,7 +20,7 @@
       <tspan x="664" y="360">ASCII duck waddles above your prompt</tspan>
       <tspan x="664" y="402">and talks back — or bring back your /buddy</tspan>
     </text>
-    <text font-size="24" fill="#9aa3b2"><tspan x="664" y="468">Also ships Professor, cat, robot, ghost,</tspan><tspan x="664" y="502">dragon, yellow duck, or draw your own.</tspan></text>
+    <text font-size="24" fill="#9aa3b2"><tspan x="664" y="468">Also ships Professor, robot, ghost,</tspan><tspan x="664" y="502">dragon, yellow duck, or draw your own.</tspan></text>
     <text x="64" y="628" font-size="22" fill="#9aa3b2">github.com/rezzminator/buddy</text>
     <text x="1216" y="628" font-size="22" fill="#D97757" text-anchor="end">Claude Code plugin · MIT</text>
   </g>

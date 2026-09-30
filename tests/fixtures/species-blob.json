@@ -18,6 +18,6 @@
   },
   "lines": {
     "greeting": ["{name} blobs in."],
-    "petted": ["{name} wobbles.", "Again, says {name}."]
+    "thinking": ["{name} wobbles.", "Hmm, says {name}."]
   }
 }

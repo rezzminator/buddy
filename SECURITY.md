@@ -48,10 +48,12 @@ It writes four things, and nothing else:
   output), and the start and end of each answer, and per character what it
   exchanged with you after each: a `/buddy` question with its answer, a line
   it said, the `commentAfterEachTurn` and `suggestNextPrompt` it showed).
-  Deleting the chat's folder deletes it.
+  Beside it, `memory.md`: the same memory as the character drawn now reads
+  it, its own notes first, written for you to read. Deleting the chat's folder
+  deletes both.
 - **Its own Claude Code plugin store:** the picked character, the picked
   original companion's soul (its name and personality) and which install's
-  roll you chose, the pet count, and whether it is hidden.
+  roll you chose, and whether it is hidden.
 - **The log file**, unless `logFile` is empty: by default
   `~/.claude/buddy/buddy.log` (`$CLAUDE_CONFIG_DIR/buddy/buddy.log` when
   `CLAUDE_CONFIG_DIR` is set; a path you set is used with `~` and a leading `$CLAUDE_CONFIG_DIR` expanded), one JSON line

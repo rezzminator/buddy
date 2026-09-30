@@ -164,20 +164,6 @@
         " \\____)    ",
         "~~~~~~~~   "
       ]
-    ],
-    "petted": [
-      [
-        "    .-. <3 ",
-        "\\__( ^)=   ",
-        " \\____)    ",
-        "  L  L     "
-      ],
-      [
-        "    .-.  <3",
-        "\\__( ^)=   ",
-        " \\____)    ",
-        "  L  L     "
-      ]
     ]
   },
   "lines": {
@@ -200,11 +186,6 @@
       "Red. Tell me the story of that first failure.",
       "Quack. Start at the top line and read it to me.",
       "A failing test? I'm all ears. Well, all feathers."
-    ],
-    "petted": [
-      "Quack! Smooth feathers, happy duck.",
-      "Oh! A pat. Quack approves.",
-      "Squeak. That was my happy squeak."
     ],
     "thinking": [
       "Quack... thinking it over.",

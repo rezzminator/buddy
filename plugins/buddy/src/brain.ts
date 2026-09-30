@@ -58,8 +58,8 @@ export type Brain = {
   working: boolean;
   lastActivity: number;
   sleeping: boolean;
-  pets: number;
-  questions: number;
+  /** The last model bubble said to the user (an answer, a comment, a verdict, a failure), for the hover card; never a canned line nor the prompt sent to Claude; null until one. A character switch keeps it. */
+  lastToYou: string | null;
   lastLines: Partial<Record<LineEvent, string>>;
   turn: TurnSummary;
   lastCommentAfterEachTurnAt: number | null;
@@ -90,8 +90,7 @@ export function createBrain(character: Character, walkOverPromptBar: boolean, am
     working: false,
     lastActivity: 0,
     sleeping: false,
-    pets: 0,
-    questions: 0,
+    lastToYou: null,
     lastLines: {},
     turn: { tools: [], failures: 0, lastBash: '', actions: [] },
     lastCommentAfterEachTurnAt: null,
@@ -224,16 +223,9 @@ export function react(b: Brain, call: ToolCall & { command: string; action?: Act
   return outcome;
 }
 
-export function pet(b: Brain, rand: () => number): void {
-  wake(b, rand, { silent: true });
-  b.pets++;
-  sayLine(b, 'petted', 'petted', BUBBLE_MS, rand);
-}
-
 /** The thinking line, held with no timer of its own: only endQuestion ends it (the answer, the failure or the deadline). */
 export function beginQuestion(b: Brain, rand: () => number): void {
   wake(b, rand, { silent: true });
-  b.questions++;
   const line = pickLine(poolFor(b.character, 'thinking'), b.lastLines.thinking, rand);
   b.lastLines.thinking = line;
   // The thinking filler is noise, never remembered: it is not among `said`.
@@ -282,6 +274,7 @@ function mayShow(b: Brain, q: Queued): boolean {
 
 function show(b: Brain, q: Queued): void {
   b.talk = { ...q, until: b.now + ANSWER_MS, shownAt: b.now };
+  if (q.to !== 'claude') b.lastToYou = q.text;
 }
 
 /** A model bubble shown now when it may be, else waiting its turn behind the ones before it, the oldest waiting dropped past MAX_QUEUED. */
@@ -356,8 +349,8 @@ export function endTurn(b: Brain, commentAfterEachTurn: boolean, secondsBetweenC
   return { turn, commentAfterEachTurnDue };
 }
 
-/** The scene to draw now; the sprite keeps the column the bubble pushed it to. */
-export function sceneOf(b: Brain): Scene | null {
+/** The scene to draw now, its card saying `lastMessage`; the sprite keeps the column the bubble pushed it to. */
+export function sceneOf(b: Brain, lastMessage: string | null = b.lastToYou): Scene | null {
   const pose = currentPose(b);
   if (pose !== b.lastPose) {
     b.lastPose = pose;
@@ -377,7 +370,7 @@ export function sceneOf(b: Brain): Scene | null {
     confetti: b.confetti ? { seed: b.confetti.seed, tick: Math.floor((b.now - b.confetti.start) / CONFETTI_TICK_MS) } : null,
     sleeping: b.sleeping,
     zTick: b.motion.stillFrame,
-    stats: { pets: b.pets, questions: b.questions },
+    lastMessage,
     now: b.now,
     ambiguousCharacterWidth: b.ambiguousCharacterWidth,
   });
