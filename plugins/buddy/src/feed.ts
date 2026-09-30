@@ -12,7 +12,14 @@ import { COMPACTION, type Block } from './chatTurnsToRead.ts';
 import type { TurnCut, Verdict } from './prompts.ts';
 import { statsBrief } from './stats.ts';
 
-export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'line' | 'failed' | 'clear';
+/** Every kind this build files and draws; a stored feed may still hold an older build's others. */
+export const FEED_KINDS = ['you', 'compact', 'ask', 'answer', 'comment', 'verdict', 'suggest', 'line', 'failed', 'clear'] as const;
+export type FeedKind = (typeof FEED_KINDS)[number];
+
+/** `feed` without the entries of a kind this build no longer has (an older build's `memory` notes), in order. */
+export function knownEntries(feed: readonly FeedEntry[]): FeedEntry[] {
+  return feed.filter((e) => (FEED_KINDS as readonly string[]).includes(e.kind));
+}
 
 /**
  * One entry. `who` and `color`: the character that said it (its name and

@@ -14,7 +14,7 @@ import {
 } from '../src/chatTurnsToRead.ts';
 import { MEMORY_FILE, MEMORY_TEXT_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, denialReason, didOf, failureReason, type Action as Step, type Failure } from '../src/did.ts';
-import { answerSuggestions, feedOfMemory, isTaken, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
+import { answerSuggestions, feedOfMemory, isTaken, knownEntries, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
 import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
@@ -784,7 +784,7 @@ function changeFeed(st: State, $: EngineInterface, what: string, change: (feed: 
   st.feedChain = st.feedChain
     .then(async () => {
       // The drawer spans what the buddy remembers: turns it has forgotten leave the feed with it.
-      await update($, FEED, (feed) => pruneToMemory(change([...(feed ?? [])]), st.options.chatTurnsToRead));
+      await update($, FEED, (feed) => pruneToMemory(change(knownEntries(feed ?? [])), st.options.chatTurnsToRead));
       if (st.drawer.open) scrollDrawerToEnd(st, $);
     })
     .catch((error: unknown) => log($, `the drawer's feed: ${what}`, error));
@@ -1025,7 +1025,7 @@ function lastMessage(st: State): string | null {
 
 /** A brain new since the reload has said nothing to you yet: the card says the feed's last message to you. */
 async function readLastInFeed(st: State, $: EngineInterface): Promise<void> {
-  if (st.b && st.b.lastToYou === null) st.lastInFeed = lastMessageOf(await read($, FEED));
+  if (st.b && st.b.lastToYou === null) st.lastInFeed = lastMessageOf(knownEntries(await read($, FEED)));
 }
 
 function bandScene(st: State, $: EngineInterface, p: BandProps): Scene | null {
@@ -2096,7 +2096,8 @@ async function drawDrawerBand(st: State, $: EngineInterface, e: { surface: strin
   const first = st.drawer.bandId === '';
   st.drawer.bandId = e.requestId;
   if (first) scrollDrawerToEnd(st, $);
-  const feed = await read($, FEED);
+  // An older build's kinds (its `memory` notes) stay out: the thread is the conversation only.
+  const feed = knownEntries(await read($, FEED));
   const v = drawerView(st, feed, e.props.bodyColumns, e.props.maxRows);
   if (!v) return null;
   return drawDrawer(E, v, {

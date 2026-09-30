@@ -2353,6 +2353,23 @@ describe('the drawer', () => {
     await ui.unmount();
   });
 
+  test('a newest message taller than the body keeps the band\'s rows: its first lines, how many more, and the memory row under it', async ($, on) => {
+    const tall = `Start ${'of a very long comment '.repeat(120)}end.`;
+    const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: `COMMENT_AFTER_EACH_TURN: ${tall}` }] });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 140, maxRows: 20 });
+    await $.turn.start({ text: 'fix the build', turnId: 't1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(rowsOf(await ui.drawn())).toBe(20);
+    expect(await shows(ui, /^Start of a very long comment/)).toBe(true);
+    expect(await shows(ui, /^… \d+ more lines$/)).toBe(true);
+    expect(await shows(ui, /^memory {2}/)).toBe(true);
+    await ui.unmount();
+  });
+
   test('before memory.md is written, its row says who writes it and when; a refused write is said, memory.json kept', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true });
     await $.session.start(START);

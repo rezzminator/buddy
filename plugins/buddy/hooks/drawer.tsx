@@ -151,7 +151,7 @@ function sectionRule(E: Elements, key: string, width: number, head: string, body
   );
 }
 
-/** The thread the buddy remembers, oldest first: a section per turn of yours or compaction, each message of yours and its under it; the newest `height` rows of it, the first then saying how many messages are older; and the rows it takes, past `height` when the newest is taller. */
+/** The thread the buddy remembers, oldest first: a section per turn of yours or compaction, each message of yours and its under it; the newest `height` rows of it, the first then saying how many messages are older; and the rows it takes, never past `height`: a newest message taller than that shows its first lines and how many more. */
 function thread(E: Elements, v: DrawerView, centerW: number, height: number): { nodes: unknown; rows: number } {
   const { Box, Text } = E;
   const textW = Math.max(10, centerW - LABEL_W - DRAWER_MARK - 1);
@@ -159,13 +159,15 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number): { 
   const messages = v.feed.filter((e) => e.kind !== 'line');
   // The newest suggested prompt still open is the one ctrl+x u uses.
   const open = openSuggestion(messages)?.id;
+  // A one-row entry, the same at any limit.
+  const one = (node: unknown) => ({ tall: 1, node: (_limit: number) => node });
   const drawn = messages.map((e) => {
-    if (e.kind === 'clear') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  new conversation`, '') };
-    if (e.kind === 'compact') return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text) };
+    if (e.kind === 'clear') return one(sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  new conversation`, ''));
+    if (e.kind === 'compact') return one(sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  chat compacted · ${v.name} read its summary: `, e.text));
     if (e.kind === 'you') {
       // The turn's numbers in brief once it ended, and whether the buddy never read it.
       const notes = [e.numbers ?? '', e.read === false ? `${UNREAD[e.ended ?? 'unanswered']}, ${v.name} never read it` : ''].filter(Boolean);
-      return { tall: 1, node: sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, notes.length > 0 ? `  · ${notes.join(' · ')}` : '') };
+      return one(sectionRule(E, `d${e.id}`, centerW, `${clockOf(e.at)}  you → Claude: `, e.text, notes.length > 0 ? `  · ${notes.join(' · ')}` : ''));
     }
     const who = speaker(e, v);
     const lines = wrapText(e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text, textW);
@@ -181,7 +183,11 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number): { 
           : e.id === open
             ? <Text color="magenta">ctrl+x u uses it</Text>
             : null;
-    return { tall, node: (
+    // Cut to `limit` rows: its first lines, then how many more.
+    const node = (limit: number) => {
+      const cut = tall > limit;
+      const shown = cut ? [...lines, ...wants].slice(0, Math.max(0, limit - 1)) : null;
+      return (
       <Box key={`d${e.id}`} flexDirection="row">
         <Box width={LABEL_W} flexShrink={0}>
           <Text wrap="truncate-end">
@@ -190,23 +196,27 @@ function thread(E: Elements, v: DrawerView, centerW: number, height: number): { 
           </Text>
         </Box>
         <Box flexDirection="column" flexGrow={1}>
-          {lines.map((l) => (who.text ? <Text color={who.text} italic={e.kind === 'suggest'} bold={e.kind === 'verdict' && who.bold}>{l}</Text> : <Text bold={who.bold}>{l}</Text>))}
-          {wants.map((l) => <Text dimColor>{l}</Text>)}
+          {(shown ?? lines).map((l) => (who.text ? <Text color={who.text} italic={e.kind === 'suggest'} bold={e.kind === 'verdict' && who.bold}>{l}</Text> : <Text bold={who.bold}>{l}</Text>))}
+          {shown ? <Text dimColor>{`… ${tall - shown.length} more lines`}</Text> : wants.map((l) => <Text dimColor>{l}</Text>)}
         </Box>
         <Box width={DRAWER_MARK} flexShrink={0} justifyContent="flex-end">{end}</Box>
       </Box>
-    ) };
+      );
+    };
+    return { tall, node };
   });
   if (drawn.length === 0) return { nodes: <Text dimColor>{`Nothing between you and ${v.name} yet: ask it below, or finish a turn with Claude.`}</Text>, rows: 1 };
   let from = drawn.length;
   let used = 0;
   while (from > 0 && used + drawn[from - 1]!.tall <= height) used += drawn[--from]!.tall;
-  // Past the height, the oldest go, a row left to say so; the newest is drawn whole even when it is taller.
+  // Past the height, the oldest go, a row left to say so; a newest taller than what is left is cut to fit.
   if (from > 0 && used + 1 > height && from < drawn.length - 1) used -= drawn[from++]!.tall;
   if (from === drawn.length) from = drawn.length - 1;
+  const room = height - (from === 0 ? 0 : 1);
   const shown = drawn.slice(from);
-  const rows = shown.reduce((n, d) => n + d.tall, from === 0 ? 0 : 1);
-  const nodes = shown.map((d) => d.node);
+  const limits = shown.map((d) => (shown.length === 1 ? Math.min(d.tall, room) : d.tall));
+  const rows = limits.reduce((n, l) => n + l, from === 0 ? 0 : 1);
+  const nodes = shown.map((d, i) => d.node(limits[i]!));
   return { nodes: from === 0 ? nodes : [<Text key="older" dimColor>{`↑ ${from} older message${from === 1 ? '' : 's'}`}</Text>, ...nodes], rows };
 }
 
@@ -271,7 +281,7 @@ export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
   const askW = Math.min(64, Math.max(30, Math.floor(innerW * 0.4)));
   const barRows = Math.max(Input ? 3 : 0, 1 + guideRows(innerW - (Input ? askW + 2 : 0), Boolean(Input)));
   const bodyRows = Math.max(4, v.rows - 2 - barRows - 1);
-  // A newest message taller than the body stretches it, drawn whole: the band then scrolls.
+  // The body never outgrows the band: a newest message taller than it shows its first lines and how many more, so the guide and the memory row stay on screen.
   const t = thread(E, v, centerW, bodyRows - 2);
   const withSprite = v.sprite.length + 2 <= bodyRows - 2;
   const left = (
@@ -288,7 +298,7 @@ export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
     <Box key="frame" flexDirection="column" width={W} borderStyle="round" borderColor={v.color} paddingX={1}>
       <Box flexDirection="row" gap={1}>
         {left}
-        <Box key="body" flexDirection="column" flexGrow={1} justifyContent="flex-end" paddingX={1} height={Math.max(bodyRows, t.rows + 2)} {...frame}>{t.nodes}</Box>
+        <Box key="body" flexDirection="column" flexGrow={1} justifyContent="flex-end" paddingX={1} height={bodyRows} {...frame}>{t.nodes}</Box>
       </Box>
       <Box key="bar" flexDirection="row" gap={2}>
         <Box flexDirection="column" flexGrow={1} flexShrink={1} justifyContent="flex-end">

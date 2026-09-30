@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  answerSuggestions, feedOfMemory, isTaken, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
+  answerSuggestions, feedOfMemory, knownEntries, isTaken, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, seconds, short, statsOf, wrapText,
   type FeedEntry,
 } from '../plugins/buddy/src/feed.ts';
 
@@ -85,6 +85,17 @@ describe('the feed', () => {
     f = pushEntry(f, { at, kind: 'failed', text: 'timeout' });
     expect(statsOf(f)).toEqual({ comments: 1, answers: 1, asks: 0, suggestions: 1, taken: 1, failed: 1, avgMs: 2000, tokens: 750 });
     expect(statsOf([]).avgMs).toBeNull();
+  });
+});
+
+describe('entries a stored feed carries from an older build', () => {
+  test('keeps the kinds this build draws, in order, and drops the rest', () => {
+    const stored = [
+      { id: 1, at: 1, kind: 'you', text: 'hi' },
+      { id: 2, at: 2, kind: 'memory', text: 'rule: old' },
+      { id: 3, at: 3, kind: 'comment', text: 'ok' },
+    ] as unknown as FeedEntry[];
+    expect(knownEntries(stored).map((e) => e.id)).toEqual([1, 3]);
   });
 });
 
