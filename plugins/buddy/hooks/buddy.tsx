@@ -1888,20 +1888,20 @@ function openPicker(st: State, $: EngineInterface): void {
   const current = currentKeyOf(b.character.id, st.saved?.variant);
   const rows = paneRows(menuOf(st, st.originals ?? { kind: 'none', notes: [] }), current);
   lg($, 'info', 'personality.open', { current: b.character.id, rows });
-  openPane($, rows);
-  buildPicker(st, $, current, rows).catch((error: unknown) => log($, 'building the personality pane', error));
+  const opened = openPane($, rows);
+  buildPicker(st, $, current, rows, opened).catch((error: unknown) => log($, 'building the personality pane', error));
 }
 
-/** The personality pane opened, or brought forward, `rows` tall and holding the keyboard. */
-function openPane($: EngineInterface, rows: number): void {
-  $.ui
+/** The personality pane opened, or brought forward, `rows` tall and holding the keyboard; settles once the engine has answered. */
+function openPane($: EngineInterface, rows: number): Promise<void> {
+  return $.ui
     .open({ id: PICKER, title: 'personality', focus: true, closeOnEscape: true, rows })
     .then((r) => lg($, 'info', 'personality.pane', { placed: r.isPlaced }))
     .catch((error: unknown) => log($, 'opening the personality pane', error));
 }
 
 /** The pane's list built afresh, lit on the one drawn now; the pane asked for more rows than `asked` when it needs them. */
-async function buildPicker(st: State, $: EngineInterface, current: string, asked: number): Promise<void> {
+async function buildPicker(st: State, $: EngineInterface, current: string, asked: number, opened: Promise<void>): Promise<void> {
   st.menu = null;
   $.ui.invalidate('ui.render');
   const originals = await findOriginals($);
@@ -1912,8 +1912,25 @@ async function buildPicker(st: State, $: EngineInterface, current: string, asked
   const focused = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
   st.menu = { model, current, focused, litAt: st.drawer.frame, soul: originals.kind === 'found' ? originals.soul : null };
   const rows = paneRows(model, focused);
-  if (rows > asked) openPane($, rows);
+  if (rows > asked) void openPane($, rows);
   $.ui.invalidate('ui.render');
+  await opened;
+  ringOnLit(st, $);
+}
+
+/**
+ * The ring put on the lit row: autoFocus places it only when the pane first
+ * takes the keyboard, and ctrl+x t on a pane opened while the composer held
+ * text is no take, so the ring would start on nothing. Denied while the
+ * composer keeps the keys, which the pane's hint already says.
+ */
+function ringOnLit(st: State, $: EngineInterface): void {
+  const key = st.menu?.focused;
+  if (!key) return;
+  $.ui
+    .focus({ requestId: PICKER, key })
+    .then((r) => lg($, 'info', 'personality.ring', { key, ...(r.deny ? { deny: r.deny } : {}) }))
+    .catch((error: unknown) => log($, "putting the personality pane's ring on the lit row", error));
 }
 
 /** The row `key` lit, its preview begun again at its first frame: the engine moves the ring without drawing, so the pane is drawn again. */
