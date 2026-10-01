@@ -433,10 +433,16 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
   verdict), and its `suggestNextPrompt.outcome` its `ms`, all counted from
   the turn's end to the reply.
 - `npm run audit` (from a clone of this repo; `-- --since 7d` for a span)
-  reads every model call's `call.cost` record from the log and prints, per
-  day, per kind of call and in total: the calls, tokens in and out, an
-  estimated cost at list prices, the turns each call remembered and how much
-  of those turns' text the memory cut.
+  reads every model call's `call.cost` record from `buddy.log` and its
+  rotated archives and prints, per day, per kind of call and in total: the
+  calls, tokens in and out, the cost in dollars, the turns each call
+  remembered and how much of those turns' text the memory cut. The cost is
+  the `usd` each record logged at buddy's list prices; an older record
+  without one is priced from the same table, `plugins/buddy/src/prices.ts`
+  (`priceCall`), which the audit imports. A model with no price is named and
+  left out of the cost, never shown as $0, and a `*` marks a row that left
+  such calls out. The audit imports the engine's TypeScript price table
+  directly, so it needs Node 23.6 or later (type stripping on by default).
 
 ## 🎨 Your own character
 

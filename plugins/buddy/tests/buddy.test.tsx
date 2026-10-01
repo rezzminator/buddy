@@ -2563,7 +2563,7 @@ describe('memory: whole messages, compactions, retries, and the drawer spanning 
     await ui.unmount();
   });
 
-  test('every model call logs call.cost: its tokens, and how much of the turns its memory kept and cut', async ($, on) => {
+  test('every model call logs call.cost: its tokens, its price in dollars, and how much of the turns its memory kept and cut', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     await $.turn.start({ text: 'p'.repeat(20_000), turnId: 't1' } as never);
@@ -2571,7 +2571,20 @@ describe('memory: whole messages, compactions, retries, and the drawer spanning 
     await w.clock.settle();
     const cost = records(w).filter((r) => r.event === 'call.cost');
     expect(cost).toHaveLength(1);
-    expect(cost[0]).toMatchObject({ kind: 'endOfTurn', outcome: 'answered', inTok: 1, outTok: 1, memTurns: 1, memFull: 20_005, memKept: 4800 + 2400 + 3 + 5 });
+    // usd: opus lists $4 in and $20 out per million tokens, and the mock call spent one token each way.
+    expect(cost[0]).toMatchObject({ kind: 'endOfTurn', outcome: 'answered', inTok: 1, outTok: 1, usd: (4 + 20) / 1e6, memTurns: 1, memFull: 20_005, memKept: 4800 + 2400 + 3 + 5 });
+  });
+
+  test('a call on a model with no price logs call.cost with no usd at all: never 0, never null', { options: { model: 'gpt-x' } }, async ($, on) => {
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    await $.turn.start({ text: 'hello', turnId: 't1' } as never);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    const cost = records(w).filter((r) => r.event === 'call.cost');
+    expect(cost).toHaveLength(1);
+    expect(cost[0]).toMatchObject({ kind: 'endOfTurn', outcome: 'answered', model: 'gpt-x', inTok: 1, outTok: 1 });
+    expect('usd' in cost[0]!).toBe(false);
   });
 });
 

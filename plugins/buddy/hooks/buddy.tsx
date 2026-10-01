@@ -18,6 +18,7 @@ import { answerSuggestions, feedOfMemory, isTaken, knownEntries, lastMessageOf, 
 import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
+import { priceCall } from '../src/prices.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
@@ -1407,9 +1408,11 @@ async function completeRecorded(st: State, $: EngineInterface, kind: RoundCall['
     round.dirty = true;
     writeRound(st, $, round);
   };
-  // One line per call for the audit (scripts/audit.mjs): what it cost, and how much of the chat's turns its memory cut.
-  const cost = (outcome: string, usage: Record<string, number>) =>
-    lg($, 'info', 'call.cost', { kind, model: settings.model, outcome, ms: Date.now() - at, ...usage, memTurns: memory.turns, memKept: memory.kept, memFull: memory.full, promptChars: system.length + prompt.length });
+  // One line per call for the audit (scripts/audit.mjs): what it cost (usd, left out for a model with no price), and how much of the chat's turns its memory cut.
+  const cost = (outcome: string, usage: Record<string, number>) => {
+    const usd = priceCall(settings.model, usage);
+    lg($, 'info', 'call.cost', { kind, model: settings.model, outcome, ms: Date.now() - at, ...usage, ...(usd === undefined ? {} : { usd }), memTurns: memory.turns, memKept: memory.kept, memFull: memory.full, promptChars: system.length + prompt.length });
+  };
   try {
     const r = await $.model.complete(request);
     const usage = 'usage' in r ? usageFields(r.usage) : {};
