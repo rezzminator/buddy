@@ -1,5 +1,6 @@
 import { clockOf, seconds, short, statsOf, wrapText, type FeedEntry, type TurnEnding } from '../src/feed.ts';
-import { findItem, listWidth, listWindow, menuRows, previewOf, rowLabel, type Menu } from '../src/menu.ts';
+import { findItem, listWidth, listWindow, menuRows, paneRows, previewOf, rowLabel, type Menu } from '../src/menu.ts';
+import { pickerBodyRows, pickerContentRows } from '../src/drawer.ts';
 import type { Soul } from '../src/original.ts';
 
 /** What a turn row says of a turn the buddy never read, by how it ended; `unanswered` when that was not kept. */
@@ -319,7 +320,7 @@ export function drawDrawer(E: Elements, v: DrawerView, act: DrawerActs) {
 // ---- the personality pane ----------------------------------------------------
 
 /** What the personality pane draws from. `frame`: the preview's tick since its row was lit. `isFocused`: the pane holds the keyboard. `rows`: its body's. `menu`: null while it is built. */
-export type PickerView = { menu: MenuState | null; frame: number; now: number; isFocused: boolean; rows: number };
+export type PickerView = { menu: MenuState | null; frame: number; now: number; isFocused: boolean; rows: number; wantedRows: number };
 
 /**
  * The personality pane ctrl+x t opens: every character a Button, the lit one
@@ -332,8 +333,9 @@ export function drawPicker(E: Elements, v: PickerView, press: (key: string) => v
   // Text in the composer keeps the keys there: the pane says how to reach it.
   const hint = v.isFocused ? null : <Text key="hint" dimColor wrap="truncate-end">clear your prompt, then ctrl+x t to choose with ↑ ↓ and Enter</Text>;
   const m = v.menu;
-  if (!m) return <Box flexDirection="column">{hint}<Text dimColor>Finding every character…</Text></Box>;
-  const height = Math.max(1, v.rows - (hint ? 1 : 0));
+  if (!m) return <Box flexDirection="column" height={pickerContentRows(v.wantedRows, v.rows)}>{hint}<Text dimColor>Finding every character…</Text></Box>;
+  const wanted = paneRows(m.model, m.focused);
+  const height = Math.max(1, pickerBodyRows(wanted, v.rows) - (hint ? 1 : 0));
   const rows = menuRows(m.model);
   const { from, to } = listWindow(rows, m.focused, height);
   const list = rows.slice(from, to).map((r) => {
@@ -360,7 +362,7 @@ export function drawPicker(E: Elements, v: PickerView, press: (key: string) => v
       </Box>
     );
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={pickerContentRows(wanted, v.rows)}>
       {hint}
       <Box flexDirection="row" gap={3}>
         <Box flexDirection="column" flexShrink={0} width={listWidth(m.model)}>

@@ -753,7 +753,7 @@ function eyesOf(variant: 'native' | 'npm'): RegExp {
 
 /** The personality pane's id, and its props as the terminal draws it inline above the prompt, holding the keyboard (the composer empty). */
 const PICKER = 'personality';
-const PANE = { title: 'personality', isFocused: true, bodyColumns: 100, placement: 'inline' as const, scroll: { offset: 0, bodyRows: 20 }, view: {} };
+const PANE = { title: 'personality', isFocused: true, bodyColumns: 100, placement: 'inline' as 'inline' | 'dock', scroll: { offset: 0, bodyRows: 20 }, view: {} };
 
 /** /buddy opens the drawer on `ui`, the band; ctrl+x t opens the personality pane, drawn here with `props`, its list built. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -793,6 +793,71 @@ async function label(ui: any, key: string): Promise<unknown> {
 }
 
 describe('the personality pane', () => {
+  test('the picker keeps its requested content height while the surface measures a short first body', async ($, on) => {
+    const w = world(on, { character: 'duck' });
+    await $.session.start(START);
+    const ui = await band($);
+    const pane = await personality($, w, ui, { scroll: { offset: 0, bodyRows: 0 } });
+    const wanted = (w.opens.at(-1) as { rows: number }).rows;
+    expect(rowsOf(await pane.drawn())).toBe(wanted);
+    expect(await shows(pane, /^Shipped$/)).toBe(true);
+    await pane.unmount();
+    await ui.unmount();
+  });
+
+  test('the inline picker leaves room above the drawer; closing and reopening the drawer restores its full height', async ($, on) => {
+    const w = world(on, { character: 'duck' });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 160, maxRows: 50 });
+    const pane = await personality($, w, ui);
+    const wanted = (w.opens.at(-1) as { rows: number }).rows;
+    expect(rowsOf(await ui.drawn())).toBe(50 - wanted - 2 - 6);
+    expect(await pane.find({ key: 'use:duck' })).toBeDefined();
+    await fold(ui, w);
+    expect(w.closes).toEqual(['personality']);
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(rowsOf(await ui.drawn())).toBe(50);
+    await pane.unmount();
+    await ui.unmount();
+  });
+
+  test('a fullscreen dock leaves the drawer its full band', async ($, on) => {
+    const w = world(on, { character: 'duck' });
+    await $.session.start(START);
+    const ui = await $.ui.mount({ plugin: 'buddy', surface: 'terminal', component: 'AbovePrompt', requestId: BAND_ID, viewport: { columns: 160, rows: 80, isFullscreen: true }, props: { ...BAND, bodyColumns: 160, scroll: { offset: 0, bodyRows: 40 }, view: {} } });
+    const pane = await personality($, w, ui, { placement: 'dock' });
+    expect(rowsOf(await ui.drawn())).toBe(40);
+    await pane.unmount();
+    await ui.unmount();
+  });
+
+  test('an earlier open left unplaced after the taller rebuilt list was placed keeps the drawer clear of the picker', async ($, on) => {
+    // The first, shorter open answers last, and unplaced; the taller one the rebuilt list asks for is placed.
+    let release = (): void => {};
+    const held = new Promise<void>((r) => (release = r));
+    let seen = 0;
+    on('ui.open', { id: PICKER }, async (_$, e, next) => {
+      if (++seen === 1) {
+        await held;
+        return { value: { isPlaced: false as const } } as never;
+      }
+      const placed = await next(e);
+      release();
+      return placed;
+    });
+    const w = world(on, {}, {}, { files: { [CONFIG]: config(MOCHI) } });
+    await $.session.start(START);
+    const ui = await band($, { bodyColumns: 160, maxRows: 50 });
+    const pane = await personality($, w, ui);
+    await w.clock.settle();
+    expect(w.opens).toHaveLength(1);
+    const wanted = (w.opens.at(-1) as { rows: number }).rows;
+    expect(rowsOf(await ui.drawn())).toBe(50 - wanted - 2 - 6);
+    await pane.unmount();
+    await ui.unmount();
+  });
+
   test('ctrl+x t opens it holding the keyboard, Esc closing it: the groups titled, each character a Button, the current one marked, ringed and previewed', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { files: { [CONFIG]: config() } });
     await $.session.start(START);

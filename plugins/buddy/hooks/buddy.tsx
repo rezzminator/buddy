@@ -16,6 +16,7 @@ import { MEMORY_FILE, MEMORY_TEXT_FILE, buddyFolder, isSessionId, projectSlug, p
 import { actionOf, denialReason, didOf, failureReason, returnedOf, type Action as Step, type Failure } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, isTaken, knownEntries, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
 import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
+import { drawerRows } from '../src/drawer.ts';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
 import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { priceCall } from '../src/prices.ts';
@@ -173,7 +174,7 @@ type State = {
 };
 
 /** The drawer: open or not, its clock, the animation's tick, the ask box's unsent text, the band's id once drawn (to scroll it). */
-type Drawer = { open: boolean; timer: Timer | null; frame: number; draft: string; bandId: string };
+type Drawer = { open: boolean; timer: Timer | null; frame: number; draft: string; bandId: string; pickerRows: number };
 
 type BandProps = { hasSurvey: boolean; isWorking: boolean; maxRows: number; bodyColumns: number };
 type PaneProps = { isFocused: boolean; scroll: { bodyRows: number } };
@@ -1897,16 +1898,28 @@ function openPicker(st: State, $: EngineInterface): void {
   const current = currentKeyOf(b.character.id, st.saved?.variant);
   const rows = paneRows(menuOf(st, st.originals ?? { kind: 'none', notes: [] }), current);
   lg($, 'info', 'personality.open', { current: b.character.id, rows });
-  const opened = openPane($, rows);
+  const opened = openPane(st, $, rows);
   buildPicker(st, $, current, rows, opened).catch((error: unknown) => log($, 'building the personality pane', error));
 }
 
 /** The personality pane opened, or brought forward, `rows` tall and holding the keyboard; settles once the engine has answered. */
-function openPane($: EngineInterface, rows: number): Promise<void> {
+function openPane(st: State, $: EngineInterface, rows: number): Promise<void> {
+  // Make room before the surface measures the inline pane's body.
+  st.drawer.pickerRows = rows;
+  $.ui.invalidate('ui.render');
   return $.ui
     .open({ id: PICKER, title: 'personality', focus: true, closeOnEscape: true, rows })
-    .then((r) => lg($, 'info', 'personality.pane', { placed: r.isPlaced }))
-    .catch((error: unknown) => log($, 'opening the personality pane', error));
+    .then((r) => {
+      // Only this open's own reservation is given back: a taller one asked since stands.
+      if (!r.isPlaced && st.drawer.pickerRows === rows) st.drawer.pickerRows = 0;
+      $.ui.invalidate('ui.render');
+      lg($, 'info', 'personality.pane', { placed: r.isPlaced });
+    })
+    .catch((error: unknown) => {
+      if (st.drawer.pickerRows === rows) st.drawer.pickerRows = 0;
+      $.ui.invalidate('ui.render');
+      log($, 'opening the personality pane', error);
+    });
 }
 
 /** The pane's list built afresh, lit on the one drawn now; the pane asked for more rows than `asked` when it needs them. */
@@ -1921,7 +1934,7 @@ async function buildPicker(st: State, $: EngineInterface, current: string, asked
   const focused = findItem(model, current) ? current : (allItems(model)[0]?.key ?? '');
   st.menu = { model, current, focused, litAt: st.drawer.frame, soul: originals.kind === 'found' ? originals.soul : null };
   const rows = paneRows(model, focused);
-  if (rows > asked) void openPane($, rows);
+  if (rows > asked) void openPane(st, $, rows);
   $.ui.invalidate('ui.render');
   await opened;
   ringOnLit(st, $);
@@ -1962,6 +1975,7 @@ async function pressRow(st: State, $: EngineInterface, key: string): Promise<voi
 /** The personality pane closed, with the drawer. */
 function closePicker(st: State, $: EngineInterface): void {
   st.menu = null;
+  st.drawer.pickerRows = 0;
   $.ui.close({ id: PICKER }).catch((error: unknown) => log($, 'closing the personality pane', error));
 }
 
@@ -1969,7 +1983,7 @@ function closePicker(st: State, $: EngineInterface): void {
 function drawPickerPane(st: State, $: EngineInterface, e: { surface: string; requestId: string; props: PaneProps }): RenderElement {
   const E = $.ui.resolve(e as never) as unknown as Elements;
   const m = st.menu;
-  const view = { menu: m, frame: m ? Math.max(0, st.drawer.frame - m.litAt) : 0, now: Date.now(), isFocused: e.props.isFocused, rows: e.props.scroll.bodyRows };
+  const view = { menu: m, frame: m ? Math.max(0, st.drawer.frame - m.litAt) : 0, now: Date.now(), isFocused: e.props.isFocused, rows: e.props.scroll.bodyRows, wantedRows: st.drawer.pickerRows };
   return drawPicker(E, view, (key) => {
     pressRow(st, $, key).catch((error: unknown) => log($, 'picking a character', error));
   });
@@ -2100,14 +2114,14 @@ function toggleDrawer(st: State, $: EngineInterface): { text: string } {
 }
 
 /** The drawer in the band above the prompt; a thread taller than the band scrolls in it. */
-async function drawDrawerBand(st: State, $: EngineInterface, e: { surface: string; requestId: string; props: BandProps }): Promise<RenderElement | null> {
+async function drawDrawerBand(st: State, $: EngineInterface, e: { surface: string; requestId: string; props: BandProps; viewport?: { isFullscreen?: boolean } }): Promise<RenderElement | null> {
   const E = $.ui.resolve(e as never) as unknown as Elements;
   const first = st.drawer.bandId === '';
   st.drawer.bandId = e.requestId;
   if (first) scrollDrawerToEnd(st, $);
   // An older build's kinds (its `memory` notes) stay out: the thread is the conversation only.
   const feed = knownEntries(await read($, FEED));
-  const v = drawerView(st, feed, e.props.bodyColumns, e.props.maxRows);
+  const v = drawerView(st, feed, e.props.bodyColumns, drawerRows(e.props.maxRows, st.drawer.pickerRows, e.viewport?.isFullscreen === true));
   if (!v) return null;
   return drawDrawer(E, v, {
     use: (text) => useSuggestion($, text),
@@ -2446,7 +2460,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     calls: 0,
     feedChain: Promise.resolve(),
     lastInFeed: null,
-    drawer: { open: false, timer: null, frame: 0, draft: '', bandId: '' },
+    drawer: { open: false, timer: null, frame: 0, draft: '', bandId: '', pickerRows: 0 },
   };
   // Every log record, at any level, joins the round being written; the drawing's per-second records and a round write's own failure do not.
   tapped = st;
@@ -2494,6 +2508,19 @@ export const register: Register = (on: On, options: PluginOptions) => {
       log($, 'drawing the personality pane', error);
       return next(e);
     }
+  });
+
+  // The pane closed (Esc, or the engine): the drawer takes its full height back.
+  on('ui.close', { id: PICKER }, async ($, e, next) => {
+    const result = await next(e);
+    try {
+      st.drawer.pickerRows = 0;
+      st.menu = null;
+      $.ui.invalidate('ui.render');
+    } catch (error) {
+      log($, 'closing the personality pane', error);
+    }
+    return result;
   });
 
   // ↑ and ↓ in the pane move the engine's ring without drawing it again: the row it lands on is lit, the preview following.

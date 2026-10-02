@@ -5,6 +5,7 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 ## [Unreleased]
 
 ### Fixed
+- ctrl+x t in `/buddy` opened the personality picker out of sight in a terminal: the open drawer kept every row above the prompt, so the picker never drew. The drawer now makes room for the picker while it is open, and takes its full height back when you close it with Esc or fold the drawer; in fullscreen the picker sits beside the transcript and the drawer keeps its height.
 - The buddy sees only the main chat, as you do: a subagent's tool calls, files, lines, test runs, commits and tokens no longer count in the turn's numbers (the `subagents` group is gone), so a background agent's deliberately failing run no longer reads as Claude's own failed test, which had the buddy ask Claude about a failure it never saw. What a foreground agent returns is read under the turn's steps (`Its agent “…” returned: …`), and an agent the harness launched asynchronously reads as reporting back later.
 - A command whose exit 1 came from the check it ends on (`grep -c`, `[ $rc -ne 0 ] && tail …`, `test`, `diff`, `cmp`) no longer reads as plainly failed: its step says ``(failed: exit 1 from its last check (`grep -c …`): …)``, so the buddy stops calling such work broken.
 - A temp file is not the work: a shell command's paths under `/tmp`, `/var/folders` or the system's temp folders, links followed (outside the session's folder) are neither counted as edits nor swept, so `> /tmp/run.log` no longer reads as an edit of that log.
