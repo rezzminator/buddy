@@ -2772,12 +2772,12 @@ const SUBMITTER = {
 };
 
 describe('promptToMainChat', () => {
-  test("the kit hands a plugin's own $.prompt.submit to its own prompt.submit hook, but with no origin, and drops a context given at the call", SUBMITTER, async ($, on) => {
+  test("the kit hands a plugin's own $.prompt.submit to its own prompt.submit hook with that plugin as its origin, and drops a context given at the call", SUBMITTER, async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(w.submitted.filter((x) => x.text === 'from the submitter')).toEqual([{ text: 'from the submitter', context: ['seen by its own hook: {"self":"submitter"}'] }]);
+    expect(w.submitted.filter((x) => x.text === 'from the submitter')).toEqual([{ text: 'from the submitter', context: ['seen by its own hook: {"origin":{"kind":"plugin","name":"submitter"},"self":"submitter"}'] }]);
   });
   test("buddy's own prompt carries, for Claude alone, whose it is; another plugin's does not; the turn it starts is filed as the buddy's own", async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Hm.\nSUGGEST_NEXT_PROMPT: NONE' } });
