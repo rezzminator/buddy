@@ -12,13 +12,13 @@ describe('a step', () => {
     expect(did([{ tool: 'Bash', command: 'npm test', description: 'Run the unit tests' }, true])).toEqual(['Run the unit tests (failed)']);
   });
   test('an undescribed command without its cds, paths cut to their last part, at most 72', () => {
-    expect(did([{ tool: 'Bash', command: 'cd /Users/x/repo && cat /Users/x/repo/src/a.ts' }])).toEqual(['ran cat a.ts']);
+    expect(did([{ tool: 'Bash', command: 'cd /w/x/repo && cat /w/x/repo/src/a.ts' }])).toEqual(['ran cat a.ts']);
     expect(did([{ tool: 'Bash', command: `echo ${'y'.repeat(80)}` }])[0]).toBe(`ran echo ${'y'.repeat(66)}…`);
   });
   test('a path is cut to its last part, never glued to the word before it; a URL stays whole', () => {
     const ran = (command: string): string | undefined => did([{ tool: 'Bash', command }])[0];
     expect(ran('npx vitest run plugins/buddy/test/buddy.test.tsx')).toBe('ran npx vitest run buddy.test.tsx');
-    expect(ran('cat /Users/x/a/b.ts')).toBe('ran cat b.ts');
+    expect(ran('cat /w/x/a/b.ts')).toBe('ran cat b.ts');
     expect(ran('git -C ~/work/repo status')).toBe('ran git -C repo status');
     expect(ran('curl -s https://example.com/api/v1')).toBe('ran curl -s https://example.com/api/v1');
   });
