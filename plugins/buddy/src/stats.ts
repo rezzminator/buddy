@@ -58,15 +58,15 @@ export type TurnStats = {
   denied?: number;
   /** The main loop's shell commands run again unchanged in the same turn. */
   reruns?: number;
-  /** The subagent runs that ended during the turn, their tool calls, and every token they spent. */
-  agents?: { runs: number; tools: number; tokens: number };
+  /** The subagent runs that ended during the turn, their tool calls, every token they spent, and their test runs (only when some ran). */
+  agents?: { runs: number; tools: number; tokens: number; tests?: { passed: number; failed: number } };
   /** Distinct files read, edited and written, and deleted by a shell command (only when some were). */
   files?: { read: number; edited: number; wrote: number; deleted?: number };
   /** The file edited most, by name, once edited HOT_EDITS times or more. */
   hot?: { file: string; edits: number };
   /** Lines added and removed by edits and writes; a write counts all its lines as added. `unmeasured`: the files a shell command changed whose lines could not be counted. */
   lines?: { added: number; removed: number; unmeasured?: number };
-  /** Test runs that passed and that failed. */
+  /** The main loop's test runs that passed and that failed; a subagent's are under `agents`. */
   tests?: { passed: number; failed: number };
   git?: { commits: number; pushes: number };
   /** Web pages fetched and searches made. */
@@ -111,6 +111,8 @@ export type Tally = {
   unmeasured: Set<string>;
   passed: number;
   failedTests: number;
+  agentPassed: number;
+  agentFailedTests: number;
   commits: number;
   pushes: number;
   web: number;
@@ -183,6 +185,8 @@ export function openTally(turnId: string, now: number, lastEndAt?: number): Tall
     unmeasured: new Set(),
     passed: 0,
     failedTests: 0,
+    agentPassed: 0,
+    agentFailedTests: 0,
     commits: 0,
     pushes: 0,
     web: 0,
@@ -223,8 +227,14 @@ export function countToolCall(t: Tally, c: CountedCall): void {
   } else {
     t.agentTools++;
   }
-  if (c.outcome === 'testPass') t.passed++;
-  if (c.outcome === 'testFail') t.failedTests++;
+  if (c.outcome === 'testPass') {
+    if (c.main) t.passed++;
+    else t.agentPassed++;
+  }
+  if (c.outcome === 'testFail') {
+    if (c.main) t.failedTests++;
+    else t.agentFailedTests++;
+  }
   if (c.failed || c.denied) return;
   const file = text(c.args.file_path) || text(c.args.notebook_path);
   switch (c.tool) {
@@ -481,7 +491,7 @@ export function closeTally(
     ...(t.failed > 0 ? { failed: t.failed } : {}),
     ...(t.denied > 0 ? { denied: t.denied } : {}),
     ...(t.reruns > 0 ? { reruns: t.reruns } : {}),
-    ...(some(t.agentRuns, t.agentTools) ? { agents: { runs: t.agentRuns, tools: t.agentTools, tokens: t.agentTokens } } : {}),
+    ...(some(t.agentRuns, t.agentTools) ? { agents: { runs: t.agentRuns, tools: t.agentTools, tokens: t.agentTokens, ...(some(t.agentPassed, t.agentFailedTests) ? { tests: { passed: t.agentPassed, failed: t.agentFailedTests } } : {}) } } : {}),
     ...(some(t.read.size, t.edited.size, t.wrote.size, t.deleted.size) ? { files: { read: t.read.size, edited: t.edited.size, wrote: t.wrote.size, ...(t.deleted.size > 0 ? { deleted: t.deleted.size } : {}) } } : {}),
     ...(hot && hot[1] >= HOT_EDITS ? { hot: { file: hot[0].replace(/\/+$/, '').split('/').pop() ?? hot[0], edits: hot[1] } } : {}),
     ...(some(t.added, t.removed, t.unmeasured.size) ? { lines: { added: t.added, removed: t.removed, ...(t.unmeasured.size > 0 ? { unmeasured: t.unmeasured.size } : {}) } } : {}),
@@ -522,6 +532,8 @@ export function dollars(usd: number): string {
 }
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${count(n)} ${n === 1 ? one : many}`;
+const testRuns = (t: { passed: number; failed: number }): string =>
+  `test runs ${[t.passed ? `${t.passed} passed` : '', t.failed ? `${t.failed} failed` : ''].filter(Boolean).join(', ')}`;
 /** A model id without its vendor prefix: claude-opus-5 is opus-5. */
 const modelName = (m: string): string => m.replace(/^claude-/, '');
 /** A tool by its own name, an MCP tool's server dropped: mcp__professor__chat_new is chat_new. */
@@ -546,7 +558,7 @@ export function renderStats(s: TurnStats, prev?: TurnStats): string {
   }
   if (s.agents) {
     // Runs still going when the turn ended show only their calls so far.
-    const spent = [s.agents.tools ? plural(s.agents.tools, 'tool call') : '', s.agents.tokens ? `${count(s.agents.tokens)} tokens` : ''].filter(Boolean).join(', ');
+    const spent = [s.agents.tools ? plural(s.agents.tools, 'tool call') : '', s.agents.tokens ? `${count(s.agents.tokens)} tokens` : '', s.agents.tests ? testRuns(s.agents.tests) : ''].filter(Boolean).join(', ');
     parts.push(`${s.agents.runs ? plural(s.agents.runs, 'subagent run') : 'subagents'}${spent ? `: ${spent}` : ''}`);
   }
   if (s.files) {
@@ -557,7 +569,7 @@ export function renderStats(s: TurnStats, prev?: TurnStats): string {
     const unmeasured = s.lines.unmeasured ? `unmeasured in ${plural(s.lines.unmeasured, 'file')}` : '';
     parts.push(unmeasured && !s.lines.added && !s.lines.removed ? `lines ${unmeasured}` : `lines +${count(s.lines.added)} −${count(s.lines.removed)}${unmeasured ? `, ${unmeasured}` : ''}`);
   }
-  if (s.tests) parts.push(`test runs ${[s.tests.passed ? `${s.tests.passed} passed` : '', s.tests.failed ? `${s.tests.failed} failed` : ''].filter(Boolean).join(', ')}`);
+  if (s.tests) parts.push(testRuns(s.tests));
   if (s.git) parts.push([s.git.commits ? plural(s.git.commits, 'commit') : '', s.git.pushes ? plural(s.git.pushes, 'push', 'pushes') : ''].filter(Boolean).join(', '));
   if (s.web) parts.push(`${plural(s.web, 'web read')}`);
   if (s.stops) parts.push([s.stops.maxTokens ? `cut at max tokens ${s.stops.maxTokens}×` : '', s.stops.contextFull ? `context window full ${s.stops.contextFull}×` : ''].filter(Boolean).join(', '));
@@ -599,7 +611,7 @@ export function turnStatsOf(v: unknown): TurnStats | null {
   const ok =
     [s.gapMs, s.requests, s.failed, s.denied, s.reruns, s.web, s.usd].every((n) => n === undefined || isCount(n)) &&
     (s.tools === undefined || (counts(s.tools, Object.keys(s.tools as object)) && Object.keys(s.tools as object).length > 0)) &&
-    (s.agents === undefined || counts(s.agents, ['runs', 'tools', 'tokens'])) &&
+    (s.agents === undefined || (counts(s.agents, ['runs', 'tools', 'tokens']) && ((s.agents as { tests?: unknown }).tests === undefined || counts((s.agents as { tests: object }).tests, ['passed', 'failed'])))) &&
     (s.files === undefined || (counts(s.files, ['read', 'edited', 'wrote']) && counts(s.files, ['deleted'], true))) &&
     (s.hot === undefined || (typeof (s.hot as { file?: unknown }).file === 'string' && counts(s.hot, ['edits']))) &&
     (s.lines === undefined || (counts(s.lines, ['added', 'removed']) && counts(s.lines, ['unmeasured'], true))) &&

@@ -40,10 +40,10 @@ Each turn is filed with its numbers (`TurnStats`, [`src/stats.ts`](../../plugins
 | time, gap | `turn.complete`'s `durationMs`; the previous main turn's end to this start | `4m12s, after a 14m00s pause` |
 | model requests | the main loop's `turn.step`s | `31 model requests` |
 | tool calls | the main loop's `tool.call`s, by tool (an MCP tool by its own name, its server dropped); errored, refused, and shell commands run again unchanged | `47 tool calls (Bash 20, Edit 12, Read 10, Grep 3, 2 more kinds), 3 failed, 1 denied, 2 shell commands run again unchanged` |
-| subagents | subagent runs ended, their calls and every token they spent | `2 subagent runs: 57 tool calls, 340k tokens` |
+| subagents | subagent runs ended, their calls, every token they spent, and their own test runs | `2 subagent runs: 57 tool calls, 340k tokens, test runs 1 failed` |
 | files, hot file | distinct paths read, edited, written, a main-loop shell command's included (below), and deleted by one; the file edited 3 times or more (`HOT_EDITS`) | `files 8 read, 5 edited, 1 written, 2 deleted; buddy.tsx edited 9×` |
 | lines | an edit's old and new text, their shared first and last lines left out; a write's every line | `lines +212 −47` |
-| test runs | a test runner's summary (`classifyToolCall`) | `test runs 2 passed, 1 failed` |
+| test runs | the main loop's test runner summaries (`classifyToolCall`); a subagent's count under subagents | `test runs 2 passed, 1 failed` |
 | git | `git commit` and `git push` where a command starts, past git's options | `1 commit, 1 push` |
 | web | `WebFetch`, `WebSearch`, a harvester, fetch, web or browser MCP tool | `3 web reads` |
 | stops | responses cut at max tokens; requests the context window could not hold | `cut at max tokens 1×` |

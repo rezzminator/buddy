@@ -76,6 +76,7 @@ describe('the tally', () => {
     countToolCall(t, call('mcp__professor__chat_ls'));
     const s = closeTally(t, { ms: 0 }, null, null);
     expect(s.tests).toEqual({ passed: 1, failed: 1 });
+    expect(s.agents?.tests).toBeUndefined();
     // A commit in a quoted string, and a log, are no commits.
     expect(s.git).toEqual({ commits: 2, pushes: 1 });
     expect(s.web).toBe(3);
@@ -101,6 +102,18 @@ describe('the tally', () => {
     expect(s.usd).toBeCloseTo(0.42);
     // The engine's own percent wins; a numeric effort is kept as text.
     expect(closeTally(openTally('t', 0), { ms: 0, effort: 31 }, null, { context: { tokens: 1, window: 10, percent: 62.4 } })).toMatchObject({ effort: '31', context: { percent: 62, window: 10 } });
+  });
+
+  test("a subagent's test run counts under its runs, never as the main loop's", () => {
+    const t = openTally('t', 0);
+    countToolCall(t, call('Bash', { command: 'go test ./...' }, { outcome: 'testFail', main: false }));
+    countToolCall(t, call('Bash', { command: 'go test ./x' }, { outcome: 'testPass', main: false }));
+    const s = closeTally(t, { ms: 0 }, null, null);
+    expect(s.tests).toBeUndefined();
+    expect(s.agents).toEqual({ runs: 0, tools: 2, tokens: 0, tests: { passed: 1, failed: 1 } });
+    expect(renderStats(s)).toBe('Numbers: 0s · subagents: 2 tool calls, test runs 1 passed, 1 failed');
+    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual(s);
+    expect(turnStatsOf({ ms: 0, agents: { runs: 0, tools: 2, tokens: 0, tests: { passed: 'x', failed: 1 } } })).toBeNull();
   });
 
   test('no cost without both readings, none that went down (a /clear); no context without a window', () => {

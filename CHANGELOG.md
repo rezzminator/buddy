@@ -4,6 +4,9 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
+### Fixed
+- A subagent's test runs count under its own numbers (`subagents: 5 tool calls, test runs 1 failed`), never as the main loop's: a background agent's deliberately failing run no longer reads as Claude's own failed test, which had the buddy ask Claude about a failure it never saw.
+
 ### Added
 - `memory.md` beside each chat's `memory.json` (`{config}/projects/{project}/{session id}/buddy/`): the buddy's memory as you can read it, headed `# What {name} remembers`, the same text the character drawn now reads before every reply, its own notes first. It is rewritten whenever `memory.json` is written and whenever the drawn character changes (a pick, `/buddy reload`, a session start); a failed write is logged and never stops the buddy. The drawer's last row gives its absolute path, `memory  {path}`.
 - Hovering the buddy shows the last thing it said to you: an answer, a comment, a warning or a failure, or `Nothing said to you yet.` before any. After a reload it is read back from the drawer's conversation.
