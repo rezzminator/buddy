@@ -6,7 +6,8 @@ import { isObject } from './character.ts';
 
 export type Kind = 'rule' | 'open' | 'fact' | 'lesson' | 'doubt';
 export type From = 'user' | 'claude' | 'shown' | 'buddy';
-export type Item = { text?: string; words?: string; covers?: string; from: From; turn: number; at: number };
+/** `migrated` is set by migrateNotes on every item it makes, and gone once the model rewrites the item. */
+export type Item = { text?: string; words?: string; covers?: string; from: From; turn: number; at: number; migrated?: true };
 export type Items = Record<string, Item>;
 export type Ended = { item: Item; reason: string; turn: number; at: number };
 export type EndedItems = Record<string, Ended>;
@@ -95,13 +96,21 @@ function endItem(result: MemoryResult, key: string, action: 'end' | 'expire' | '
   result.ops.push({ key, op: action, why: reason, turn: ctx.turn });
 }
 
+/**
+ * A kind holds at most its cap of items the model changed and, beside them, at
+ * most its cap of untouched migrated items; migration is their only maker, so
+ * that group only shrinks. The prompt stays bounded by twice the caps. Within a
+ * group the least recently changed goes first (turn, then time, then later position).
+ */
 function capItems(result: MemoryResult, ctx: MemoryContext): void {
   for (const kind of KINDS.filter((k) => k !== 'rule')) {
-    const entries = Object.entries(result.items).filter(([key]) => kindOf(key) === kind);
-    const oldest = entries.map(([key, item], index) => ({ key, item, index }))
-      .sort((a, b) => a.item.turn - b.item.turn || a.item.at - b.item.at || b.index - a.index);
-    for (const { key } of oldest.slice(0, Math.max(0, entries.length - ITEM_CAPS[kind]))) {
-      endItem(result, key, 'evict', 'stale: evicted', ctx);
+    for (const migrated of [false, true]) {
+      const entries = Object.entries(result.items).filter(([key, item]) => kindOf(key) === kind && (item.migrated === true) === migrated);
+      const oldest = entries.map(([key, item], index) => ({ key, item, index }))
+        .sort((a, b) => a.item.turn - b.item.turn || a.item.at - b.item.at || b.index - a.index);
+      for (const { key } of oldest.slice(0, Math.max(0, entries.length - ITEM_CAPS[kind]))) {
+        endItem(result, key, 'evict', 'stale: evicted', ctx);
+      }
     }
   }
   result.ended = Object.fromEntries(Object.entries(result.ended)
@@ -130,7 +139,9 @@ export function applyMemory(memory: { items: Items; ended: EndedItems }, raw: st
         } else {
           if (kindOf(key) === 'rule') fields.from = 'user';
           else { delete fields.words; delete fields.covers; }
-          result.items[key] = { from: 'buddy', ...old, ...fields, turn: ctx.turn, at: ctx.at };
+          const next: Item = { from: 'buddy', ...old, ...fields, turn: ctx.turn, at: ctx.at };
+          delete next.migrated;
+          result.items[key] = next;
           const added = result.ended[key] ? 're-added after end' : 'added';
           delete result.ended[key];
           result.ops.push({ key, op: old ? 'set' : 'add', why: old ? ITEM_FIELDS.filter((field) => old[field] !== result.items[key]![field]).join(', ') : added, turn: ctx.turn });
@@ -164,6 +175,7 @@ export function migrateNotes(notes: Record<string, string[]>, drawnId: string | 
   const ids = Object.keys(notes);
   if (drawnId !== null && Object.hasOwn(notes, drawnId)) ids.splice(0, 0, ...ids.splice(ids.indexOf(drawnId), 1));
   const seen = new Set<string>();
+  const fromRule = new Set<string>();
   for (const id of ids) {
     for (const note of notes[id]!) {
       const cleaned = note.trim().replace(/^(?:[-*•]|\d+[.)])\s+/, '').trim();
@@ -185,17 +197,20 @@ export function migrateNotes(notes: Record<string, string[]>, drawnId: string | 
       }
       seen.add(folded);
       if (verified) {
-        result.items[key] = { words: text, covers: 'the chat', from: 'user', turn: ctx.turn, at: ctx.at };
+        result.items[key] = { words: text, covers: 'the chat', from: 'user', turn: ctx.turn, at: ctx.at, migrated: true };
       } else {
         const unverified = originalKind === 'rule';
         const from: From = unverified || kind === 'doubt' ? 'buddy' : kind === 'open' ? 'user' : 'shown';
-        result.items[key] = { text: cutNote(unverified ? `Noted earlier as the user's rule, unverified: ${text}` : text), from, turn: ctx.turn, at: ctx.at };
+        result.items[key] = { text: cutNote(unverified ? `Noted earlier as the user's rule, unverified: ${text}` : text), from, turn: ctx.turn, at: ctx.at, migrated: true };
       }
+      if (originalKind === 'rule') fromRule.add(key);
       const why = originalKind === 'rule' && !verified
         ? `rule note of ${id}, not typed by the user: kept as a fact` : `${kind} note of ${id}`;
       result.ops.push({ key, op: 'migrate', why, turn: ctx.turn });
     }
   }
+  // At a kind's cap a rule note kept as a fact outranks a plain note: the stable sort puts them first.
+  result.items = Object.fromEntries(Object.entries(result.items).sort(([a], [b]) => Number(!fromRule.has(a)) - Number(!fromRule.has(b))));
   for (const key of Object.keys(result.items).filter((k) => kindOf(k) === 'rule').slice(ITEM_CAPS.rule)) {
     delete result.items[key];
     result.ops.push({ key, op: 'drop', why: 'rule cap 10', turn: ctx.turn });
@@ -245,6 +260,7 @@ function storedItem(key: string, value: unknown): value is Item {
   for (const field of ['text', 'words', 'covers']) {
     if (value[field] !== undefined && typeof value[field] !== 'string') return false;
   }
+  if (value.migrated !== undefined && value.migrated !== true) return false;
   return kindOf(key) === 'rule' ? typeof value.words === 'string' && typeof value.covers === 'string' : typeof value.text === 'string';
 }
 

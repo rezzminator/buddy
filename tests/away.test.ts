@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { AWAY_EFFORT, AWAY_IDLE_MS, AWAY_MODEL, AWAY_PUSHES_MAX, AWAY_SYSTEM, awayBody, awayDecision } from '../plugins/buddy/src/away.ts';
+import { AWAY_EFFORT, AWAY_IDLE_MS, AWAY_MODEL, AWAY_PUSHES_MAX, AWAY_REARM_MIN_MS, AWAY_REARM_SPREAD_MS, AWAY_STALE_MS, AWAY_SYSTEM, awayBody, awayDecision, awayRearmMs, awayRecordOf, awayWaitStale, type AwayRecord } from '../plugins/buddy/src/away.ts';
 
 describe('the away call', () => {
   test('waits 30 idle minutes, runs on opus at low effort, and allows 3 pushes without a user prompt', () => {
@@ -61,5 +61,69 @@ describe('awayDecision: PAUSE, or one line PUSH: {text}', () => {
   });
   test('a word that merely contains a forbidden one is no forbidden step', () => {
     expect(awayDecision('PUSH: Rerun the formatter on the remaining files.')).toEqual({ decision: 'push', text: 'Rerun the formatter on the remaining files.' });
+  });
+});
+
+describe('awayRecordOf: the kept wait, read back', () => {
+  test('a good record is accepted, with a wait or without', () => {
+    const kept = { version: 1, wait: { at: 1_700_000_000_000, answer: 'Done.' }, pushes: 2 };
+    expect(awayRecordOf(kept)).toEqual(kept);
+    expect(awayRecordOf({ version: 1, wait: null, pushes: 0 })).toEqual({ version: 1, wait: null, pushes: 0 });
+  });
+  test.each([
+    ['a wrong version', { version: 2, wait: null, pushes: 0 }],
+    ['negative pushes', { version: 1, wait: null, pushes: -1 }],
+    ['fractional pushes', { version: 1, wait: null, pushes: 1.5 }],
+    ['a missing wait', { version: 1, pushes: 0 }],
+    ['a non-string answer', { version: 1, wait: { at: 1, answer: 5 }, pushes: 0 }],
+    ['a non-finite at', { version: 1, wait: { at: Number.POSITIVE_INFINITY, answer: 'A' }, pushes: 0 }],
+    ['a string at', { version: 1, wait: { at: '1', answer: 'A' }, pushes: 0 }],
+    ['a null', null],
+    ['a string', 'away'],
+    ['an array', []],
+  ])('%s is rejected', (_name, value) => {
+    expect(awayRecordOf(value)).toBeNull();
+  });
+});
+
+describe('awayRearmMs: what remains of the wait after a load', () => {
+  const NOW = 1_700_000_000_000;
+  const GATE = { promptWhenIdle: true, midTurn: false };
+  const kept = (over: Partial<AwayRecord> = {}): AwayRecord => ({ version: 1, wait: { at: NOW - 20 * 60_000, answer: 'Halfway.' }, pushes: 0, ...over });
+  test('a wait whose turn ended more than 2 hours ago is stale: dropped, never re-armed', () => {
+    expect(AWAY_STALE_MS).toBe(2 * 60 * 60_000);
+    const at = (ago: number) => kept({ wait: { at: NOW - ago, answer: 'Halfway.' } });
+    expect(awayWaitStale(at(AWAY_STALE_MS + 1), NOW)).toBe(true);
+    expect(awayRearmMs(at(AWAY_STALE_MS + 1), NOW, 0, GATE)).toBeNull();
+    expect(awayWaitStale(at(24 * 60 * 60_000), NOW)).toBe(true);
+    expect(awayRearmMs(at(24 * 60 * 60_000), NOW, 0, GATE)).toBeNull();
+    // Exactly 2 hours is still kept: past due, it fires soon.
+    expect(awayWaitStale(at(AWAY_STALE_MS), NOW)).toBe(false);
+    expect(awayRearmMs(at(AWAY_STALE_MS), NOW, 0, GATE)).toBe(AWAY_REARM_MIN_MS);
+    expect(awayWaitStale(kept({ wait: null }), NOW)).toBe(false);
+  });
+  test('re-arms for exactly what remains of the 30 minutes', () => {
+    expect(awayRearmMs(kept(), NOW, 0.5, GATE)).toBe(10 * 60_000);
+  });
+  test('arms nothing with promptWhenIdle off, mid-turn, with no wait, at the push limit or with a blank answer', () => {
+    expect(awayRearmMs(kept(), NOW, 0, { promptWhenIdle: false, midTurn: false })).toBeNull();
+    expect(awayRearmMs(kept(), NOW, 0, { promptWhenIdle: true, midTurn: true })).toBeNull();
+    expect(awayRearmMs(kept({ wait: null }), NOW, 0, GATE)).toBeNull();
+    expect(awayRearmMs(kept({ pushes: AWAY_PUSHES_MAX }), NOW, 0, GATE)).toBeNull();
+    expect(typeof awayRearmMs(kept({ pushes: AWAY_PUSHES_MAX - 1 }), NOW, 0, GATE)).toBe('number');
+    expect(awayRearmMs(kept({ wait: { at: NOW, answer: ' \n ' } }), NOW, 0, GATE)).toBeNull();
+  });
+  test('a turn that ended in the future (clock skew) waits at most the whole 30 minutes', () => {
+    expect(awayRearmMs(kept({ wait: { at: NOW + 10 * 60_000, answer: 'A' } }), NOW, 0, GATE)).toBe(AWAY_IDLE_MS);
+  });
+  test.each([0, 0.5, 1])('a wait due within a minute, or long past due, is spread: spread %s', (spread) => {
+    const ms = AWAY_REARM_MIN_MS + Math.floor(spread * AWAY_REARM_SPREAD_MS);
+    expect(awayRearmMs(kept({ wait: { at: NOW - AWAY_IDLE_MS + 30_000, answer: 'A' } }), NOW, spread, GATE)).toBe(ms);
+    expect(awayRearmMs(kept({ wait: { at: NOW - 2 * 3_600_000, answer: 'A' } }), NOW, spread, GATE)).toBe(ms);
+  });
+  test('a spread outside [0, 1] is clamped and a NaN one counts as 0', () => {
+    expect(awayRearmMs(kept({ wait: { at: NOW - 2 * 3_600_000, answer: 'A' } }), NOW, Number.NaN, GATE)).toBe(AWAY_REARM_MIN_MS);
+    expect(awayRearmMs(kept({ wait: { at: NOW - 2 * 3_600_000, answer: 'A' } }), NOW, 7, GATE)).toBe(AWAY_REARM_MIN_MS + AWAY_REARM_SPREAD_MS);
+    expect(awayRearmMs(kept({ wait: { at: NOW - 2 * 3_600_000, answer: 'A' } }), NOW, -1, GATE)).toBe(AWAY_REARM_MIN_MS);
   });
 });

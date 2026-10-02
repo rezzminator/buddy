@@ -13,9 +13,9 @@ import {
   type Block, type Exchange, type Stored,
 } from '../src/chatTurnsToRead.ts';
 import { applyMemory, migrateNotes, renderItems, type Items, type EndedItems } from '../src/memoryItems.ts';
-import { AWAY_EFFORT, AWAY_IDLE_MS, AWAY_MAX_TOKENS, AWAY_MODEL, AWAY_PUSHES_MAX, AWAY_SYSTEM, awayBody, awayDecision } from '../src/away.ts';
+import { AWAY_EFFORT, AWAY_IDLE_MS, AWAY_MAX_TOKENS, AWAY_MODEL, AWAY_PUSHES_MAX, AWAY_SYSTEM, awayBody, awayDecision, awayRearmMs, awayRecordOf, awayWaitStale, type AwayRecord, type AwayWait } from '../src/away.ts';
 import { AGAIN_PREFIX, rulePrompt, rulesContext, ruleWarning, sameStrikes, strikeRule, type Strikes } from '../src/steering.ts';
-import { MEMORY_FILE, MEMORY_TEXT_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
+import { AWAY_FILE, MEMORY_FILE, MEMORY_TEXT_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, briefedOf, callSize, denialReason, didOf, failureReason, returnedOf, type Action as Step, type Failure } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, knownEntries, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
 import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
@@ -153,6 +153,12 @@ type State = {
   lastAnswer: string | null;
   /** Away pushes since the user's last prompt. */
   awayPushes: number;
+  /** A pending away wait is on disk (away.json): a wait that ends clears it, and a user without promptWhenIdle never writes the file. */
+  awayKept: boolean;
+  /** The away.json last written, once its chat folder is known; null before. */
+  awayPath: string | null;
+  /** The away.json writes in order: each waits for the one before. */
+  awayWrites: Promise<void>;
   /** The running main turn's numbers as they come in (src/stats.ts), and the session's usage read as it began; null while none runs. */
   tally: { counts: Tally; before: Promise<UsageReading | null> } | null;
   /** When the last main turn of this conversation ended, for the next one's gap; undefined before the first, and after /clear or a resume. */
@@ -1050,6 +1056,8 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
   st.lastKey = '';
   $.ui.invalidate('ui.render');
   if (st.interactive) loadMemory(st, $);
+  // session.start fires at every load, a plugin reload's included: a wait pending before it is armed again.
+  if (st.interactive) void rearmAway(st, $);
 }
 
 /** The log's level, file (logPath: the config folder's by default) and session; a failure here leaves file logging off, said. */
@@ -1262,7 +1270,7 @@ function onPromptSubmit(st: State, $: EngineInterface, e: PromptSubmitInput, r: 
 /** A main turn began (only the main loop raises turn.start): it is the running one, and takes its prompt; an engine suggestion still held is for an ended turn, released. */
 function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
   try {
-    disarmAway(st);
+    disarmAway(st, $);
     st.mainTurn = e.turnId;
     st.turnStarts++;
     st.tally = { counts: openTally(e.turnId, Date.now(), st.lastMainEndAt), before: readUsage(st, $, "the turn's start") };
@@ -1406,7 +1414,7 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
   st.roundBubble = null;
   st.prompts = NO_PROMPTS;
   st.mainTurn = undefined;
-  disarmAway(st);
+  disarmAway(st, $);
   st.lastAnswer = null;
   st.tally = null;
   st.lastMainEndAt = undefined;
@@ -1781,14 +1789,83 @@ function showSentPrompt(st: State, $: EngineInterface, c: Character, text: strin
   refresh(st, $);
 }
 
-/** The away call's wait, cancelled: a prompt, a turn's start or a /clear ends the idle stretch. Never throws. */
-function disarmAway(st: State): void {
+/** The away call's wait, cancelled, and its kept copy cleared: a prompt, a turn's start or a /clear ends the idle stretch. Never throws. */
+function disarmAway(st: State, $: EngineInterface): void {
   try {
     st.idleWait?.cancel();
   } catch (error) {
     L.error('cancelling the away wait', error);
   }
   st.idleWait = null;
+  keepAway(st, $, null);
+}
+
+/**
+ * The pending away wait (null: none) kept on disk in the chat's folder
+ * (away.json, beside the memory) with the pushes so far, so a plugin reload or
+ * a restart arms it again (rearmAway). Writes go in order. A call with no wait
+ * and none kept writes nothing unless `always`: a user without promptWhenIdle
+ * never gets the file. Never throws.
+ */
+function keepAway(st: State, $: EngineInterface, wait: AwayWait | null, always = false): void {
+  if (wait === null && !st.awayKept && !always) return;
+  st.awayKept = wait !== null;
+  const record: AwayRecord = { version: 1, wait, pushes: st.awayPushes };
+  st.awayWrites = st.awayWrites
+    .then(async () => {
+      if (wait !== null || st.awayPath === null) st.awayPath = `${await chatFolderFor(st, $, await $.session.id())}/${AWAY_FILE}`;
+      await $.fs.write(st.awayPath, JSON.stringify(record));
+    })
+    .catch((error: unknown) => log($, 'keeping the away wait', error));
+}
+
+/**
+ * At a load (session.start, a reload's included) in an interactive session
+ * with promptWhenIdle on: the chat's kept wait is armed again for what remains
+ * of AWAY_IDLE_MS (awayRearmMs), and the pushes so far restored. Nothing is
+ * armed when a turn started or a wait was armed while the file was read, or for
+ * a wait already spent. Never throws.
+ */
+async function rearmAway(st: State, $: EngineInterface): Promise<void> {
+  try {
+    if (!st.interactive || !st.options.promptWhenIdle) return;
+    const turnStarts = st.turnStarts;
+    const conversation = st.conversation;
+    const path = `${await chatFolderFor(st, $, await $.session.id())}/${AWAY_FILE}`;
+    if (!(await $.fs.exists(path))) return;
+    let record: AwayRecord | null;
+    try {
+      record = awayRecordOf(JSON.parse((await $.fs.read(path)) as string));
+    } catch {
+      record = null;
+    }
+    if (st.turnStarts !== turnStarts || st.conversation !== conversation || st.idleWait !== null) return;
+    if (record === null) {
+      lg($, 'info', 'away.rearm', { outcome: 'unreadable' });
+      return;
+    }
+    st.awayPushes = record.pushes;
+    st.awayPath = path;
+    // A wait whose turn ended over AWAY_STALE_MS ago is dropped: $.fs deletes nothing, so the file is rewritten spent.
+    if (awayWaitStale(record, Date.now())) {
+      st.awayKept = true;
+      keepAway(st, $, null);
+      lg($, 'info', 'away.rearm', { outcome: 'stale' });
+      return;
+    }
+    const ms = awayRearmMs(record, Date.now(), Math.random(), { promptWhenIdle: st.options.promptWhenIdle, midTurn: st.mainTurn !== undefined });
+    if (ms === null || record.wait === null) {
+      lg($, 'info', 'away.rearm', { outcome: 'none' });
+      return;
+    }
+    st.awayKept = true;
+    st.lastAnswer = record.wait.answer;
+    const gen = st.turnGen;
+    st.idleWait = $.clock.after(ms, () => void awayCall(st, $, gen, conversation));
+    lg($, 'info', 'away.rearm', { outcome: 'armed', ms, pushes: record.pushes });
+  } catch (error) {
+    log($, 're-arming the away wait', error);
+  }
 }
 
 /**
@@ -1798,7 +1875,7 @@ function disarmAway(st: State): void {
  * (`gen`) in this conversation; a cut turn arms none, logged with why.
  */
 function armAway(st: State, $: EngineInterface, e: TurnCompleteInput, gen: number): void {
-  disarmAway(st);
+  disarmAway(st, $);
   if (!st.options.promptWhenIdle) return;
   const answer = typeof e.answer === 'string' ? e.answer : '';
   const reason = e.isAborted || e.reason === 'aborted' ? 'the turn was interrupted' : e.reason === 'error' ? 'the turn ended in an error' : e.reason === 'refusal' ? 'the model refused' : answer.trim() === '' ? 'no answer' : null;
@@ -1809,6 +1886,7 @@ function armAway(st: State, $: EngineInterface, e: TurnCompleteInput, gen: numbe
   st.lastAnswer = answer;
   const conversation = st.conversation;
   st.idleWait = $.clock.after(AWAY_IDLE_MS, () => void awayCall(st, $, gen, conversation));
+  keepAway(st, $, { at: Date.now(), answer });
 }
 
 /** Why the away call of turn `gen` in `conversation` is not made now, or null when it is. */
@@ -1833,6 +1911,7 @@ function awaySkip(st: State, gen: number, conversation: number): string | null {
 async function awayCall(st: State, $: EngineInterface, gen: number, conversation: number): Promise<void> {
   try {
     st.idleWait = null;
+    keepAway(st, $, null);
     const skip = awaySkip(st, gen, conversation);
     if (skip !== null || st.lastAnswer === null) {
       lg($, 'info', 'away.skipped', { reason: skip ?? 'no answer' });
@@ -1856,6 +1935,7 @@ async function awayCall(st: State, $: EngineInterface, gen: number, conversation
     lg($, 'info', 'away.decision', { decision: d.decision, ms, length: d.decision === 'push' ? d.text.length : 0 });
     if (d.decision !== 'push') return;
     st.awayPushes++;
+    keepAway(st, $, null, true);
     sendPromptToMainChat(st, $, st.b!.character, d.text);
   } catch (error) {
     log($, 'asking whether the idle chat needs a push', error);
@@ -2706,6 +2786,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
     idleWait: null,
     lastAnswer: null,
     awayPushes: 0,
+    awayKept: false,
+    awayPath: null,
+    awayWrites: Promise.resolve(),
     tally: null,
     lastMainEndAt: undefined,
     usageFailSaid: false,
@@ -2805,7 +2888,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
   // What entered, once it did: a prompt a lower hook dropped starts no turn and is never filed. The buddy's suggestion sent unedited or extended, and the buddy's own prompt to the main chat, carry, for Claude alone, whose words they hold.
   on('prompt.submit', async ($, e, next) => {
     // Any prompt, whoever sent it, ends the idle stretch: no away call for it.
-    disarmAway(st);
+    disarmAway(st, $);
     const taken = takeSuggestion(st, $, e);
     const use = taken?.use ?? null;
     const own = use === null && ownPrompt(st, $, e);

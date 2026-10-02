@@ -10,7 +10,9 @@
 // low, d2+A made no false push on R4b's tune and holdout sets, but no prompt
 // is proven to push when it should. A push asking a forbidden step is refused
 // here, and every decision is logged so its real recall can be measured.
-// No I/O: the adapter arms the wait, makes the call and sends the push.
+// No I/O: the adapter arms the wait, makes the call and sends the push; it also
+// keeps the pending wait on disk per chat and arms it again at every load, so a
+// plugin reload or a restart does not lose it.
 
 /** How long the main chat sits idle after an answered turn before the away call. */
 export const AWAY_IDLE_MS = 30 * 60_000;
@@ -21,6 +23,13 @@ export const AWAY_EFFORT = 'low';
 export const AWAY_MAX_TOKENS = 256;
 /** Away pushes allowed in a row without a prompt of the user's between: bounds a night of self-continuation. */
 export const AWAY_PUSHES_MAX = 3;
+/** A re-armed wait due within this long, or already past due, fires this long after the load at the soonest. */
+export const AWAY_REARM_MIN_MS = 60_000;
+/**
+ * ...and up to this much later, by the spread the adapter draws: a reload of
+ * many chats never fires their away calls together.
+ */
+export const AWAY_REARM_SPREAD_MS = 4 * 60_000;
 
 /** R4b prompt d2, verbatim. */
 export const AWAY_SYSTEM =
@@ -91,4 +100,46 @@ export function awayDecision(reply: string): AwayDecision {
   const text = m?.[1]?.trim() ?? '';
   if (!text) return { decision: 'malformed' };
   return AWAY_FORBIDDEN.test(text) ? { decision: 'refused', text } : { decision: 'push', text };
+}
+
+/** A kept wait whose turn ended longer ago than this is stale: dropped at the load, never armed, so a chat reopened the next day never pushes on its own. */
+export const AWAY_STALE_MS = 2 * 60 * 60_000;
+
+/** A pending wait: when the answered turn ended (ms since the epoch), and its answer, verbatim. */
+export type AwayWait = { at: number; answer: string };
+/** What the adapter keeps per chat: the pending wait (null: none pending) and the away pushes since the user last prompted. */
+export type AwayRecord = { version: 1; wait: AwayWait | null; pushes: number };
+
+/** The kept record, validated; null for anything else (a wrong version, a wrong shape, a non-object). */
+export function awayRecordOf(value: unknown): AwayRecord | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  if (v.version !== 1 || typeof v.pushes !== 'number' || !Number.isInteger(v.pushes) || v.pushes < 0) return null;
+  if (v.wait === null) return { version: 1, wait: null, pushes: v.pushes };
+  if (typeof v.wait !== 'object' || Array.isArray(v.wait)) return null;
+  const w = v.wait as Record<string, unknown>;
+  if (typeof w.at !== 'number' || !Number.isFinite(w.at) || typeof w.answer !== 'string') return null;
+  return { version: 1, wait: { at: w.at, answer: w.answer }, pushes: v.pushes };
+}
+
+/** Whether the kept wait's turn ended more than AWAY_STALE_MS before `now`: such a wait is dropped, never re-armed. */
+export function awayWaitStale(record: AwayRecord, now: number): boolean {
+  return record.wait !== null && now - record.wait.at > AWAY_STALE_MS;
+}
+
+/**
+ * How long a kept wait is armed for at a load, or null when none is: the
+ * setting off, a turn running, no wait pending, a stale one (awayWaitStale),
+ * the push limit reached or a blank answer. What remains of AWAY_IDLE_MS since the turn ended (never more
+ * than the whole of it, for a clock that went back); a wait due within
+ * AWAY_REARM_MIN_MS or already past due fires AWAY_REARM_MIN_MS plus up to
+ * AWAY_REARM_SPREAD_MS after the load, by `spread` in [0, 1] (clamped; a
+ * non-finite one counts as 0).
+ */
+export function awayRearmMs(record: AwayRecord, now: number, spread: number, gate: { promptWhenIdle: boolean; midTurn: boolean }): number | null {
+  if (!gate.promptWhenIdle || gate.midTurn || record.wait === null || record.pushes >= AWAY_PUSHES_MAX || record.wait.answer.trim() === '' || awayWaitStale(record, now)) return null;
+  const left = Math.min(AWAY_IDLE_MS, record.wait.at + AWAY_IDLE_MS - now);
+  if (left > AWAY_REARM_MIN_MS) return left;
+  const s = Number.isFinite(spread) ? Math.min(1, Math.max(0, spread)) : 0;
+  return AWAY_REARM_MIN_MS + Math.floor(s * AWAY_REARM_SPREAD_MS);
 }

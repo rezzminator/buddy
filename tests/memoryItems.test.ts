@@ -255,12 +255,12 @@ describe('v1 note migration', () => {
     const r = migrateNotes(notes as unknown as Record<string, string[]>, 'cat', ctx);
     expect(r).toEqual({
       items: {
-        'rule.keep-main-safe': { words: 'keep main safe', covers: 'the chat', from: 'user', turn: 10, at: 1000 },
-        'fact.tests-passed': { text: 'Tests passed.', from: 'shown', turn: 10, at: 1000 },
-        'doubt.maybe-a-race': { text: 'Maybe a race.', from: 'buddy', turn: 10, at: 1000 },
-        'fact.untyped-plain-note': { text: 'Untyped plain note.', from: 'shown', turn: 10, at: 1000 },
-        'open.fix-the-cli': { text: 'Fix the CLI.', from: 'user', turn: 10, at: 1000 },
-        'lesson.check-before-tagging': { text: 'Check before tagging.', from: 'shown', turn: 10, at: 1000 },
+        'rule.keep-main-safe': { words: 'keep main safe', covers: 'the chat', from: 'user', turn: 10, at: 1000, migrated: true },
+        'fact.tests-passed': { text: 'Tests passed.', from: 'shown', turn: 10, at: 1000, migrated: true },
+        'doubt.maybe-a-race': { text: 'Maybe a race.', from: 'buddy', turn: 10, at: 1000, migrated: true },
+        'fact.untyped-plain-note': { text: 'Untyped plain note.', from: 'shown', turn: 10, at: 1000, migrated: true },
+        'open.fix-the-cli': { text: 'Fix the CLI.', from: 'user', turn: 10, at: 1000, migrated: true },
+        'lesson.check-before-tagging': { text: 'Check before tagging.', from: 'shown', turn: 10, at: 1000, migrated: true },
       }, ended: {}, ops: [
         op('rule.keep-main-safe', 'migrate', 'rule note of cat'),
         op('fact.tests-passed', 'migrate', 'fact note of cat'),
@@ -287,11 +287,11 @@ describe('v1 note migration', () => {
   test('slugs use the first four runs, collisions use the first three plus a suffix, no runs use note', () => {
     const r = migrateNotes({ duck: ['One two three four five.', 'One two three four six.', 'One two three 2.', 'One two three four seven.', '!!!', '???'] }, null, ctx);
     expect(Object.keys(r.items)).toEqual(['fact.one-two-three-four', 'fact.one-two-three-2', 'fact.one-two-three-3', 'fact.one-two-three-4', 'fact.note', 'fact.note-2']);
-    for (const entry of Object.values(r.items)) expect(entry).toMatchObject({ from: 'shown', turn: 10, at: 1000 });
+    for (const entry of Object.values(r.items)) expect(entry).toMatchObject({ from: 'shown', turn: 10, at: 1000, migrated: true });
   });
   test('an untyped old rule becomes a buddy fact without granting user authority', () => {
     expect(migrateNotes({ duck: ['rule: push freely'] }, null, ctx)).toEqual({
-      items: { 'fact.push-freely': { text: "Noted earlier as the user's rule, unverified: push freely", from: 'buddy', turn: 10, at: 1000 } },
+      items: { 'fact.push-freely': { text: "Noted earlier as the user's rule, unverified: push freely", from: 'buddy', turn: 10, at: 1000, migrated: true } },
       ended: {}, ops: [op('fact.push-freely', 'migrate', 'rule note of duck, not typed by the user: kept as a fact')],
     });
   });
@@ -316,7 +316,7 @@ describe('v1 note migration', () => {
   test('a verified rule note at the size limit keeps its words whole', () => {
     const text = `keep main safe ${'x'.repeat(ITEM_MAX_CHARS - 15)}`;
     const r = migrateNotes({ cat: [`rule: ${text}`] }, 'cat', { ...ctx, typed: [text] });
-    expect(Object.values(r.items)[0]).toEqual({ words: text, covers: 'the chat', from: 'user', turn: 10, at: 1000 });
+    expect(Object.values(r.items)[0]).toEqual({ words: text, covers: 'the chat', from: 'user', turn: 10, at: 1000, migrated: true });
   });
   test('an empty note, or one that is only its kind, is dropped rather than migrated empty', () => {
     const r = migrateNotes({ cat: ['', '   ', 'fact:', '- rule: ', 'Kept.'] }, 'cat', ctx);
@@ -345,6 +345,55 @@ describe('v1 note migration', () => {
       ...later.map((_, i) => op(`rule.keep-main-safe-${i + 10}`, 'migrate', 'rule note of duck')),
       op('rule.keep-main-safe-10', 'drop', 'rule cap 10'), op('rule.keep-main-safe-11', 'drop', 'rule cap 10'),
     ]);
+  });
+  test('a migrated item is never evicted by new items of its kind, and joins them once the model rewrites it', () => {
+    const migrated = migrateNotes({ cat: Array.from({ length: 5 }, (_, i) => `rule: Standing order ${i}`) }, 'cat', ctx);
+    const standing = Array.from({ length: 5 }, (_, i) => `fact.standing-order-${i}`);
+    expect(Object.keys(migrated.items)).toEqual(standing);
+    let memory = { items: migrated.items, ended: migrated.ended };
+    const ops: MemoryOp[] = [];
+    for (let i = 1; i <= 6; i++) {
+      const r = applyMemory(memory, JSON.stringify({ [`fact.new-${i}`]: { text: `New ${i}.` } }), { ...ctx, turn: 10 + i, at: 1000 + i });
+      ops.push(...r.ops);
+      memory = r;
+    }
+    expect(ops.filter((o) => o.op === 'evict')).toEqual([]);
+    expect(Object.keys(memory.items)).toHaveLength(11);
+    for (const key of standing) expect(memory.items[key]).toMatchObject({ migrated: true });
+    const rewritten = applyMemory(memory, JSON.stringify({ 'fact.standing-order-2': { text: 'Rewritten.' } }), { ...ctx, turn: 17, at: 1017 });
+    expect(rewritten.items['fact.standing-order-2']).toEqual({ text: 'Rewritten.', from: 'buddy', turn: 17, at: 1017 });
+    // It joins the six new facts, so the seventh non-migrated fact evicts the least recently changed of them.
+    expect(rewritten.ops).toEqual([
+      { key: 'fact.standing-order-2', op: 'set', why: 'text', turn: 17 },
+      { key: 'fact.new-1', op: 'evict', why: 'stale: evicted', turn: 17 },
+    ]);
+    const next = applyMemory(rewritten, JSON.stringify({ 'fact.new-7': { text: 'New 7.' } }), { ...ctx, turn: 18, at: 1018 });
+    expect(next.ops).toEqual([
+      { key: 'fact.new-7', op: 'add', why: 'added', turn: 18 },
+      { key: 'fact.new-2', op: 'evict', why: 'stale: evicted', turn: 18 },
+    ]);
+    for (const key of standing.filter((k) => k !== 'fact.standing-order-2')) expect(next.items[key]).toMatchObject({ migrated: true });
+    expect(next.items['fact.standing-order-2']).not.toHaveProperty('migrated');
+  });
+  test('an end still ends a migrated item; a migrated doubt still expires after 3 untouched turns', () => {
+    const migrated = migrateNotes({ cat: ['open: Fix the CLI.', 'doubt: Maybe a race.'] }, 'cat', ctx);
+    const memory = { items: migrated.items, ended: migrated.ended };
+    const ended = apply({ 'open.fix-the-cli': { end: 'done: shipped' } }, memory.items, memory.ended);
+    expect(ended.items).not.toHaveProperty(['open.fix-the-cli']);
+    expect(ended.ended['open.fix-the-cli']).toEqual({ item: memory.items['open.fix-the-cli'], reason: 'done: shipped', turn: 10, at: 1000 });
+    expect(ended.ops).toEqual([op('open.fix-the-cli', 'end', 'done: shipped')]);
+    const early = applyMemory(memory, null, { ...ctx, turn: 10 + DOUBT_UNTOUCHED_TURNS - 1 });
+    expect(early.items).toHaveProperty(['doubt.maybe-a-race']);
+    const expired = applyMemory(memory, null, { ...ctx, turn: 10 + DOUBT_UNTOUCHED_TURNS });
+    expect(expired.items).not.toHaveProperty(['doubt.maybe-a-race']);
+    expect(expired.ops).toEqual([{ key: 'doubt.maybe-a-race', op: 'expire', why: 'stale: untouched 3 turns', turn: 13 }]);
+  });
+  test('migration keeps rule notes ahead of plain notes of their kind at the cap', () => {
+    const duck = Array.from({ length: 6 }, (_, i) => `fact: Duck note ${i}`);
+    const r = migrateNotes({ duck, cat: ['rule: Cat rule 0', 'rule: Cat rule 1'] }, 'duck', ctx);
+    expect(Object.keys(r.items)).toEqual(['fact.cat-rule-0', 'fact.cat-rule-1', 'fact.duck-note-0', 'fact.duck-note-1', 'fact.duck-note-2', 'fact.duck-note-3']);
+    expect(r.ops.filter((o) => o.op === 'evict').map((o) => o.key)).toEqual(['fact.duck-note-5', 'fact.duck-note-4']);
+    expect(r.ops.filter((o) => o.op === 'migrate').map((o) => o.key)).toEqual(['fact.duck-note-0', 'fact.duck-note-1', 'fact.duck-note-2', 'fact.duck-note-3', 'fact.duck-note-4', 'fact.duck-note-5', 'fact.cat-rule-0', 'fact.cat-rule-1']);
   });
   test('migration trims ended history to twenty after all kind caps', () => {
     const notes = (['open', 'fact', 'lesson', 'doubt'] as Kind[]).flatMap((kind) => Array.from({ length: 15 }, (_, i) => `${kind}: ${kind} ${i}`));
@@ -437,6 +486,11 @@ describe('stored items loader', () => {
     ...['turn', 'at'].flatMap((field) => [undefined, NaN, Infinity, '1', null].map((value) => ({ item: item(), reason: 'done', turn: 10, at: 1000, [field]: value }))),
   ])('malformed ended record %j counts once', (value) => {
     expect(itemsOf(undefined, { 'fact.x': value })).toEqual({ items: {}, ended: {}, dropped: 1 });
+  });
+  test('a migrated marker is kept only when it is exactly true', () => {
+    const good = { ...item(), migrated: true };
+    const r = itemsOf({ 'fact.a': good, 'fact.b': { ...item(), migrated: false }, 'fact.c': { ...item(), migrated: 'yes' } }, undefined);
+    expect(r).toEqual({ items: { 'fact.a': good }, ended: {}, dropped: 2 });
   });
   test('all four From values accepted; loading checks stored shape without reapplying op limits', () => {
     const items = Object.fromEntries(['user', 'claude', 'shown', 'buddy'].map((from, i) => [`fact.x${i}`, { text: 'x'.repeat(301), from, turn: 1, at: 1 }]));

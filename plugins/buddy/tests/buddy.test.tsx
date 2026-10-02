@@ -1954,8 +1954,8 @@ describe('the chat memory items', () => {
     expect(saved.version).toBe(2);
     expect(saved.turnNo).toBe(1);
     expect(saved.items).toEqual({
-      'rule.keep-main-safe': { words: 'keep main safe', covers: 'the chat', from: 'user', turn: 1, at: expect.any(Number) },
-      'doubt.flaky': { text: 'flaky', from: 'buddy', turn: 1, at: expect.any(Number) },
+      'rule.keep-main-safe': { words: 'keep main safe', covers: 'the chat', from: 'user', turn: 1, at: expect.any(Number), migrated: true },
+      'doubt.flaky': { text: 'flaky', from: 'buddy', turn: 1, at: expect.any(Number), migrated: true },
     });
     expect(Object.keys(saved).sort()).toEqual(['at', 'blocks', 'ended', 'items', 'strikes', 'turnNo', 'version']);
     expect(w.writes.filter((p) => p === path)).toHaveLength(1);
@@ -3624,6 +3624,67 @@ describe('promptWhenIdle', () => {
     await answered($, 'keep going', 'u1');
     await idle(w);
     expect(away(w)).toHaveLength(4);
+  });
+
+  /** A kept wait, as the adapter writes it beside the memory. The kit's clock answers `$.clock` only: the adapter's Date.now() is the real one, and so is this. */
+  const kept = (wait: { at: number; answer: string } | null, pushes = 0) => ({ files: { [`${chatDir()}/away.json`]: JSON.stringify({ version: 1, wait, pushes }) } });
+
+  test('the wait is kept beside the memory: an answered turn writes it, the next prompt clears it', ON, async ($, on) => {
+    const w = world(on, { character: 'idler' }, {}, SLOW_FIXTURE);
+    await $.session.start(START);
+    await answered($, 'fix it', 't1');
+    await w.clock.settle();
+    expect(JSON.parse(w.files[`${chatDir()}/away.json`]!)).toMatchObject({ version: 1, wait: { at: expect.any(Number), answer: 'A' }, pushes: 0 });
+    await prompt($, 'one more thing', 't2');
+    await w.clock.settle();
+    expect(JSON.parse(w.files[`${chatDir()}/away.json`]!)).toEqual({ version: 1, wait: null, pushes: 0 });
+  });
+
+  test('a reload re-arms a kept wait for what remains of the 30 minutes', ON, async ($, on) => {
+    const w = world(on, { character: 'idler' }, { complete: { isAnswered: true, text: 'PAUSE' } }, { ...SLOW_FIXTURE, ...kept({ at: Date.now() - 20 * 60_000, answer: 'Halfway; continuing.' }) });
+    await $.session.start(START);
+    await w.clock.settle();
+    await idle(w, 10 * 60_000 - 5_000);
+    expect(away(w)).toEqual([]);
+    await idle(w, 10_000);
+    expect(away(w)).toHaveLength(1);
+    expect(away(w)[0]!.prompt).toBe(awayBody('Halfway; continuing.'));
+    expect(events(w, 'away.rearm')).toMatchObject([{ outcome: 'armed' }]);
+    // The wait is spent: the file says none, and more idle time makes no second call.
+    expect(JSON.parse(w.files[`${chatDir()}/away.json`]!)).toMatchObject({ wait: null });
+    await idle(w, 60 * 60_000);
+    expect(away(w)).toHaveLength(1);
+  });
+
+  test('a kept wait past due fires 1 to 5 minutes after the load, never at once', ON, async ($, on) => {
+    const w = world(on, { character: 'idler' }, { complete: { isAnswered: true, text: 'PAUSE' } }, { ...SLOW_FIXTURE, ...kept({ at: Date.now() - 90 * 60_000, answer: 'Long ago.' }) });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(away(w)).toEqual([]);
+    await idle(w, 59_000);
+    expect(away(w)).toEqual([]);
+    await idle(w, 4 * 60_000 + 5_000);
+    expect(away(w)).toHaveLength(1);
+    expect(away(w)[0]!.prompt).toBe(awayBody('Long ago.'));
+  });
+
+  test('a spent wait is never re-armed', ON, async ($, on) => {
+    const w = world(on, { character: 'idler' }, { complete: { isAnswered: true, text: 'PAUSE' } }, { ...SLOW_FIXTURE, ...kept(null) });
+    await $.session.start(START);
+    await w.clock.settle();
+    await idle(w, 31 * 60_000);
+    expect(away(w)).toEqual([]);
+    expect(events(w, 'away.rearm')).toMatchObject([{ outcome: 'none' }]);
+  });
+
+  test('a kept wait whose turn ended over 2 hours ago is dropped: never armed, its file left spent', ON, async ($, on) => {
+    const w = world(on, { character: 'idler' }, { complete: { isAnswered: true, text: `PUSH: ${PUSHED}` } }, { ...SLOW_FIXTURE, ...kept({ at: Date.now() - 3 * 3_600_000, answer: 'Yesterday.' }) });
+    await $.session.start(START);
+    await w.clock.settle();
+    await idle(w, 31 * 60_000);
+    expect(away(w)).toEqual([]);
+    expect(events(w, 'away.rearm')).toMatchObject([{ outcome: 'stale' }]);
+    expect(JSON.parse(w.files[`${chatDir()}/away.json`]!)).toEqual({ version: 1, wait: null, pushes: 0 });
   });
 
   test('/clear during the wait: no call', ON, async ($, on) => {
