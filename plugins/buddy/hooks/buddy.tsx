@@ -521,13 +521,20 @@ type Sweep = { marks: Map<string, FileMark>; texts: Map<string, string>; whole: 
 /** A main-loop shell command's files as they were before it ran (the ones it names read, the folders it works in swept), and the tally their changes count into. */
 type ShellBefore = { tally: Tally; files: Map<string, string | null>; folders: string[]; sweep: Sweep | null };
 
-/** Where a folder really is, links followed (`/tmp` is `/private/tmp` on macOS); undefined when it cannot be resolved. */
+/** Where a folder really is, links followed (macOS links `/tmp` into its system folder); undefined when it cannot be resolved. */
 async function realFolder($: EngineInterface, dir: string): Promise<string | undefined> {
   try {
     return (await $.fs.stat(dir, { resolve: true })).realPath;
   } catch {
     return undefined;
   }
+}
+
+/** The system's temp folders, each as spelled and where it really is: `/tmp` and TMPDIR, links followed. */
+async function tempFolders($: EngineInterface): Promise<string[]> {
+  const spelled = ['/tmp', (await $.env.get('TMPDIR')) ?? ''].filter(Boolean);
+  const real = await Promise.all(spelled.map((dir) => realFolder($, dir)));
+  return [...new Set([...spelled, ...real.filter((dir): dir is string => !!dir)])];
 }
 
 /**
@@ -653,11 +660,12 @@ async function shellBefore(st: State, $: EngineInterface, e: ToolCallInput): Pro
     if (!command) return null;
     const cwd = await $.session.cwd();
     const home = (await $.env.get('HOME')) ?? '';
-    const spelled = shellFolders(command, cwd, home);
+    const tmp = await tempFolders($);
+    const spelled = shellFolders(command, cwd, home, tmp);
     const folders = [...new Set(await Promise.all(spelled.map(async (dir) => (await realFolder($, dir)) ?? dir)))];
     const started = Date.now();
     const [files, sweep] = await Promise.all([
-      within(sleeper($), readShellFiles($, shellTargets(command, cwd, home)), SHELL_MEASURE_MS),
+      within(sleeper($), readShellFiles($, shellTargets(command, cwd, home, tmp)), SHELL_MEASURE_MS),
       within(sleeper($), sweepFolders($, folders, true), SHELL_MEASURE_MS),
     ]);
     if (files === 'timeout') lgT($, 'shell.measure', { outcome: 'timeout', when: 'before' });
@@ -1092,7 +1100,7 @@ function onToolCall(st: State, $: EngineInterface, e: ToolCallInput, r: ToolCall
     }
     if (st.tally) countToolCall(st.tally.counts, { tool: call.tool, args: call, failed: isError, denied, outcome: classifyToolCall({ tool: call.tool, isError, denied, output, command }) });
     if (!st.b) return;
-    const failure: Failure | null = denied ? { kind: 'denied', reason: denialReason(res.deny as string) } : isError ? { kind: 'failed', reason: failureReason(output) } : null;
+    const failure: Failure | null = denied ? { kind: 'denied', reason: denialReason(res.deny as string) } : isError ? { kind: 'failed', reason: failureReason(output, command) } : null;
     const action = actionOf(call, failure, output);
     const reaction = react(st.b, { tool: call.tool, isError, denied, output, command, action }, Math.random);
     roundEvent(st, $, toolLines(Date.now(), { tool: call.tool, args: call, output, failed: isError || denied, step: action ? (didOf([action])[0] ?? null) : null, reaction }));

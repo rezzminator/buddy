@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest';
 import {
   DID_FILES_MAX, DID_LINE_CAP, DID_MAX, DID_TEXT_CAP, FAIL_REASON_CAP, actionOf, denialReason, didOf, failureReason, redact, returnedOf, type Action, type Failure,
 } from '../plugins/buddy/src/did.ts';
+import { lostTurnOf } from '../plugins/buddy/src/prompts.ts';
 
 const did = (...calls: [Record<string, unknown> & { tool: string }, (boolean | Failure)?][]): string[] =>
   didOf(calls.map(([c, f]) => actionOf(c, f === true ? { kind: 'failed', reason: '' } : f || null)).filter((a): a is Action => a !== null));
@@ -70,6 +71,30 @@ describe('a failed or denied step', () => {
     const long = failureReason(`Error: ${'x'.repeat(200)}`);
     expect(long).toHaveLength(FAIL_REASON_CAP);
     expect(long.endsWith('…')).toBe(true);
+  });
+  test('an exit 1 from a trailing check names the check: its last segment, or a check before a trailing && that only prints', () => {
+    expect(failureReason('Exit code 1\n0', 'make check && grep -c "no DONE line" /tmp/x.log')).toBe('exit 1 from its last check (`grep -c "no DONE line" /tmp/x.log`): 0');
+    expect(failureReason('Exit code 1\nrun-3 rc=0 283 ms', './bench.sh; [ $rc -ne 0 ] && tail -5 /tmp/x.log')).toBe('exit 1 from its last check (`[ $rc -ne 0 ]`): run-3 rc=0 283 ms');
+    expect(failureReason('Exit code 1', 'make || [[ -f out/a.bin ]]')).toBe('exit 1 from its last check (`[[ -f out/a.bin ]]`)');
+    expect(failureReason('Exit code 1', 'cat a.txt | test -s b.txt')).toBe('exit 1 from its last check (`test -s b.txt`)');
+    expect(failureReason('Exit code 1\n1c1', 'sort a > b; diff b c')).toBe('exit 1 from its last check (`diff b c`): 1c1');
+    expect(failureReason('Exit code 1', 'cmp a.bin b.bin')).toBe('exit 1 from its last check (`cmp a.bin b.bin`)');
+    expect(failureReason('Exit code 1', 'grep -c "a; b && c" x.log')).toBe('exit 1 from its last check (`grep -c "a; b && c" x.log`)');
+    expect(failureReason('Exit code 1', `grep -q ${'x'.repeat(60)} f`)).toBe(`exit 1 from its last check (\`grep -q ${'x'.repeat(31)}…\`)`);
+  });
+  test('any other exit stays plain: another code, another last command, or no command', () => {
+    expect(failureReason('Exit code 2\nno such file', 'grep x a.txt')).toBe('exit 2: no such file');
+    expect(failureReason('Exit code 1\nboom', 'grep -q x a && npm test')).toBe('exit 1: boom');
+    expect(failureReason('Exit code 1\nboom', 'git grep x')).toBe('exit 1: boom');
+    expect(failureReason('Exit code 1\nboom', '[ -d out ] && make')).toBe('exit 1: boom');
+    expect(failureReason('Exit code 1\nboom')).toBe('exit 1: boom');
+  });
+  test("a lost turn's failed shell step names its trailing check", () => {
+    const rows = [
+      { role: 'user', text: 'check the log' },
+      { role: 'assistant', text: '', toolUses: [{ tool: 'Bash', input: { command: 'make && grep -c ERR /tmp/x.log', description: 'Count errors' }, text: 'Exit code 1\n0', isError: true as const }] },
+    ];
+    expect(lostTurnOf(rows).steps).toEqual([{ text: 'Count errors', fail: 'failed: exit 1 from its last check (`grep -c ERR /tmp/x.log`): 0' }]);
   });
   test('a denial is not a failure', () => {
     expect(did([{ tool: 'Bash', command: 'rm -rf x', description: 'Remove x' }, { kind: 'denied', reason: denialReason('User rejected') }])).toEqual(['Remove x (denied: User rejected)']);

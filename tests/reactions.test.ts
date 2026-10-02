@@ -90,16 +90,21 @@ describe("a runner's summary lines, and nothing else, are its result", () => {
     'bun test', 'bun run test', 'npm run test', 'npm run test:unit', 'vitest run', 'npx jest', 'npx --yes vitest', 'mocha', 'npx mocha test/', 'ava', 'tap test/*.js',
     'rake test', 'bundle exec rake test', 'gradle test', './gradlew :app:test', 'deno test -A', 'phpunit', './vendor/bin/phpunit', 'ctest --output-on-failure',
     'CI=1 npm test', 'npm test 2>&1 | tail -20', 'pnpm --filter web test', 'uv run pytest', 'timeout 60 go test ./...', '(cd api && cargo test)', './mvnw -q test',
+    'claude plugin test plugins/x', "bash -c 'go test ./...'", 'sh -c "npm test"', "bash -lc 'cd api && cargo test'", "scripts/dev.sh run 'go test ./...'", "docker exec app sh -c 'pytest -q'", 'go -C sub test ./...',
   ])('a runner: %s', (cmd) => {
     expect(run(cmd, '12 passed')).toBe('testPass');
   });
-  test.each(['cat jest.config.js', 'grep -rn vitest src', 'echo "npm test"', 'git log --grep "go test"', 'ls pytest.ini', 'mvn -DskipTests package', 'mvn test-compile', 'npm run build', 'npm install'])(
+  test.each(['cat jest.config.js', 'grep -rn vitest src', 'echo "npm test"', 'git log --grep "go test"', 'grep -c "npm test" notes.md', 'echo "run go test"', 'ls pytest.ini', 'mvn -DskipTests package', 'mvn test-compile', 'npm run build', 'npm install'])(
     'not a runner: %s',
     (cmd) => {
       expect(run(cmd, '12 passed')).toBeNull();
     },
   );
 
+  test('a go test run quoted inside a container wrapper, piped to tail, is read as a test run', () => {
+    const command = `cd w; scripts/dev.sh run 'go -C app test -count=1 -run "TestA|TestB" ./cmd/app/ 2>&1 | tail -12' </dev/null 2>&1 | tail -14`;
+    expect(run(command, 'container: ready\n--- FAIL: TestA (0.00s)\nFAIL\nFAIL\tex.com/app/cmd/app\t0.8s\nFAIL\n\nall steps passed.')).toBe('testFail');
+  });
   test.each([
     ['git log', 'abc123 fix: retry when upload FAILED'],
     ['grep -rn FAILED src', 'src/a.ts:12: if (s === "FAILED")'],

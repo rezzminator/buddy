@@ -6,6 +6,9 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ### Fixed
 - The buddy sees only the main chat, as you do: a subagent's tool calls, files, lines, test runs, commits and tokens no longer count in the turn's numbers (the `subagents` group is gone), so a background agent's deliberately failing run no longer reads as Claude's own failed test, which had the buddy ask Claude about a failure it never saw. What a foreground agent returns is read under the turn's steps (`Its agent “…” returned: …`), and an agent the harness launched asynchronously reads as reporting back later.
+- A command whose exit 1 came from the check it ends on (`grep -c`, `[ $rc -ne 0 ] && tail …`, `test`, `diff`, `cmp`) no longer reads as plainly failed: its step says ``(failed: exit 1 from its last check (`grep -c …`): …)``, so the buddy stops calling such work broken.
+- A temp file is not the work: a shell command's paths under `/tmp`, `/var/folders` or the system's temp folders, links followed (outside the session's folder) are neither counted as edits nor swept, so `> /tmp/run.log` no longer reads as an edit of that log.
+- More test runs are seen: `claude plugin test`, `go -C dir test`, and a runner quoted after a shell's `-c` or a wrapper's `run` or `exec` (`bash -c 'go test ./...'`, `dev.sh run 'go test ./...'`), so a red run inside a container wrapper counts as a failed test run.
 - Test runs are said in the order they happened (`test runs 1 failed, then 2 passed`), not as totals alone, so a red fixed by a later green no longer reads as an open failure.
 
 ### Added

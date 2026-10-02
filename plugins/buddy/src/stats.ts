@@ -291,15 +291,24 @@ function resolveWord(w: string, base: string, home: string): string | null {
   return joinPath(base, w);
 }
 
+const TEMP_ROOTS = ['/tmp', '/var/folders'];
+
+/** A path under a temp folder (TEMP_ROOTS, or one of `tmp`, the system's temp folders as the adapter resolves them) and outside the session's folder `cwd`: scratch, never the work. */
+function isTemp(f: string, cwd: string, tmp: readonly string[]): boolean {
+  if (f === cwd || f.startsWith(`${cwd}/`)) return false;
+  return [...TEMP_ROOTS, ...tmp.filter(Boolean).map((t) => joinPath('/', t))].some((t) => f === t || f.startsWith(`${t}/`));
+}
+
 /**
  * The files a shell command may change, as it names them: each path-like word
  * or quoted string, from the session's folder `cwd` and from each folder the
  * command `cd`s into or points `-C` at; `~` is `home`. At most
- * SHELL_CANDIDATES_MAX, device files left out. Only measuring them tells which
- * changed (shellChanges).
+ * SHELL_CANDIDATES_MAX, device files and temp files (isTemp, `tmp` the
+ * system's temp folders) left out. Only measuring them tells which changed
+ * (shellChanges).
  */
-export function shellTargets(command: string, cwd: string, home: string): string[] {
-  const bases = shellFolders(command, cwd, home);
+export function shellTargets(command: string, cwd: string, home: string, tmp: readonly string[] = []): string[] {
+  const bases = shellFolders(command, cwd, home, tmp);
   const words: string[] = [];
   for (const m of command.matchAll(QUOTED)) words.push(m[1] ?? m[2] ?? '');
   words.push(...command.replace(QUOTED, ' ').split(/[\s;&|()<>`=,]+/));
@@ -308,7 +317,7 @@ export function shellTargets(command: string, cwd: string, home: string): string
     if (!pathLike(w)) continue;
     for (const base of w.startsWith('/') || w.startsWith('~') ? [cwd] : bases) {
       const f = resolveWord(w, base, home);
-      if (f === null || f.startsWith('/dev/') || f.startsWith('/proc/') || out.includes(f)) continue;
+      if (f === null || f.startsWith('/dev/') || f.startsWith('/proc/') || isTemp(f, cwd, tmp) || out.includes(f)) continue;
       if (out.length === SHELL_CANDIDATES_MAX) return out;
       out.push(f);
     }
@@ -316,12 +325,12 @@ export function shellTargets(command: string, cwd: string, home: string): string
   return out;
 }
 
-/** The folders a shell command works in: the session's folder `cwd`, then each it `cd`s into or points `-C` at; `~` is `home`. */
-export function shellFolders(command: string, cwd: string, home: string): string[] {
+/** The folders a shell command works in: the session's folder `cwd`, then each it `cd`s into or points `-C` at, but a temp one (isTemp); `~` is `home`. */
+export function shellFolders(command: string, cwd: string, home: string, tmp: readonly string[] = []): string[] {
   const bases = [cwd];
   for (const m of command.matchAll(INTO)) {
     const dir = resolveWord(m[1] ?? m[2] ?? m[3] ?? '', cwd, home);
-    if (dir && !bases.includes(dir)) bases.push(dir);
+    if (dir && !bases.includes(dir) && !isTemp(dir, cwd, tmp)) bases.push(dir);
   }
   return bases;
 }

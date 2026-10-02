@@ -251,13 +251,14 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   line. The output of a Bash command that runs a test runner (npm/pnpm/yarn/bun
   test, vitest, jest, mocha, ava, tap, pytest, unittest, go test, cargo test
   or nextest, rspec, rake or rails test, mix test, dotnet test, mvn/gradle
-  test, deno test, phpunit, ctest) is read from its summary lines: a pass (a count of zero
+  test, deno test, phpunit, ctest, claude plugin test), also quoted after a
+  shell's `-c` or a wrapper's `run` or `exec` (`bash -c 'go test ./...'`), is read from its summary lines: a pass (a count of zero
   never passes) gives the `yay` pose, a line and two seconds of confetti; a
   failure gives the `oops` pose and a line. The pose and confetti come every
   time, the line one time in three. A failure always wins, and any
   other command's output never counts as a test. Not recognised yet: a
-  gradle pass (gradle prints no count), `make test`, a runner inside docker
-  or `bash -c`, and `node --test`.
+  gradle pass (gradle prints no count), `make test`, an unquoted runner
+  after `docker exec`, and `node --test`.
 - **The bubble** holds one line, wrapped to fit a rounded box beside the
   character, opening toward the free side. A canned line stays 10 seconds,
   a model's words 15. No canned line (it is dropped, never said later), turn

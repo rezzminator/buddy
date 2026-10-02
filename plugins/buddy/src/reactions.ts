@@ -70,18 +70,19 @@ export const REACTIONS: Record<Outcome, Reaction> = {
 // Where a shell command starts: a line start or after `;` `&` `|` `(`, past any
 // `VAR=value`, a launcher (`npx`, `pnpm exec`, `bundle exec`, `uv run`, `timeout 60`, ...)
 // with its flags, and a path (`./gradlew`, `vendor/bin/phpunit`). So `cat jest.config.js`
-// or `echo "npm test"` runs no test runner.
-const AT_COMMAND = String.raw`(?:^|[;&|(])[ \t]*(?:(?:[A-Za-z_]\w*=\S*|(?:npx|bunx|npm[ \t]+exec|pnpm(?:[ \t]+(?:exec|dlx))?|yarn(?:[ \t]+(?:exec|dlx))?|bundle[ \t]+exec|uv[ \t]+run|poetry[ \t]+run|pipenv[ \t]+run|time|env|timeout[ \t]+\S+)(?:[ \t]+-[\w=-]+)*)[ \t]+)*(?:[\w.~/-]*\/)?`;
+// or `echo "npm test"` runs no test runner. A quote opened after a shell's `-c`
+// (`bash -lc '...'`) or a wrapper's `run` or `exec` (`dev.sh run '...'`) starts one too.
+const AT_COMMAND = String.raw`(?:^|[;&|(]|(?:\b(?:ba|z|da|k)?sh(?:[ \t]+-\w+)*?[ \t]+-\w*c|[ \t](?:run|exec))[ \t]+['"])[ \t]*(?:(?:[A-Za-z_]\w*=\S*|(?:npx|bunx|npm[ \t]+exec|pnpm(?:[ \t]+(?:exec|dlx))?|yarn(?:[ \t]+(?:exec|dlx))?|bundle[ \t]+exec|uv[ \t]+run|poetry[ \t]+run|pipenv[ \t]+run|time|env|timeout[ \t]+\S+)(?:[ \t]+-[\w=-]+)*)[ \t]+)*(?:[\w.~/-]*\/)?`;
 const RUNNERS = [
   String.raw`(?:npm|pnpm|yarn|bun)(?:[ \t]+[^\s;&|]+)*?[ \t]+(?:run[ \t]+)?test(?:[:-][\w:.-]+)?`, // npm test, pnpm -r test, npm run test:unit
   String.raw`vitest|jest|mocha|ava|tap|pytest|rspec|phpunit|ctest`,
   String.raw`python(?:3(?:\.\d+)?)?[ \t]+-m[ \t]+(?:pytest|unittest)`,
-  String.raw`(?:go|cargo|mix|dotnet|deno|rake|rails)[ \t]+test|cargo[ \t]+nextest`,
+  String.raw`(?:go(?:[ \t]+-C[ \t]+\S+)?|cargo|mix|dotnet|deno|rake|rails)[ \t]+test|cargo[ \t]+nextest|claude[ \t]+plugin[ \t]+test`, // go -C dir test
   String.raw`(?:mvnw?|gradlew?)(?:[ \t]+[^\s;&|]+)*?[ \t]+(?:[^\s;&|]*:)?test`, // mvn -q test, ./gradlew :app:test
 ];
 
 /** A shell command that runs a test runner: only its output is read as a test result. */
-export const TEST_RUNNER = new RegExp(String.raw`${AT_COMMAND}(?:${RUNNERS.join('|')})(?=[ \t;&|)]|$)`, 'm');
+export const TEST_RUNNER = new RegExp(String.raw`${AT_COMMAND}(?:${RUNNERS.join('|')})(?=[ \t;&|)'"]|$)`, 'm');
 
 /**
  * How much of a command TEST_RUNNER reads: its launcher star and lazy token

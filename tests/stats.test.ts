@@ -203,6 +203,12 @@ describe("a shell command's own edits", () => {
     expect(shellTargets('git -C sub commit -a && cat notes.md 2>/dev/null', '/w/app', '/h')).toEqual(['/w/app/notes.md', '/w/app/sub/notes.md']);
     expect(shellTargets(Array.from({ length: 40 }, (_, i) => `f${i}.txt`).join(' '), '/w', '/h')).toHaveLength(SHELL_CANDIDATES_MAX);
   });
+  test('a temp path is not the work: never a candidate, never a folder swept, unless it lies in the session folder', () => {
+    expect(shellTargets('make > /tmp/x.log 2>&1; cat /real/tmp/y.txt /var/folders/ab/T/z.txt /scratch/t/w.txt src/a.ts', '/w/app', '/h', ['/scratch/t/', '/real/tmp'])).toEqual(['/w/app/src/a.ts']);
+    expect(shellTargets('cd /tmp/x && touch f.txt', '/w/app', '/h')).toEqual(['/w/app/f.txt']);
+    expect(shellTargets('echo hi > out.txt; cat ../other.txt', '/tmp/proj', '/h')).toEqual(['/tmp/proj/out.txt']);
+    expect(shellFolders('cd /tmp/x && make; cd /scratch/t/y; cd sub', '/w/app', '/h', ['/scratch/t'])).toEqual(['/w/app', '/w/app/sub']);
+  });
   test('the lines a whole file changed, counted as git counts them: two edits far apart are two lines each way, not the span between', () => {
     const ten = Array.from({ length: 10 }, (_, i) => `line ${i}`);
     const edited = ten.map((l, i) => (i === 1 || i === 8 ? `${l}!` : l));

@@ -77,13 +77,62 @@ export function denialReason(deny: string): string {
   return cut(redact(oneSpaced(deny)), FAIL_REASON_CAP);
 }
 
+/** A command's segments split at `&&`, `||`, `;`, `|` and newlines outside quotes, each with the separator before it. */
+function segments(command: string): { sep: string; text: string }[] {
+  const out: { sep: string; text: string }[] = [];
+  let sep = '';
+  let text = '';
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (quote) {
+      if (c === quote) quote = '';
+      text += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      text += c;
+    } else {
+      const two = command.slice(i, i + 2);
+      const s = two === '&&' || two === '||' ? two : c === ';' || c === '|' || c === '\n' ? c : '';
+      if (!s) text += c;
+      else {
+        out.push({ sep, text: text.trim() });
+        sep = s;
+        text = '';
+        i += s.length - 1;
+      }
+    }
+  }
+  out.push({ sep, text: text.trim() });
+  return out.filter((g) => g.text !== '');
+}
+
+const CHECK = /^(?:grep|test|diff|cmp|\[\[?)(?:\s|$)/;
+const PRINTS = /^(?:echo|printf|cat|head|tail)(?:\s|$)/;
+
+/**
+ * The check a command ends on, whose exit 1 means "not found" or "not true"
+ * rather than a failure: its last segment when that is `grep`, `test`,
+ * `[ … ]`, `[[ … ]]`, `diff` or `cmp`, or such a check right before a final
+ * `&&` that only prints (`[ $rc -ne 0 ] && tail log`). Null for any other command.
+ */
+function lastCheck(command: string): string | null {
+  const g = segments(command);
+  const last = g.at(-1);
+  if (!last) return null;
+  if (CHECK.test(last.text)) return last.text;
+  const before = g.at(-2);
+  return last.sep === '&&' && PRINTS.test(last.text) && before && CHECK.test(before.text) ? before.text : null;
+}
+
 /**
  * Why a failed tool call failed, from its output: colors gone, the first line
  * that names an error (else the last line), after `exit N: ` when the output
  * gave an exit code; one line, redacted, at most FAIL_REASON_CAP. Empty for
- * an empty output.
+ * an empty output. Given the Bash `command`, an exit 1 from the check it ends
+ * on (lastCheck) reads `exit 1 from its last check (`{check, cut to 40}`)`.
  */
-export function failureReason(output: string): string {
+export function failureReason(output: string, command = ''): string {
   let exit: string | null = null;
   const lines = output.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, '').split('\n').map((l) => l.trim()).filter((l) => {
     const m = /^exit code (\d+)$/i.exec(l);
@@ -91,7 +140,9 @@ export function failureReason(output: string): string {
     return l !== '' && !m;
   });
   const line = lines.find((l) => /error|fail|fatal|denied|not found|no such|cannot|can't|refused|invalid|exception|traceback|panic/i.test(l)) ?? lines.at(-1) ?? '';
-  const reason = exit === null ? line : line ? `exit ${exit}: ${line}` : `exit ${exit}`;
+  const check = exit === '1' ? lastCheck(command) : null;
+  const head = check === null ? (exit === null ? '' : `exit ${exit}`) : `exit 1 from its last check (\`${cut(oneSpaced(check), 40)}\`)`;
+  const reason = !head ? line : line ? `${head}: ${line}` : head;
   return cut(redact(oneSpaced(reason)), FAIL_REASON_CAP);
 }
 

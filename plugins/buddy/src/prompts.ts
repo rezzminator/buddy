@@ -336,7 +336,7 @@ export function lostTurnOf(rows: readonly MessageRow[]): { prompt: string; steps
     .slice(i + 1)
     .filter((r) => r.role === 'assistant')
     .flatMap((r) => r.toolUses ?? [])
-    .map((u) => actionOf({ ...u.input, tool: u.tool }, u.isError ? { kind: 'failed', reason: failureReason(u.text ?? '') } : null))
+    .map((u) => actionOf({ ...u.input, tool: u.tool }, u.isError ? { kind: 'failed', reason: failureReason(u.text ?? '', u.tool === 'Bash' && typeof u.input.command === 'string' ? u.input.command : '') } : null))
     .filter((a): a is Action => a !== null);
   return { prompt: rows[i]!.text, steps };
 }
