@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome } from '../plugins/buddy/src/suggestNextPrompt.ts';
+import { afterSuggestion, dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome, suggestionUse } from '../plugins/buddy/src/suggestNextPrompt.ts';
 
 describe('dropsHarnessSuggestion', () => {
   const harness = { kind: 'suggestion' } as const;
@@ -30,5 +30,28 @@ describe('heldSuggestionRelease', () => {
     expect(heldSuggestionRelease(false, false)).toBeNull();
     expect(heldSuggestionRelease(true, false)).toBe('harness-hidden');
     expect(heldSuggestionRelease(false, true)).toBe('harness-stale');
+  });
+});
+
+describe('suggestionUse', () => {
+  test('the suggestion sent as it was, spacing and case aside, is unedited', () => {
+    expect(suggestionUse('Run  the tests', ' run the tests\n')).toBe('unedited');
+    expect(afterSuggestion('Run  the tests', ' run the tests\n')).toBe('');
+  });
+  test('the suggestion kept whole at the start, words added after it, is extended: the added words are what follows it', () => {
+    expect(suggestionUse('run the tests', 'Run the tests, then fix the first failure')).toBe('extended');
+    expect(afterSuggestion('run the tests', 'Run the tests, then fix the first failure')).toBe('then fix the first failure');
+    expect(afterSuggestion('keep main safe', 'keep   Main safe — never push ')).toBe('never push');
+    expect(afterSuggestion('run the tests', 'run the tests/unit too')).toBe('/unit too');
+  });
+  test('a prompt going on mid-word, or editing the suggestion, used none of it', () => {
+    expect(suggestionUse('run the test', 'run the tests')).toBeNull();
+    expect(suggestionUse('run the tests', 'please run the tests')).toBeNull();
+    expect(afterSuggestion('run the test', 'run the tests')).toBe('');
+  });
+  test('a blank suggestion or prompt is no use', () => {
+    expect(suggestionUse('', 'run the tests')).toBeNull();
+    expect(suggestionUse('run the tests', '  \n')).toBeNull();
+    expect(afterSuggestion('  ', 'run the tests')).toBe('');
   });
 });

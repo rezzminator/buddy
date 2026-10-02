@@ -116,18 +116,19 @@ export function classifyToolCall(c: ToolCall): Outcome | null {
 
 const OUTPUT_CAP = 20000;
 
-/**
- * The text a tool call produced: core's `text` when it is a string, else the
- * string fields of `result` (stdout, stderr, ...). The tail is kept, where a
- * test runner prints its summary.
- */
-export function toolOutput(r: { text?: unknown; result?: unknown }): string {
-  let out = '';
-  if (typeof r.text === 'string') out = r.text;
-  else if (typeof r.result === 'string') out = r.result;
-  else if (typeof r.result === 'object' && r.result !== null) {
-    out = Object.values(r.result as Record<string, unknown>).filter((v): v is string => typeof v === 'string').join('\n');
+/** The whole text a tool call produced: core's `text` when it is a string, else the string fields of `result` (stdout, stderr, ...). */
+export function toolText(r: { text?: unknown; result?: unknown }): string {
+  if (typeof r.text === 'string') return r.text;
+  if (typeof r.result === 'string') return r.result;
+  if (typeof r.result === 'object' && r.result !== null) {
+    return Object.values(r.result as Record<string, unknown>).filter((v): v is string => typeof v === 'string').join('\n');
   }
+  return '';
+}
+
+/** The text a tool call produced (toolText), its tail kept to OUTPUT_CAP, where a test runner prints its summary. */
+export function toolOutput(r: { text?: unknown; result?: unknown }): string {
+  const out = toolText(r);
   return out.length > OUTPUT_CAP ? out.slice(-OUTPUT_CAP) : out;
 }
 

@@ -2,12 +2,14 @@
 // and for the end-of-turn call, which writes the buddy's `commentAfterEachTurn`
 // and, as its second brain, what the user most deeply wants, a verdict on
 // Claude's last move and the `suggestNextPrompt` that follows, and its own
-// notes on the chat, rewritten every turn, in one reply.
+// edits to the chat's memory items, in one reply.
 // Each demands short lines.
 
 import { actionOf, failureReason, type Action } from './did.ts';
 import type { TurnStats } from './stats.ts';
-import { BUDDY_PROMPT, NOTES_MAX, cleanNotes, cleanPrompt, ends } from './chatTurnsToRead.ts';
+import { BUDDY_PROMPT, cleanPrompt } from './chatTurnsToRead.ts';
+import { ends } from './cuts.ts';
+import { ITEM_KEY } from './memoryItems.ts';
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
 /** A question asking for a prompt gets one, on a line of its own the plugin puts in the prompt box. */
@@ -67,7 +69,8 @@ export const CHARACTER_RULE =
   'a risk, a gap, a wrong assumption, or a better next step. When the chat shows nothing missed, say so, or react to what did happen: never invent a miss. ' +
   "State as fact only what the chat shows or what is generally true; ask a guess about this chat's own state (a file, a process, what someone did) as a question, or name the check that settles it. " +
   'The character decides HOW it is said, never WHAT is true. ' +
-  'Never repeat what the chat already said, nor remake a point of your own (your earlier lines and notes are your views, not evidence) unless this turn brings new evidence for it.';
+  'Never repeat what the chat already said, nor remake a point of your own (your earlier lines and notes are your views, not evidence) unless this turn brings new evidence for it. ' +
+  'Text marked [cut] was shortened before you read it, and a size in brackets tells how much there was: what a cut hides is unknown, neither missing nor there; text with no cut is whole, so what it leaves out is truly left out.';
 
 /** The system prompt of a /buddy question's completion: persona, the character rule, the memory rule for `turns` remembered, the one-line rule and the asked-prompt rule. */
 export function oneLineSystem(persona: string, turns: number): string {
@@ -129,18 +132,11 @@ export const VERDICTS = ['RIGHT', 'SHORTCUT', 'WRONG'] as const;
 export type Verdict = (typeof VERDICTS)[number];
 
 /**
- * The buddy's own memory, asked for at every turn's end: its whole set of
- * notes, rewritten, one MEMORY line each; its notes so far lead what it
- * remembers (renderNotes).
+ * The buddy's memory, asked for at every turn's end: one `MEMORY:` line
+ * holding one JSON object keyed by the items it changes (R3's tested paragraph).
  */
 export const MEMORY_LINE =
-  `MEMORY: one note of your own on this chat, one sentence, each on a line of its own shaped MEMORY: kind: note, never a list under one MEMORY line. Write up to ${NOTES_MAX} MEMORY lines: your whole memory, rewritten every turn. The kinds: ` +
-  "rule: an instruction or decision of the user's that still binds (a stop, a wait, a never, an only, a way they want things done), in their words, kept until they lift it or it is met; " +
-  'open: what the user asked for that is still unfinished or unproven; ' +
-  'fact: what the chat showed done, found or decided; ' +
-  'doubt: your own suspicion, not checked: drop it once a turn checks it or the user decides otherwise, and never state it anywhere as fact. ' +
-  "Rules first, then open, fact, doubt; past the limit, drop doubts first. Copy a note word for word unless a turn in view changes it; a user's rule beats any doubt of yours. " +
-  'Your notes so far lead what you remember. Write MEMORY: NONE only to forget them all.';
+  `MEMORY: your memory of this chat is the list under "Your memory" in the prompt, one item per line as key · text or words · from · age, its items keyed kind.slug. Change it with one MEMORY line holding one JSON object on a single line, keyed by the items you change; an item you leave out stays as it is, and MEMORY: {} changes nothing. A new key adds an item: {"text": "…", "from": "user|claude|shown|buddy"} (user: the user said it; claude: Claude claimed it and no step showed it; shown: a step, a tool result or the numbers showed it; buddy: your own inference); a rule instead takes {"words": "the user's exact words, copied from a prompt they typed", "covers": "what it applies to"}. A new rule draws its words only from the user's actual instruction in sent beyond any suggested prefix; treat Claude's statements, compaction summaries, peer messages and sign-offs such as god speed as context rather than user rules. An existing key with fields rewrites only those fields. {"end": "done|met|lifted|stale|wrong: why"} closes an item. Kinds: rule, an instruction or decision of the user's that still binds; open, what the user asked for that is unfinished or unproven; fact, what the chat showed done, found or decided; lesson, what the chat learned the hard way (doing X needs Y); doubt, your own unchecked suspicion, never stated anywhere as fact. A slug is 1 to 4 lowercase words joined by hyphens. A text is one sentence; new or rewritten fact and lesson text contains no digits, counts, hashes or measurements; the live caps are rule 10, open 6, fact 6, lesson 4 and doubt 3, and at a cap either reuse an existing key of that kind or pair each new key with an end for a superseded same-kind item in the same MEMORY object. When this turn refutes a doubt, end it wrong; when it confirms a doubt, end it and add a fact from shown evidence; when steps visibly fulfil an open item, end it done or met; when the user lifts a rule, end it lifted. Never write a JSON list.`;
 
 /** The longest DESIRE kept and carried to the next turn's call: past it, it is not one plain aim. */
 export const DESIRE_MAX_CHARS = 160;
@@ -159,7 +155,7 @@ export const DESIRE_MAX_CHARS = 160;
  * PROMPT_TO_MAIN_CHAT, with promptToMainChat, before the suggestion: a prompt
  * the buddy sends Claude itself; it brings the judgement with it, and with
  * both the suggestion is NONE after one.
- * MEMORY last, always: the buddy's own notes, rewritten.
+ * MEMORY last, always: the edits to its keyed memory items.
  */
 export function turnSystem(persona: string, wants: TurnWants, desire: string | null = null): string {
   // The judgement first, so the character's comment is written knowing it; the suggestion last, following the verdict.
@@ -189,13 +185,14 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
         (wants.suggestNextPrompt ? ' go in SUGGEST_NEXT_PROMPT. ' : ' never go here. ') +
         "Plain words, not in character, at most 40 words: name the evidence, then the one fix or check it needs; it reaches Claude as yours, never as the user's. " +
         'Write PROMPT_TO_MAIN_CHAT: NONE otherwise.',
+      'RULE_BROKEN: when your PROMPT_TO_MAIN_CHAT is about an instruction Claude did not follow and that instruction is a rule under "Your memory", that rule\'s key exactly as listed (rule.…); RULE_BROKEN: NONE otherwise.',
     );
   }
   if (wants.suggestNextPrompt) {
     lines.push(
       'SUGGEST_NEXT_PROMPT: the prompt the user should send Claude next, as they would type it into the prompt box: not in character, no quotes, at most 20 words. ' +
         "Safety first: never suggest searching for, printing, copying or checking a secret (a password, token or key), which puts its value in the chat; a deletion is a prompt of its own, naming exactly what it deletes, never bundled with other work. " +
-        'It asks, instructs or decides, and every fact in it is already in the chat: the user may send it with one key, unread, so it never reports what the user did, ran, saw or saved. ' +
+        'It asks, instructs or decides, and every fact in it is already in the chat: the user may send it with one key, unread, so it never reports what the user did, ran, saw or saved, and never puts an approval, a ruling or an observation in the user\'s mouth (no "approved", "as I said", "I checked", "looks right"): it asks for the step instead. ' +
         "When the next step is the user's own (a key to make, a check only they can run), suggest what they would ask Claude about it. " +
         'After RIGHT, say yes and move to the next step; after SHORTCUT, ask for the proper way; after WRONG, stop Claude and name what to do instead. ' +
         'Never ask whether work Claude left running (a background command or agent, a push, a review) has finished: it reports back by itself; while Claude waits on it, suggest only a decision the user owes. ' +
@@ -221,11 +218,17 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
  * turn remembered before they were kept. `interrupted`: the user interrupted
  * the turn, its answer what Claude said before that. `ended`: an API error or
  * a refusal ended it, its answer what Claude said before that. `added`: the prompts the
- * user typed while it ran that Claude Code delivered into it, oldest first.
+ * user typed while it ran that Claude Code delivered into it, oldest first;
+ * `addedAfter`, one per `added` entry, the main-loop tool calls made before it
+ * was delivered. `said`: what Claude wrote mid-turn, in order. `briefed`: the
+ * brief of each agent it ran, `“{description}”: {brief}`.
+ * `suggested`: the suggestion in the box when the user sent this prompt.
  */
 /** How a turn that was not answered or interrupted ended (Claude Code's `turn.complete` reasons). */
 export type TurnCut = 'error' | 'refusal';
-export type Turn = { prompt: string; answer: string; did?: string[]; returned?: string[]; from?: string; stats?: TurnStats; interrupted?: true; ended?: TurnCut; added?: string[] };
+/** What Claude wrote mid-turn: `after`, the main-loop tool calls made before it. */
+export type Said = { after: number; text: string };
+export type Turn = { prompt: string; answer: string; did?: string[]; returned?: string[]; from?: string; stats?: TurnStats; interrupted?: true; ended?: TurnCut; added?: string[]; suggested?: string; said?: Said[]; addedAfter?: number[]; briefed?: string[] };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
@@ -244,11 +247,14 @@ const PROMPTS_KEPT = 10;
  * started no turn yet, oldest first, `over` the running turn one was typed
  * over; `started`, the main turns begun (turn.start), by id, with their text
  * and whose it was (`seen` false until its submission settles; `queued` when
- * it took a waiting prompt; `added`, the prompts delivered into it).
+ * it took a waiting prompt; `added`, the prompts delivered into it, and
+ * `addedAfter`, the main-loop tool calls made before each was; `said`, what
+ * Claude wrote mid-turn).
  */
+type Started = { turnId: string; text: string; from?: string; seen: boolean; queued?: boolean; added?: readonly string[]; addedAfter?: readonly number[]; said?: readonly Said[] };
 export type PromptLedger = {
   entered: readonly { text: string; from?: string; over?: string }[];
-  started: readonly { turnId: string; text: string; from?: string; seen: boolean; queued?: boolean; added?: readonly string[] }[];
+  started: readonly Started[];
 };
 export const NO_PROMPTS: PromptLedger = { entered: [], started: [] };
 
@@ -268,24 +274,32 @@ export function submitPrompt(l: PromptLedger, text: string, origin: string, turn
   const from = user ? undefined : origin;
   const i = l.started.findIndex((s) => s.turnId !== turnId && !s.seen && s.text === text);
   const j = i >= 0 || turnId !== undefined ? i : l.started.findLastIndex((s) => s.queued === true && s.text === text);
-  if (j >= 0) return { ...l, started: l.started.map((s, k) => (k === j ? { turnId: s.turnId, text: s.text, from, seen: true, ...(s.added ? { added: s.added } : {}) } : s)) };
+  if (j >= 0) return { ...l, started: l.started.map((s, k) => (k === j ? { turnId: s.turnId, text: s.text, from, seen: true, ...(s.added ? { added: s.added } : {}), ...(s.addedAfter ? { addedAfter: s.addedAfter } : {}), ...(s.said ? { said: s.said } : {}) } : s)) };
   return { ...l, entered: [...l.entered, { text, from, ...(turnId === undefined ? {} : { over: turnId }) }].slice(-PROMPTS_KEPT) };
 }
 
 /**
  * The main turn `turnId` is about to send a model request (turn.step), and
  * Claude Code delivers the prompts typed over it into that request: each
- * entered prompt `over` it joins that turn's `added`, in order. With no
- * started entry for that turn they stay waiting.
+ * entered prompt `over` it joins that turn's `added`, in order, `after` the
+ * main-loop tool calls made so far. With no started entry for that turn they
+ * stay waiting.
  */
-export function deliverPrompts(l: PromptLedger, turnId: string): PromptLedger {
+export function deliverPrompts(l: PromptLedger, turnId: string, after = 0): PromptLedger {
   const i = l.started.findIndex((s) => s.turnId === turnId);
   const moved = l.entered.filter((p) => p.over === turnId).map((p) => p.text);
   if (i < 0 || moved.length === 0) return l;
   return {
     entered: l.entered.filter((p) => p.over !== turnId),
-    started: l.started.map((s, k) => (k === i ? { ...s, added: [...(s.added ?? []), ...moved] } : s)),
+    started: l.started.map((s, k) => (k === i ? { ...s, added: [...(s.added ?? []), ...moved], addedAfter: [...(s.addedAfter ?? []), ...moved.map(() => after)] } : s)),
   };
+}
+
+/** Claude wrote `text` mid-turn in the main turn `turnId`, `after` that many main-loop tool calls: it joins that turn's `said`. With no started entry, or blank text, the ledger as it is. */
+export function sayInTurn(l: PromptLedger, turnId: string, text: string, after: number): PromptLedger {
+  const i = l.started.findIndex((s) => s.turnId === turnId);
+  if (i < 0 || text.trim() === '') return l;
+  return { ...l, started: l.started.map((s, k) => (k === i ? { ...s, said: [...(s.said ?? []), { after, text }] } : s)) };
 }
 
 /**
@@ -303,16 +317,18 @@ export function startPromptTurn(l: PromptLedger, turnId: string, text: string): 
 /**
  * The main turn `turnId` ended, in any way: the prompt it began with and,
  * when that was not the user's, its origin (`unknown` when its submission
- * was never seen), the prompts delivered into it (`added`, none left out),
- * and the ledger without it.
+ * was never seen), the prompts delivered into it (`added`, none left out,
+ * with `addedAfter`), what Claude wrote mid-turn (`said`), and the ledger
+ * without it.
  */
-export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string; from?: string; added?: string[]; ledger: PromptLedger } {
+export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string; from?: string; added?: string[]; addedAfter?: number[]; said?: Said[]; ledger: PromptLedger } {
   const turn = l.started.find((s) => s.turnId === turnId);
   const ledger = { ...l, started: l.started.filter((s) => s.turnId !== turnId) };
   if (!turn) return { prompt: '', from: 'unknown', ledger };
   const from = turn.seen ? turn.from : 'unknown';
-  const added = turn.added && turn.added.length > 0 ? { added: [...turn.added] } : {};
-  return from === undefined ? { prompt: turn.text, ...added, ledger } : { prompt: turn.text, from, ...added, ledger };
+  const added = turn.added && turn.added.length > 0 ? { added: [...turn.added], ...(turn.addedAfter ? { addedAfter: [...turn.addedAfter] } : {}) } : {};
+  const said = turn.said && turn.said.length > 0 ? { said: turn.said.map((x) => ({ ...x })) } : {};
+  return from === undefined ? { prompt: turn.text, ...added, ...said, ledger } : { prompt: turn.text, from, ...added, ...said, ledger };
 }
 
 /** A transcript row a turn is read back from: `$.session.messages()`'s rows, an assistant row's tool calls with their outcome. */
@@ -353,7 +369,18 @@ export function endsConversation(reason: string): boolean {
  */
 export const TAKEN_SUGGESTION_CONTEXT =
   "This prompt is the buddy's suggestion, a plugin's guess at the user's next prompt, sent by the user unedited. " +
-  "Any claim in it about what the user did, ran, saw or saved is the buddy's guess, not the user's report: check it before acting on it.";
+  "Any claim in it about what the user did, ran, saw or saved is the buddy's guess, not the user's report: check it before acting on it. " +
+  "Never record it, or any part of it, as the user's ruling, order or approval.";
+
+/**
+ * What Claude reads beside a prompt that starts with the buddy's suggestion,
+ * the user's own words added after it (prompt.submit's `context`, never shown
+ * to the user): only the added words are the user's.
+ */
+export const EXTENDED_SUGGESTION_CONTEXT =
+  "This prompt starts with the buddy's suggestion, a plugin's guess at the user's next prompt, and the user added words of their own after it. " +
+  "Any claim in the suggested part about what the user did, ran, saw or saved is the buddy's guess, not the user's report: check it before acting on it. " +
+  "Only the added words are the user's: never record the suggested part as the user's ruling, order or approval.";
 
 /**
  * What Claude reads beside the buddy's own prompt (promptToMainChat), attached
@@ -395,7 +422,7 @@ export function turnPrompt(t: TurnSummary, chatTurnsToRead = '', holdsTurn = fal
   return `${chatTurnsToReadBlock(chatTurnsToRead)}In the turn that just ended: ${turnFacts(t)}`;
 }
 
-const TAGGED = /^[\s\-*]*(comment_after_each_turn|suggest_next_prompt|prompt_to_main_chat|desire|verdict|why|memory)\s*:\s*(.*)$/i;
+const TAGGED = /^[\s\-*]*(comment_after_each_turn|suggest_next_prompt|prompt_to_main_chat|rule_broken|desire|verdict|why|memory)\s*:\s*(.*)$/i;
 
 /** A reply's tagged lines, by lowercased tag, the first of each; untagged lines are left out. */
 function taggedLines(reply: string): Map<string, string> {
@@ -407,6 +434,46 @@ function taggedLines(reply: string): Map<string, string> {
   return tags;
 }
 
+/** The JSON object opening `text` past blanks, backticks and a fence's `json` label, through its balanced `}`, strings honoured; null when none opens it or it never closes. */
+function balancedObject(text: string): string | null {
+  const start = /^[\s`]*(?:json\b)?\s*/i.exec(text)![0].length;
+  if (text[start] !== '{') return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}' && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
+/** The MEMORY value: the balanced JSON object after a MEMORY tag, on its line or over the lines below it, fenced or in backticks, from the first tag that holds one; else the first tag's line, trimmed; null with no tag. */
+function memoryOf(reply: string): string | null {
+  const lines = reply.split('\n');
+  let first: string | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = TAGGED.exec(lines[i]!);
+    if (!m || m[1]!.toLowerCase() !== 'memory') continue;
+    first ??= m[2]!.trim();
+    const object = balancedObject([m[2]!, ...lines.slice(i + 1)].join('\n'));
+    if (object !== null) return object;
+  }
+  return first;
+}
+
+/** A RULE_BROKEN value as a key: its first word, unquoted, unbolded and stripped of trailing punctuation; a key that is not a rule's is null. */
+function ruleKeyOf(value: string): string | null {
+  const word = value.trim().replace(/^["'`*]+/, '').split(/[\s"'`*,;()]/)[0]!.replace(/[.:;,!?]+$/, '');
+  return ITEM_KEY.test(word) && word.startsWith('rule.') ? word : null;
+}
+
 /** The end-of-turn reply, each part or null: a VERDICT not one of VERDICTS, a DESIRE past DESIRE_MAX_CHARS, or an empty line is none; SUGGEST_NEXT_PROMPT as suggestNextPromptText reads it, PROMPT_TO_MAIN_CHAT too, up to PROMPT_TO_MAIN_CHAT_MAX_CHARS. */
 export type TurnReply = {
   commentAfterEachTurn: string | null;
@@ -416,38 +483,16 @@ export type TurnReply = {
   suggestNextPrompt: string | null;
   /** The prompt the buddy sends the main chat itself. */
   promptToMainChat: string | null;
-  /** The buddy's notes, rewritten (cleanNotes); [] for MEMORY: NONE; null when the reply wrote no MEMORY line, which keeps the notes it had. */
-  memory: string[] | null;
+  /** The key of the user's rule the buddy says this turn broke; null for NONE, none, or a key that is not a rule's. */
+  ruleBroken: string | null;
+  /** The MEMORY JSON object (memoryOf), parsed by applyMemory; the first MEMORY line's trimmed text when it holds none; null when absent. */
+  memory: string | null;
 };
-
-/**
- * Every MEMORY line of a reply, in order, and the lines listed under a bare
- * MEMORY line up to the next tagged line: [] only when NONE is said and no
- * note is; null when there is no note and no NONE, so a reply that slipped out
- * of the line shape never forgets the notes.
- */
-function memoryLines(reply: string): string[] | null {
-  const notes: string[] = [];
-  let listing = false;
-  let forget = false;
-  for (const raw of reply.split('\n')) {
-    const m = TAGGED.exec(raw);
-    if (m) {
-      const isMemory = m[1]!.toLowerCase() === 'memory';
-      const text = m[2]!.trim();
-      listing = isMemory && text === '';
-      if (isMemory && /^none[.!]*$/i.test(text)) forget = true;
-      else if (isMemory && text !== '') notes.push(text);
-    } else if (listing && raw.trim() !== '') notes.push(raw);
-  }
-  const kept = cleanNotes(notes);
-  return kept.length > 0 ? kept : forget ? [] : null;
-}
 
 /** The end-of-turn reply by its tagged lines, in any order and case, bullets tolerated; an untagged reply is the commentAfterEachTurn alone. */
 export function parseTurnReply(reply: string): TurnReply {
   const tags = taggedLines(reply);
-  if (tags.size === 0) return { commentAfterEachTurn: oneLine(reply) || null, desire: null, verdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, memory: null };
+  if (tags.size === 0) return { commentAfterEachTurn: oneLine(reply) || null, desire: null, verdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, ruleBroken: null, memory: null };
   const line = (tag: string) => oneLine(tags.get(tag) ?? '') || null;
   const desire = line('desire');
   const word = /^[A-Za-z]+/.exec(line('verdict') ?? '')?.[0]?.toUpperCase();
@@ -460,7 +505,8 @@ export function parseTurnReply(reply: string): TurnReply {
     why: line('why'),
     suggestNextPrompt: next === undefined ? null : suggestNextPromptText(next),
     promptToMainChat: toMainChat === undefined ? null : suggestNextPromptText(toMainChat, PROMPT_TO_MAIN_CHAT_MAX_CHARS),
-    memory: memoryLines(reply),
+    ruleBroken: ruleKeyOf(tags.get('rule_broken') ?? ''),
+    memory: memoryOf(reply),
   };
 }
 

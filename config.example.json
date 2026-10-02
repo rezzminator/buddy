@@ -12,6 +12,7 @@
         "secondsBetweenComments": 0,
         "suggestNextPrompt": true,
         "promptToMainChat": false,
+        "promptWhenIdle": false,
         "chatTurnsToRead": 4,
         "logLevel": "info",
         "logFile": "$CLAUDE_CONFIG_DIR/buddy/buddy.log",

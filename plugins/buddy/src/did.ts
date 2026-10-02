@@ -7,28 +7,40 @@
 // didOf folds them when the turn is remembered. A failed or denied step says
 // why in one redacted line (failureReason, denialReason), its own file step
 // never gathered under the verb; background work says it reports back later.
+// Each step carries its call's and its output's size, as the user sees them
+// scroll by; an agent's brief and report, cut, ride with its step. Every cut
+// is marked `[cut]` (src/cuts.ts).
+
+import { CUT, cutBrief, cutReport } from './cuts.ts';
+import { count, span } from './stats.ts';
 
 /** The most steps kept of one turn: past it the first few and the last stay, the middle is counted. */
 export const DID_MAX = 12;
 /** The first steps kept when a turn has more than DID_MAX. */
 export const DID_HEAD = 4;
 /** How long one step may be. */
-export const DID_TEXT_CAP = 80;
+export const DID_TEXT_CAP = 120;
 /** How many files one verb names before the rest are counted. */
 export const DID_FILES_MAX = 6;
 /** How long the reason of a failed or denied step may be. */
 export const FAIL_REASON_CAP = 90;
-/** How long one stored step may be: its text, then its failure marker whole. */
-export const DID_LINE_CAP = DID_TEXT_CAP + FAIL_REASON_CAP + 12;
+/** The longest size mark of a step: ` [call {count} · output {count} chars]`. */
+export const SIZE_MARK_MAX = 40;
+/** How long one stored step may be: its text, its size mark, then its failure marker whole. */
+export const DID_LINE_CAP = DID_TEXT_CAP + SIZE_MARK_MAX + FAIL_REASON_CAP + 12;
 /** How long an undescribed shell command may be as a step. */
-export const SHORT_COMMAND_CAP = 72;
+export const SHORT_COMMAND_CAP = 110;
+
+/** A tool call's size in characters: its arguments (callSize) and its whole output. */
+export type Size = { call: number; output: number };
 
 /**
  * One step: a line of its own (`fail`, the rendered `failed: …` or `denied: …`,
- * kept outside the step's cap), or a file under a verb, gathered with the
- * turn's other files under that verb.
+ * kept outside the step's cap; `brief`, an agent's brief, cutBrief; `returned`,
+ * what a sync agent returned), or a file under a verb, gathered with the
+ * turn's other files under that verb; either with its call's `size`.
  */
-export type Action = { text: string; fail?: string; returned?: string } | { verb: FileVerb; file: string };
+export type Action = { text: string; fail?: string; returned?: string; size?: Size; brief?: string } | { verb: FileVerb; file: string; size?: Size };
 export type FileVerb = 'read' | 'edited' | 'wrote' | 'searched';
 /** Why a step did not do its work: it errored (`failed`) or was refused (`denied`); `reason` one line, redacted, maybe empty. */
 export type Failure = { kind: 'failed' | 'denied'; reason: string };
@@ -45,7 +57,8 @@ const BOOKKEEPING: readonly string[] = [
 const str = (v: unknown): string => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
 const fileName = (v: unknown): string => str(v).replace(/\/+$/, '').split('/').pop() ?? '';
 
-const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+/** `s` at most `n` characters: past it, its start and a ` [cut]` mark, `n` in all. */
+const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - CUT.length - 1)} ${CUT}` : s);
 
 /**
  * A shell command without its leading `cd`s, every path cut to its last part
@@ -146,15 +159,62 @@ export function failureReason(output: string, command = ''): string {
   return cut(redact(oneSpaced(reason)), FAIL_REASON_CAP);
 }
 
+/** The keys of a tool.call event that are not the tool's own arguments. */
+const NOT_ARGUMENTS: readonly string[] = ['tool', 'tool_use_id', 'agentId'];
+
+/** A tool call's size: the length of its arguments as JSON, without the event's own keys. */
+export function callSize(call: Record<string, unknown>): number {
+  return JSON.stringify(Object.fromEntries(Object.entries(call).filter(([k]) => !NOT_ARGUMENTS.includes(k)))).length;
+}
+
+/** What an agent's run cost, as far as it is known: its tokens, its tool uses, its time. */
+export type AgentUsage = { tokens?: number; toolUses?: number; ms?: number };
+
+const finite = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+const usage = (tokens?: number, toolUses?: number, ms?: number): AgentUsage | null => {
+  const u: AgentUsage = { ...(tokens === undefined ? {} : { tokens }), ...(toolUses === undefined ? {} : { toolUses }), ...(ms === undefined ? {} : { ms }) };
+  return Object.keys(u).length > 0 ? u : null;
+};
+
+/**
+ * An agent's usage: the Agent tool result's typed `totalTokens`,
+ * `totalToolUseCount` and `totalDurationMs` first; else the `<usage>` block of
+ * its text, in the tag form (`<subagent_tokens>`, `<tool_uses>`,
+ * `<duration_ms>`) or as `total_tokens: N` lines. Null when neither says.
+ */
+export function agentUsageOf(result: unknown, text: string): AgentUsage | null {
+  const r = typeof result === 'object' && result !== null ? (result as Record<string, unknown>) : {};
+  const typed = usage(finite(r.totalTokens), finite(r.totalToolUseCount), finite(r.totalDurationMs));
+  if (typed) return typed;
+  const block = /<usage>([\s\S]*?)<\/usage>/.exec(text)?.[1];
+  if (block === undefined) return null;
+  const field = (tag: string, line: string): number | undefined => {
+    const m = new RegExp(`<${tag}>\\s*(\\d+)\\s*</${tag}>`).exec(block) ?? new RegExp(`\\b${line}:\\s*(\\d+)`).exec(block);
+    return m ? Number(m[1]) : undefined;
+  };
+  return usage(field('subagent_tokens', 'total_tokens'), field('tool_uses', 'tool_uses'), field('duration_ms', 'duration_ms'));
+}
+
+/** An agent's usage as the buddy reads it: `{tokens} tokens · {n} tool uses · {span}`, the parts known; '' when none is. */
+export function agentUsageText(u: AgentUsage | null): string {
+  if (!u) return '';
+  return [u.tokens === undefined ? '' : `${count(u.tokens)} tokens`, u.toolUses === undefined ? '' : `${u.toolUses} tool uses`, u.ms === undefined ? '' : span(u.ms)].filter(Boolean).join(' · ');
+}
+
+/** An agent's step text: its description after `agent: ` or the background form, '' for one launched without a description. */
+const AGENT_STEP = /^agent(?: in the background \(reports back later\))?: (.*)$/;
+
 /**
  * A main-loop tool call as one step: `call` the tool.call event (its tool and
  * arguments, flat), `failure` why it errored or was denied, null when it did
- * its work. Null for a bookkeeping tool, or a file tool with no file.
+ * its work; `output` its text (an agent's whole report); `seen` its size
+ * and its typed result. Null for a bookkeeping tool, or a file tool with no file.
  */
-export function actionOf(call: { tool: string; [argument: string]: unknown }, failure: Failure | null, output = ''): Action | null {
+export function actionOf(call: { tool: string; [argument: string]: unknown }, failure: Failure | null, output = '', seen: { size?: Size; result?: unknown } = {}): Action | null {
   const fail = failure ? (failure.reason ? `${failure.kind}: ${failure.reason}` : failure.kind) : undefined;
-  const text = (t: string): Action | null => (t ? (fail === undefined ? { text: t } : { text: t, fail }) : null);
-  const file = (verb: FileVerb, f: string): Action | null => (!f ? null : fail === undefined ? { verb, file: f } : text(`${INFINITIVE[verb]} ${f}`));
+  const sized = seen.size ? { size: seen.size } : {};
+  const text = (t: string): Action | null => (t ? (fail === undefined ? { text: t, ...sized } : { text: t, fail, ...sized }) : null);
+  const file = (verb: FileVerb, f: string): Action | null => (!f ? null : fail === undefined ? { verb, file: f, ...sized } : text(`${INFINITIVE[verb]} ${f}`));
   const background = call.run_in_background === true;
   switch (call.tool) {
     case 'Bash': {
@@ -176,11 +236,16 @@ export function actionOf(call: { tool: string; [argument: string]: unknown }, fa
     case 'Agent':
     case 'Task': {
       const name = str(call.description);
+      // The brief keeps its lines: its first is the ask, its last what the agent must return.
+      const brief = typeof call.prompt === 'string' ? cutBrief(call.prompt.trim()) : '';
+      const briefed = (a: Action | null): Action | null => (a && brief && 'text' in a ? { ...a, brief } : a);
       // Launched async by its flag or by the harness: its result is only the launch acknowledgement, its report comes back as a task notification.
-      if (background || /^Async agent launched/.test(output.trimStart())) return text(name ? `agent in the background (reports back later): ${name}` : 'ran an agent in the background');
-      const step = text(name ? `agent: ${name}` : 'ran an agent');
+      if (background || /^Async agent launched/.test(output.trimStart())) return briefed(text(name ? `agent in the background (reports back later): ${name}` : 'ran an agent in the background'));
+      const step = briefed(text(name ? `agent: ${name}` : 'ran an agent'));
       const report = fail === undefined ? agentReport(output) : '';
-      return step && report ? { ...step, returned: `“${name || 'an agent'}” returned: ${report}` } : step;
+      if (!step || !report) return step;
+      const used = agentUsageText(agentUsageOf(seen.result, output));
+      return { ...step, returned: `“${name || 'an agent'}” returned (${used ? `${used} · ` : ''}report ${count(report.length)} chars): ${cutReport(report)}` };
     }
     case 'Skill':
       return text(`skill ${str(call.skill)}`.trim());
@@ -210,35 +275,56 @@ export function returnedOf(actions: readonly Action[]): string[] {
   return actions.flatMap((a) => ('returned' in a && a.returned ? [a.returned] : []));
 }
 
+/** The briefs the turn's agents were given, in order, each `“{description}”: {brief}`. */
+export function briefedOf(actions: readonly Action[]): string[] {
+  return actions.flatMap((a) => ('brief' in a && a.brief ? [`“${AGENT_STEP.exec(a.text)?.[1] || 'an agent'}”: ${a.brief}`] : []));
+}
+
+/** A step's size mark: ` [call {count} · output {count} chars]`. */
+function sizeMark(s: Size | undefined): string {
+  return s ? ` [call ${count(s.call)} · output ${count(s.output)} chars]` : '';
+}
+
+/** Two sizes summed; either may be missing, both missing is none. */
+function plus(a: Size | undefined, b: Size | undefined): Size | undefined {
+  return a && b ? { call: a.call + b.call, output: a.output + b.output } : (a ?? b);
+}
+
 /**
  * The turn's steps as the buddy reads them, in order: a file verb once, where
  * its first file came, naming each file once; a step said twice in a row
- * (its failure too) once; each at most DID_TEXT_CAP, a failure marker after
+ * (its failure too) once; each at most DID_TEXT_CAP, then its size mark (the
+ * sum of its merged calls, when any had a size) and a failure marker after
  * the cut, whole; past DID_MAX the first DID_HEAD and the last stay around a
- * count of the rest.
+ * `[cut: N more steps]` count of the rest.
  */
 export function didOf(actions: readonly Action[]): string[] {
-  const files = new Map<FileVerb, string[]>();
-  const order: Action[] = [];
+  const files = new Map<FileVerb, { list: string[]; size?: Size }>();
+  const order: ({ verb: FileVerb } | { text: string; fail?: string; size?: Size })[] = [];
   for (const a of actions) {
     if ('verb' in a) {
-      const list = files.get(a.verb);
-      if (!list) {
-        files.set(a.verb, [a.file]);
-        order.push(a);
-      } else if (!list.includes(a.file)) list.push(a.file);
+      const group = files.get(a.verb);
+      if (!group) {
+        files.set(a.verb, { list: [a.file], ...(a.size ? { size: a.size } : {}) });
+        order.push({ verb: a.verb });
+      } else {
+        if (!group.list.includes(a.file)) group.list.push(a.file);
+        group.size = plus(group.size, a.size);
+      }
     } else {
       const last = order.at(-1);
-      if (!last || !('text' in last) || last.text !== a.text || last.fail !== a.fail) order.push(a);
+      if (last && 'text' in last && last.text === a.text && last.fail === a.fail) last.size = plus(last.size, a.size);
+      else order.push({ text: a.text, ...(a.fail === undefined ? {} : { fail: a.fail }), ...(a.size ? { size: a.size } : {}) });
     }
   }
   const lines = order.map((o) => {
-    if ('text' in o) return cut(o.text, DID_TEXT_CAP) + (o.fail ? ` (${o.fail})` : '');
-    const list = files.get(o.verb) ?? [];
-    const more = list.length > DID_FILES_MAX ? ` +${list.length - DID_FILES_MAX}` : '';
-    return cut(`${o.verb} ${list.slice(0, DID_FILES_MAX).join(', ')}${more}`, DID_TEXT_CAP);
+    if ('text' in o) return cut(o.text, DID_TEXT_CAP) + sizeMark(o.size) + (o.fail ? ` (${o.fail})` : '');
+    const group = files.get(o.verb)!;
+    const more = group.list.length > DID_FILES_MAX ? ` +${group.list.length - DID_FILES_MAX}` : '';
+    return cut(`${o.verb} ${group.list.slice(0, DID_FILES_MAX).join(', ')}${more}`, DID_TEXT_CAP) + sizeMark(group.size);
   });
   if (lines.length <= DID_MAX) return lines;
   const tail = DID_MAX - DID_HEAD - 1;
-  return [...lines.slice(0, DID_HEAD), `… ${lines.length - DID_HEAD - tail} more`, ...lines.slice(-tail)];
+  const k = lines.length - DID_HEAD - tail;
+  return [...lines.slice(0, DID_HEAD), `[cut: ${k} more step${k === 1 ? '' : 's'}]`, ...lines.slice(-tail)];
 }

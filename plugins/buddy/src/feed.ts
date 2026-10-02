@@ -11,6 +11,7 @@
 import { COMPACTION, type Block } from './chatTurnsToRead.ts';
 import type { TurnCut, Verdict } from './prompts.ts';
 import { statsBrief } from './stats.ts';
+import { suggestionUse } from './suggestNextPrompt.ts';
 
 /** Every kind this build files and draws; a stored feed may still hold an older build's others. */
 export const FEED_KINDS = ['you', 'compact', 'ask', 'answer', 'comment', 'verdict', 'suggest', 'line', 'failed', 'clear'] as const;
@@ -135,10 +136,11 @@ export function isTaken(suggestion: string, prompt: string): boolean {
 
 /**
  * Your prompt `prompt` was sent: every suggestion not yet answered is taken
- * when the prompt is that suggestion (isTaken), passed over otherwise.
+ * when the prompt is that suggestion or starts with it (suggestionUse,
+ * unedited or extended), passed over otherwise.
  */
 export function answerSuggestions(feed: readonly FeedEntry[], prompt: string): FeedEntry[] {
-  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: isTaken(e.text, prompt) } : e));
+  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: suggestionUse(e.text, prompt) !== null } : e));
 }
 
 /**

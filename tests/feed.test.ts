@@ -71,6 +71,8 @@ describe('the feed', () => {
     f = answerSuggestions(f, 'no, wait');
     expect(f.map((e) => e.taken)).toEqual([true, false]);
     expect(answerSuggestions(pushEntry([], { at, kind: 'suggest', text: 'a' }), '   ')[0]!.taken).toBe(false);
+    expect(answerSuggestions(pushEntry([], { at, kind: 'suggest', text: 'run the tests' }), 'Run the tests, then commit')[0]!.taken).toBe(true);
+    expect(answerSuggestions(pushEntry([], { at, kind: 'suggest', text: 'run the test' }), 'run the tests')[0]!.taken).toBe(false);
   });
   test('a prompt is a suggestion taken when it is that suggestion, spacing and case aside; an edit or a blank is not', () => {
     expect(isTaken('Run  the tests', ' run the tests\n')).toBe(true);

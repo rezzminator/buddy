@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'vitest';
 import {
-  DID_FILES_MAX, DID_LINE_CAP, DID_MAX, DID_TEXT_CAP, FAIL_REASON_CAP, actionOf, denialReason, didOf, failureReason, redact, returnedOf, type Action, type Failure,
+  DID_FILES_MAX, DID_HEAD, DID_LINE_CAP, DID_MAX, DID_TEXT_CAP, FAIL_REASON_CAP, SHORT_COMMAND_CAP, actionOf, agentUsageOf, agentUsageText, briefedOf, callSize, denialReason, didOf, failureReason, redact, returnedOf, type Action, type Failure,
 } from '../plugins/buddy/src/did.ts';
+import { cutBrief, cutReport } from '../plugins/buddy/src/cuts.ts';
 import { lostTurnOf } from '../plugins/buddy/src/prompts.ts';
 
 const did = (...calls: [Record<string, unknown> & { tool: string }, (boolean | Failure)?][]): string[] =>
@@ -11,9 +12,12 @@ describe('a step', () => {
   test('a shell command is its description, never its output; failed marked', () => {
     expect(did([{ tool: 'Bash', command: 'npm test', description: 'Run the unit tests' }, true])).toEqual(['Run the unit tests (failed)']);
   });
-  test('an undescribed command without its cds, paths cut to their last part, at most 72', () => {
+  test('an undescribed command without its cds, paths cut to their last part, at most 110 ending [cut]', () => {
+    expect(SHORT_COMMAND_CAP).toBe(110);
     expect(did([{ tool: 'Bash', command: 'cd /w/x/repo && cat /w/x/repo/src/a.ts' }])).toEqual(['ran cat a.ts']);
-    expect(did([{ tool: 'Bash', command: `echo ${'y'.repeat(80)}` }])[0]).toBe(`ran echo ${'y'.repeat(66)}…`);
+    const ran = did([{ tool: 'Bash', command: `echo ${'y'.repeat(200)}` }])[0]!;
+    expect(ran).toBe(`ran echo ${'y'.repeat(99)} [cut]`);
+    expect(ran.slice('ran '.length)).toHaveLength(SHORT_COMMAND_CAP);
   });
   test('a path is cut to its last part, never glued to the word before it; a URL stays whole', () => {
     const ran = (command: string): string | undefined => did([{ tool: 'Bash', command }])[0];
@@ -24,15 +28,15 @@ describe('a step', () => {
   });
   test("what an agent returned rides with its step, its resume and usage lines dropped; an agent launched async is background work, its acknowledgement no report", () => {
     const fg = actionOf({ tool: 'Agent', description: 'Audit the diff' }, null, 'DONE: 3 findings, all fixed.\nagentId: a1b2 (for resuming to continue this agent\'s work if needed)\n<usage>total_tokens: 5</usage>');
-    expect(fg).toEqual({ text: 'agent: Audit the diff', returned: '“Audit the diff” returned: DONE: 3 findings, all fixed.' });
+    expect(fg).toEqual({ text: 'agent: Audit the diff', returned: '“Audit the diff” returned (5 tokens · report 28 chars): DONE: 3 findings, all fixed.' });
     expect(didOf([fg!])).toEqual(['agent: Audit the diff']);
-    expect(returnedOf([fg!, { text: 'Run the tests' }, { verb: 'read', file: 'a.ts' }])).toEqual(['“Audit the diff” returned: DONE: 3 findings, all fixed.']);
+    expect(returnedOf([fg!, { text: 'Run the tests' }, { verb: 'read', file: 'a.ts' }])).toEqual(['“Audit the diff” returned (5 tokens · report 28 chars): DONE: 3 findings, all fixed.']);
     const bg = actionOf({ tool: 'Agent', description: 'Audit the diff' }, null, 'Async agent launched successfully.\nagentId: a1 (internal ID - do not mention to user.)');
     expect(bg).toEqual({ text: 'agent in the background (reports back later): Audit the diff' });
     expect(returnedOf([bg!])).toEqual([]);
     // A failed agent says why as any failed step; nothing returned.
     expect(actionOf({ tool: 'Task', description: 'Audit' }, { kind: 'failed', reason: 'timed out' }, 'timed out')).toEqual({ text: 'agent: Audit', fail: 'failed: timed out' });
-    expect(actionOf({ tool: 'Agent' }, null, 'Fixed.')).toEqual({ text: 'ran an agent', returned: '“an agent” returned: Fixed.' });
+    expect(actionOf({ tool: 'Agent' }, null, 'Fixed.')).toEqual({ text: 'ran an agent', returned: '“an agent” returned (report 6 chars): Fixed.' });
     expect(actionOf({ tool: 'Agent', description: 'Audit' }, null, '  \n')).toEqual({ text: 'agent: Audit' });
   });
   test('background work says so; a foreground call is unchanged', () => {
@@ -70,7 +74,7 @@ describe('a failed or denied step', () => {
     expect(failureReason('')).toBe('');
     const long = failureReason(`Error: ${'x'.repeat(200)}`);
     expect(long).toHaveLength(FAIL_REASON_CAP);
-    expect(long.endsWith('…')).toBe(true);
+    expect(long.endsWith(' [cut]')).toBe(true);
   });
   test('an exit 1 from a trailing check names the check: its last segment, or a check before a trailing && that only prints', () => {
     expect(failureReason('Exit code 1\n0', 'make check && grep -c "no DONE line" /tmp/x.log')).toBe('exit 1 from its last check (`grep -c "no DONE line" /tmp/x.log`): 0');
@@ -80,7 +84,7 @@ describe('a failed or denied step', () => {
     expect(failureReason('Exit code 1\n1c1', 'sort a > b; diff b c')).toBe('exit 1 from its last check (`diff b c`): 1c1');
     expect(failureReason('Exit code 1', 'cmp a.bin b.bin')).toBe('exit 1 from its last check (`cmp a.bin b.bin`)');
     expect(failureReason('Exit code 1', 'grep -c "a; b && c" x.log')).toBe('exit 1 from its last check (`grep -c "a; b && c" x.log`)');
-    expect(failureReason('Exit code 1', `grep -q ${'x'.repeat(60)} f`)).toBe(`exit 1 from its last check (\`grep -q ${'x'.repeat(31)}…\`)`);
+    expect(failureReason('Exit code 1', `grep -q ${'x'.repeat(60)} f`)).toBe(`exit 1 from its last check (\`grep -q ${'x'.repeat(26)} [cut]\`)`);
   });
   test('any other exit stays plain: another code, another last command, or no command', () => {
     expect(failureReason('Exit code 2\nno such file', 'grep x a.txt')).toBe('exit 2: no such file');
@@ -123,8 +127,11 @@ describe('a failed or denied step', () => {
   });
   test('the failure marker survives the step cap whole', () => {
     const d = did([{ tool: 'Bash', command: 'a', description: 'z'.repeat(200) }, { kind: 'failed', reason: 'boom' }])[0];
-    expect(d).toBe(`${'z'.repeat(DID_TEXT_CAP - 1)}… (failed: boom)`);
-    const worst = did([{ tool: 'Bash', command: 'a', description: 'z'.repeat(200) }, { kind: 'denied', reason: denialReason('d'.repeat(300)) }])[0]!;
+    expect(d).toBe(`${'z'.repeat(DID_TEXT_CAP - 6)} [cut] (failed: boom)`);
+    expect(DID_TEXT_CAP).toBe(120);
+    const sized = didOf([actionOf({ tool: 'Bash', command: 'a', description: 'z'.repeat(200) }, { kind: 'failed', reason: 'boom' }, '', { size: { call: 250, output: 40 } })!])[0];
+    expect(sized).toBe(`${'z'.repeat(DID_TEXT_CAP - 6)} [cut] [call 250 · output 40 chars] (failed: boom)`);
+    const worst = didOf([actionOf({ tool: 'Bash', command: 'a', description: 'z'.repeat(200) }, { kind: 'denied', reason: denialReason('d'.repeat(300)) }, '', { size: { call: 999_499, output: 999_499 } })!])[0]!;
     expect(worst.length).toBeLessThanOrEqual(DID_LINE_CAP);
   });
 });
@@ -150,7 +157,67 @@ describe('the turn', () => {
     const steps = Array.from({ length: 20 }, (_, i) => [{ tool: 'Bash', command: 'a', description: `step ${i}` }] as [{ tool: string; command: string; description: string }]);
     const d = did(...steps);
     expect(d).toHaveLength(DID_MAX);
-    expect(d.slice(0, 5)).toEqual(['step 0', 'step 1', 'step 2', 'step 3', '… 9 more']);
+    expect(d.slice(0, 5)).toEqual(['step 0', 'step 1', 'step 2', 'step 3', '[cut: 9 more steps]']);
     expect(d.at(-1)).toBe('step 19');
+    const one = did(...steps.slice(0, DID_MAX + 1));
+    expect(one[DID_HEAD]).toBe('[cut: 2 more steps]');
+  });
+});
+
+describe("a step's size", () => {
+  const sized = (call: Record<string, unknown> & { tool: string }, size: { call: number; output: number }, failure: Failure | null = null): Action =>
+    actionOf(call, failure, '', { size })!;
+  test('after its text, before its failure marker: the call and output sizes in characters', () => {
+    expect(didOf([sized({ tool: 'Bash', command: 'npm test', description: 'Run the tests' }, { call: 30, output: 34_000 })])).toEqual(['Run the tests [call 30 · output 34k chars]']);
+    expect(didOf([sized({ tool: 'Bash', command: 'npm test', description: 'Run the tests' }, { call: 30, output: 12 }, { kind: 'failed', reason: 'exit 1' })])).toEqual(['Run the tests [call 30 · output 12 chars] (failed: exit 1)']);
+  });
+  test('an action without a size has no mark', () => {
+    expect(didOf([{ text: 'Run the tests' }, { verb: 'read', file: 'a.ts' }])).toEqual(['Run the tests', 'read a.ts']);
+  });
+  test('the same step twice in a row, and the edits of one verb, sum their sizes', () => {
+    const run = { tool: 'Bash', command: 'a', description: 'Wait' };
+    expect(didOf([sized(run, { call: 10, output: 100 }), sized(run, { call: 10, output: 200 })])).toEqual(['Wait [call 20 · output 300 chars]']);
+    expect(didOf([sized({ tool: 'Edit', file_path: '/r/a.ts' }, { call: 50, output: 20 }), sized({ tool: 'Edit', file_path: '/r/b.ts' }, { call: 70, output: 30 })])).toEqual(['edited a.ts, b.ts [call 120 · output 50 chars]']);
+    // One of the merged calls with a size is enough for the mark.
+    expect(didOf([{ verb: 'read', file: 'a.ts' }, sized({ tool: 'Read', file_path: '/r/b.ts' }, { call: 5, output: 9 })])).toEqual(['read a.ts, b.ts [call 5 · output 9 chars]']);
+  });
+  test("callSize: the call's arguments as JSON, without the event's own keys", () => {
+    const call = { tool: 'Bash', command: 'npm test', tool_use_id: 'tu1', agentId: 'a1' };
+    expect(callSize(call)).toBe(JSON.stringify({ command: 'npm test' }).length);
+  });
+});
+
+describe("an agent's brief, report and usage", () => {
+  const brief = Array.from({ length: 10 }, (_, i) => `brief line ${i}`).join('\n');
+  const report = `${'R'.repeat(2000)}${'S'.repeat(2000)}`;
+  test('a sync agent: its brief, and what it returned with its usage and the size of its uncut report', () => {
+    const a = actionOf({ tool: 'Agent', description: 'Audit', prompt: brief }, null, report, { result: { totalTokens: 15166, totalToolUseCount: 5, totalDurationMs: 15512 } })!;
+    expect(briefedOf([a])).toEqual([`“Audit”: ${cutBrief(brief)}`]);
+    expect(returnedOf([a])).toEqual([`“Audit” returned (15k tokens · 5 tool uses · 16s · report 4k chars): ${cutReport(report)}`]);
+    expect(didOf([a])).toEqual(['agent: Audit']);
+  });
+  test('no usage anywhere: the report size alone; a failed call returns nothing and keeps its brief', () => {
+    const a = actionOf({ tool: 'Agent', description: 'Audit', prompt: brief }, null, report)!;
+    expect(returnedOf([a])).toEqual([`“Audit” returned (report 4k chars): ${cutReport(report)}`]);
+    const failed = actionOf({ tool: 'Agent', description: 'Audit', prompt: brief }, { kind: 'failed', reason: 'timed out' }, report)!;
+    expect(returnedOf([failed])).toEqual([]);
+    expect(briefedOf([failed])).toEqual([`“Audit”: ${cutBrief(brief)}`]);
+  });
+  test('usage in the text: read from its <usage> block, which stays out of the report', () => {
+    const text = `${report}\n<usage><subagent_tokens>77810</subagent_tokens><tool_uses>16</tool_uses><duration_ms>119609</duration_ms></usage>`;
+    const a = actionOf({ tool: 'Agent', description: 'Audit' }, null, text)!;
+    expect(returnedOf([a])).toEqual([`“Audit” returned (78k tokens · 16 tool uses · 2m00s · report 4k chars): ${cutReport(report)}`]);
+  });
+  test('a background agent: its step as before, plus its brief; no description is “an agent”', () => {
+    const a = actionOf({ tool: 'Agent', description: 'Audit', prompt: brief, run_in_background: true }, null, 'Async agent launched successfully.')!;
+    expect(a).toEqual({ text: 'agent in the background (reports back later): Audit', brief: cutBrief(brief) });
+    expect(briefedOf([a, actionOf({ tool: 'Task', prompt: 'go' }, null, '')!])).toEqual([`“Audit”: ${cutBrief(brief)}`, '“an agent”: go']);
+  });
+  test('agentUsageOf: typed fields first, else the tag or line form, null when nothing; agentUsageText says the parts known', () => {
+    expect(agentUsageOf({ totalTokens: 1, totalToolUseCount: 2, totalDurationMs: 3000 }, '<usage>total_tokens: 9</usage>')).toEqual({ tokens: 1, toolUses: 2, ms: 3000 });
+    expect(agentUsageOf(null, '<usage>total_tokens: 9\ntool_uses: 4\nduration_ms: 61000</usage>')).toEqual({ tokens: 9, toolUses: 4, ms: 61000 });
+    expect(agentUsageOf({ totalTokens: 'x' }, 'no block')).toBeNull();
+    expect(agentUsageText({ tokens: 1200, ms: 134_000 })).toBe('1.2k tokens · 2m14s');
+    expect(agentUsageText(null)).toBe('');
   });
 });

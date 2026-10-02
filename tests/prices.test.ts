@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { PRICES, priceCall } from '../plugins/buddy/src/prices.ts';
+import { PRICES, priceCall, usageOfClaudeJson } from '../plugins/buddy/src/prices.ts';
 
 const M = 1_000_000;
 
@@ -30,8 +30,15 @@ describe('priceCall: the formula', () => {
     expect(usd).toBeCloseTo(0.01, 10);
   });
 
-  test('every cache write bills at the 5-minute price, not the 1-hour one', () => {
+  test('a cache write with no one-hour part bills at the 5-minute price', () => {
     expect(priceCall('claude-opus-4-1', { cacheWrite: M })).toBeCloseTo(18.75, 10);
+    expect(priceCall('claude-haiku-4-5', { cacheWrite: 1000 })).toBeCloseTo((1000 * 1.25) / M, 12);
+  });
+
+  test('the one-hour part of a cache write bills at the 1-hour price, the rest at the 5-minute price', () => {
+    // haiku 4.5: 400 at 1.25 (w5m) + 600 at 2 (w1h)
+    expect(priceCall('claude-haiku-4-5', { cacheWrite: 1000, cacheWrite1h: 600 })).toBeCloseTo((400 * 1.25 + 600 * 2) / M, 12);
+    expect(priceCall('claude-opus-4-1', { cacheWrite: M, cacheWrite1h: M })).toBeCloseTo(30, 10);
   });
 
   test('a usage carrying cachePct (what usageFields returns) ignores it', () => {
@@ -45,6 +52,37 @@ describe('priceCall: the formula', () => {
 
   test('a decimal list price is exact to the cent-fraction', () => {
     expect(priceCall('claude-3-5-haiku', { inTok: 1000, outTok: 1000, cacheWrite: 1000, cacheRead: 1000 })).toBeCloseTo((0.8 + 4 + 1 + 0.08) / 1000, 12);
+  });
+});
+
+describe('usageOfClaudeJson', () => {
+  // The usage of a captured `claude -p --output-format json` reply.
+  const usage = {
+    input_tokens: 2,
+    cache_creation_input_tokens: 4054,
+    cache_read_input_tokens: 2308,
+    output_tokens: 289,
+    cache_creation: { ephemeral_1h_input_tokens: 4054, ephemeral_5m_input_tokens: 0 },
+  };
+
+  test('maps every token field, the one-hour cache write included', () => {
+    expect(usageOfClaudeJson(usage)).toEqual({ inTok: 2, outTok: 289, cacheRead: 2308, cacheWrite: 4054, cacheWrite1h: 4054 });
+  });
+
+  test('priced, it bills in, out, read, the one-hour write and the rest at their own columns', () => {
+    const mixed = { ...usage, cache_creation_input_tokens: 5000, cache_creation: { ephemeral_1h_input_tokens: 4054, ephemeral_5m_input_tokens: 946 } };
+    const p = PRICES.models['claude-opus-5-5'];
+    const want = (2 * p.in + 289 * p.out + 2308 * p.hit + 4054 * p.w1h + 946 * p.w5m) / M;
+    expect(priceCall('opus', usageOfClaudeJson(mixed))).toBeCloseTo(want, 12);
+  });
+
+  test.each([null, undefined, 'usage', 42, [1, 2]])('%j is not an object: {}', (v) => {
+    expect(usageOfClaudeJson(v)).toEqual({});
+  });
+
+  test('a field that is not a number is left out', () => {
+    expect(usageOfClaudeJson({ input_tokens: '2', output_tokens: 5, cache_read_input_tokens: null, cache_creation: 'x' })).toEqual({ outTok: 5 });
+    expect(usageOfClaudeJson({ cache_creation: { ephemeral_1h_input_tokens: '9' } })).toEqual({});
   });
 });
 

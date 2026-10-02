@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { COMMAND_CAP, REACTIONS, TEST_FAIL, TEST_PASS, bashCommand, classifyToolCall, toolOutput } from '../plugins/buddy/src/reactions.ts';
+import { COMMAND_CAP, REACTIONS, TEST_FAIL, TEST_PASS, bashCommand, classifyToolCall, toolOutput, toolText } from '../plugins/buddy/src/reactions.ts';
 
 const bash = (output: string, isError = false) => ({ tool: 'Bash', isError, denied: false, output, command: 'npm test' });
 
@@ -75,6 +75,15 @@ describe('toolOutput and bashCommand', () => {
     expect(toolOutput({})).toBe('');
     expect(toolOutput({ text: 'x'.repeat(25000) + 'END' }).endsWith('END')).toBe(true);
     expect(toolOutput({ text: 'x'.repeat(25000) }).length).toBe(20000);
+  });
+  test('toolText: the same text, whole, never capped', () => {
+    expect(toolText({ text: 'T', result: { stdout: 'S' } })).toBe('T');
+    expect(toolText({ result: { stdout: 'out', stderr: 'err', code: 1 } })).toBe('out\nerr');
+    expect(toolText({ result: 'plain' })).toBe('plain');
+    expect(toolText({})).toBe('');
+    const long = `START${'x'.repeat(30000)}END`;
+    expect(toolText({ text: long })).toBe(long);
+    expect(toolOutput({ text: long })).toBe(long.slice(-20000));
   });
   test('e.command, or e.input.command', () => {
     expect(bashCommand({ command: 'ls' })).toBe('ls');

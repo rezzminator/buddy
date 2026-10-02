@@ -69,12 +69,18 @@ server of its own.
   most deeply want from the chat, judges Claude's last move against it, and
   suggests your next prompt to match: a right call gets a "yes, go on", a
   shortcut a yellow warning, a wrong move a red scream in the bubble.
-- 📝 **Its own notes.** The same call rewrites the buddy's own memory of the
-  chat, at most 8 one-sentence notes it keeps, edits and drops itself, each
-  of a kind: `rule:` your standing orders in your words, `open:` what you
-  asked for that is unfinished, `fact:` what the chat showed, `doubt:` its own
-  unchecked suspicion, never stated as fact. Read first by every later call,
-  and kept for you to read in the chat's `memory.md`, its path at the drawer's foot.
+- 📝 **Its memory of the chat.** The same call edits the buddy's memory
+  items for the chat, each of a kind with its cap: `rule` your standing
+  orders (10), kept only in words you typed yourself (at least 3 whole
+  words and 12 characters of one prompt), never Claude's, a compaction
+  summary's or another chat's; `open` what you asked for that is
+  unfinished (6); `fact` what the chat showed (6); `lesson` what it learned
+  the hard way (4); `doubt` its own unchecked suspicion, never stated as fact
+  (3), ended once 3 turns pass untouched. Edits are checked in code, item by
+  item, and kept across a character switch. Read first by every later call,
+  and kept for you to read in the chat's `memory.md`, its path at the
+  drawer's foot: the items by kind with their keys, the newest ended ones,
+  then the turns.
 - 📊 **The numbers of every turn.** Each turn it remembers comes with one
   line counted in code, never by a model: time and the pause before it,
   model requests, the main loop's own tool calls by tool with failures and
@@ -86,7 +92,8 @@ server of its own.
 - 🤫 **Free unless you ask.** Walking, switching and reactions never
   call a model. Only a question you ask, and one short call at the end of
   each answered turn for `commentAfterEachTurn` and `suggestNextPrompt` (on by
-  default; `commentAfterEachTurn: false` and `suggestNextPrompt: false` turn them off), spend tokens;
+  default; `commentAfterEachTurn: false` and `suggestNextPrompt: false` turn them off),
+  and, with `promptWhenIdle` on, one call once the chat sits idle 30 minutes, spend tokens;
   a headless `claude -p` run makes no end-of-turn call.
 - 🛡️ **Never in the way.** A character that fails to load is replaced by the
   duck, who says why; a hook that fails logs the error and steps aside.
@@ -266,7 +273,7 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   their time; a newer model bubble waits until the one showing has had 10
   seconds, at most two waiting (past that the oldest is dropped). Its words
   are blue when the buddy talks to you, yellow when they show the prompt it
-  sent Claude (`promptToMainChat`); a `SHORTCUT` warning's yellow is its
+  sent Claude (`promptToMainChat`, `promptWhenIdle`); a `SHORTCUT` warning's yellow is its
   frame around blue words, so a prompt to Claude is told apart by its yellow
   words. Below 40 columns the bubble is drawn above the sprite, across
   the whole width, and the confetti is left out; a window too narrow for the
@@ -283,23 +290,50 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   one fast call on `model` (default `opus`) at the `effort` option's
   level (default `low`), with the character's persona, the character rule,
   and its `chatTurnsToRead`: the chat's last turns (default 4), each filtered
-  to what carries meaning: your prompt without the markup around it (a
-  background task's notification is its summary and the start and end of its
-  report), what Claude did as
-  one short line per step (a shell command's description, the files it read or
-  edited, work left running in the background; a failed or denied step with
-  one redacted line of why, never a tool's whole output or a diff), and
-  Claude's answer. A prompt
-  longer than 7,200 characters keeps its first 4,800 and last 2,400, an
-  answer longer than 11,200 its first 8,000 and last 3,200: that cuts 3.6% of
-  real turns (see [docs/design/chatTurnsToRead.md](docs/design/chatTurnsToRead.md#how-much-of-a-turn-is-kept)).
-  Every turn but the last is told shorter, as a story: its prompt's first 600
-  and last 200 characters, what Claude did, its failed tool calls, its
-  answer's first 500 and last 300, and the buddy's own lines whole; the last
-  turn, the one a call is about, stays whole. On 189 real calls that read
-  27.8% fewer input tokens with the reactions held
+  to what you saw of it, every view cut to its start and end, never
+  summarised by a model:
+
+  - your prompt without the markup around it, whole up to 20,000
+    characters, past that its first 15,000 and last 5,000; a prompt of
+    another origin (a slash command's, the buddy's own) its first 4,800 and
+    last 2,400. A background task's notification is its summary, its status
+    when not `completed`, its agent's tokens, tool uses and time, and its
+    report with its size, cut to its first 600 and last 200 characters, or
+    2,400 and 800 for a report over 10,000. A signed message from another
+    chat (one ending `— sid … · to reply: chat_inject …`), as the prompt or
+    added while Claude worked, is labelled as another chat's, never yours,
+    its body cut to its first 600 and last 200;
+  - what you added while Claude worked, cut like your prompt, and what
+    Claude wrote mid-turn, each with its position (`after 3 tool calls`), in
+    order: each of Claude's texts its first 2,000 and last 800, and past 9 of
+    them the first 2 and the last 6 around a count of the rest;
+  - what Claude did as one short line per step, at most 120 characters (an
+    undescribed shell command at most 110): a shell command's description,
+    the files it read or edited, work left running in the background; each
+    step's call and output size (`[call 1.2k · output 34k chars]`); a failed
+    or denied step with one redacted line of why, never a tool's whole
+    output or a diff;
+  - each agent Claude ran: its brief's first line and last 3 lines, and what
+    it returned with its tokens, tool uses, time and report size, the report
+    cut as a notification's is;
+  - Claude's answer, past 11,200 characters its first 8,000 and last 3,200
+    (see [docs/design/chatTurnsToRead.md](docs/design/chatTurnsToRead.md#how-a-turn-is-filtered)).
+
+  Every cut is marked `[cut]` where text was taken out, and the buddy is
+  told that what a cut hides is no evidence it is missing.
+  Every turn but the last is told shorter, as a story: your prompt and each
+  line you added their first 3,000 and last 1,000 characters, another
+  origin's prompt and the suggestion its first 600 and last 200, each
+  mid-turn text of Claude's, signed message, brief and report its first 400
+  and last 100, what Claude did, its failed tool calls, its answer's first
+  500 and last 300, and the buddy's own lines whole; the last turn, the one
+  a call is about, stays whole. On 189 real calls, measured when an older
+  turn's prompt kept 600 and 200, that read 27.8% fewer input tokens with
+  the reactions held
   (see [the story form](docs/design/chatTurnsToRead.md#the-story-form)).
-  A compaction of the chat is a turn of its own, its summary the answer. Each
+  A compaction of the chat is a turn of its own, its summary the answer,
+  labelled Claude's own paraphrase, never your words; told as an older turn,
+  it keeps its first 4,000 and last 1,000 characters. Each
   is followed by what the buddy commented and suggested after it and your
   `/buddy` questions with its answers, kept whole. It is told its memory reaches that far and no further, so a
   question about anything older is answered as out of memory, never guessed.
@@ -345,9 +379,17 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   most deeply want from the chat (carried from turn to turn, forgotten at
   `/clear`), judges Claude's last move against it, and writes the prompt you
   should send next, as you would type it: an ask, an instruction or a
-  decision, never a report of what you did. It shows as the prompt box's
+  decision, never a report of what you did, and never speaks for you: no
+  approval, ruling or observation put in your mouth ("approved", "as I
+  said", "I checked"); it asks for the step instead. It shows as the prompt box's
   dim suggestion, Tab to take it; sent unedited, Claude is told it is the
-  buddy's suggestion, so a claim in it is checked, not trusted. The verdict is `RIGHT` (the proper way: the
+  buddy's suggestion, so a claim in it is checked, not trusted; extended,
+  your own words typed after it, Claude is told the suggested part is the
+  buddy's and only the words you added are yours. Either way Claude is told
+  never to record the suggestion as your ruling, order or approval, and the
+  buddy remembers each of your turns as what it suggested and what you sent,
+  apart, so a rule it keeps comes only from words you typed beyond its
+  suggestion. The drawer counts an extended suggestion as used. The verdict is `RIGHT` (the proper way: the
   suggestion says yes and moves on, the bubble keeps the comment),
   `SHORTCUT` (the fast or easy way that costs later, such as "done" claimed
   without evidence: a yellow warning in the bubble, the suggestion asks for
@@ -376,7 +418,36 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   reads it under the plugin's origin with a note that it is the buddy's,
   never yours, to check before acting on. At most one per prompt of yours:
   the turn it starts never sends another. The buddy remembers what it sent
-  and files that turn as its own.
+  and files that turn as its own. While it is on, your live rules from the
+  buddy's memory ride every prompt Claude gets, whoever sent it, as context
+  for Claude alone, each quoted in the words you typed, with what it covers
+  labelled as the buddy's own reading, never yours. When the buddy's
+  prompt is about one of those rules not followed, it names the rule, and
+  the rule climbs a ladder: the first time, the prompt goes to Claude (the
+  rule's own reminder when the buddy wrote none); the second, it goes again
+  starting `Again:`; from the third, nothing goes to Claude and the bubble
+  warns you in yellow, `Claude broke your rule again: "{your words}"`.
+  Each rule's count is kept per chat in `memory.json`, logged as
+  `rule.strike`; a rule that ends takes its count with it, so one set again
+  starts over. A rule named in a reply that came too late to send still
+  counts. A prompt the chat moved past while the call ran (you
+  prompted again, a turn is running, or a newer turn ended) is never sent:
+  the buddy remembers it as written and unsent.
+- **`promptWhenIdle`** (off by default): the buddy may wake an idle chat.
+  Once the chat sits 30 minutes after an answered turn, no turn running and
+  no prompt sent, while the buddy is shown, it makes one call of its own, on
+  opus at low effort whatever `model` and `effort` say, sent only Claude's
+  last answer, asking whether Claude left work it owes and can do now. The
+  reply is `PAUSE`, or one line `PUSH: {step}` the buddy sends Claude as its
+  own prompt, its words yellow in the bubble. A push naming, in any
+  phrasing, a git push or force, `branch -D`, `reset --hard`, a tag, a
+  merge or a rebase, a `gh pr`, `gh release` or `gh repo` step, a deletion
+  (`rm`, delete, drop, remove), a publication (publish, release, deploy), or
+  an account step (login, logout, account, credential, token) is refused in
+  code and sends nothing, as does a reply outside that shape, or one that
+  comes back after you prompted or turned the buddy off. At most 3 pushes in a row before you prompt again; an
+  interrupted, failed or refused turn arms no call, and any prompt, a turn's
+  start or `/clear` cancels the wait. Each decision logs `away.decision`.
 - **Errors are never silent.** A chosen character that is missing or invalid
   draws the duck with a bubble
   `Couldn't load {id}: {error}; ctrl+x t in /buddy picks another`
@@ -401,8 +472,9 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 | `effort` | string | `"low"` | How hard `model` thinks on each of those calls: low, medium, high, xhigh, max or `inherit`. `inherit` uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies |
 | `secondsBetweenComments` | number | `0` | Minimum seconds between two `commentAfterEachTurn`; 0 = every answered turn |
 | `suggestNextPrompt` | boolean | `true` | The buddy's second brain, in the same end-of-turn call: it names what you most deeply want, judges Claude's last move `RIGHT`, `SHORTCUT` (warned in yellow) or `WRONG` (screamed in red), and writes your next prompt to match (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
-| `promptToMainChat` | boolean | `false` | The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, from the same end-of-turn call: only on evidence inside the turn that your own ask is unmet or unproven (a failed step or test run the answer passes over, a conclusion that rests on less than it names, an instruction in your ask not followed, a part of the ask never addressed); the buddy's own doubts, and a gap Claude named, stay a suggestion. Claude reads it as the buddy's, never yours, with a note saying so; the turn it starts never sends another, and with `suggestNextPrompt` on the suggestion after one is none. Logs `promptToMainChat.sent`. |
-| `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest turns it remembers, 1 to 10, after its own notes on the chat (at most 8, each a rule, open item, fact or doubt, rewritten by itself at every turn's end). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; the last turn with its numbers (time, requests, tool calls, files, lines, tests in their order, commits, tokens, cost, context), each older one told shorter, its numbers only its failed tool calls; anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`, and beside it `memory.md`, the same text as the character drawn now reads it, for you to read), so reopening a chat brings it back, and per character; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
+| `promptToMainChat` | boolean | `false` | The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, from the same end-of-turn call: only on evidence inside the turn that your own ask is unmet or unproven (a failed step or test run the answer passes over, a conclusion that rests on less than it names, an instruction in your ask not followed, a part of the ask never addressed); the buddy's own doubts, and a gap Claude named, stay a suggestion. Claude reads it as the buddy's, never yours, with a note saying so; the turn it starts never sends another, and with `suggestNextPrompt` on the suggestion after one is none. While on, your live rules from the buddy's memory ride every prompt as context for Claude, and a rule not followed climbs a ladder: the prompt, then the prompt again starting `Again:`, then from the third time a warning to you in the bubble instead. A prompt the chat moved past is never sent, remembered unsent. Logs `promptToMainChat.sent` and `rule.strike`. |
+| `promptWhenIdle` | boolean | `false` | After an answered turn, once the chat sits idle 30 minutes with no turn running, one call on opus at low effort reads Claude's last answer and replies `PAUSE` or a one-line push, sent to Claude as the buddy's prompt; never a git push, a deletion, a publication, a credential or an account step; at most 3 pushes before you prompt again. One model call per idle stretch (spends tokens); logs `away.decision` |
+| `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest turns it remembers, 1 to 10, after the chat's memory items (at most 10 rules, 6 open items, 6 facts, 4 lessons and 3 doubts, edited by the buddy at every turn's end and checked in code). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; the last turn with its numbers (time, requests, tool calls, files, lines, tests in their order, commits, tokens, cost, context), each older one told shorter, its numbers only its failed tool calls; anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`, and beside it `memory.md`, for you to read: the memory items, the newest ended ones, and the turns as the character drawn now reads them), so reopening a chat brings it back; the exchanges are kept per character, the memory items per chat; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
 | `logLevel` | string | `"info"` | Log level: error, info or debug |
 | `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, archived whole to the next free `{logFile}.N` past 1 MB and never deleted; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
 | `saveRounds` | boolean | `true` | One text file per main-chat turn in the chat's own folder, beside its transcript and next to `memory.json`, the buddy's memory of that chat (`{config}/projects/{project}/{session id}/buddy/`), every turn kept (`round-001.txt` on, each new round numbered after the highest, none ever overwritten; `ls -t` lists them newest first), holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim (they hold what the transcript beside them holds: your prompts, Claude's answers and tool output); `false` = no files |
@@ -494,7 +566,9 @@ the buddy and you said after each), never the rest
 of the conversation. `commentAfterEachTurn` and `suggestNextPrompt` are on by default: one short
 `model` call per answered turn, sent its `chatTurnsToRead` (default 4 turns) and the turn's tally; `commentAfterEachTurn: false` and `suggestNextPrompt: false`
 turn them off, and with `suggestNextPrompt` on, turning off Claude Code's own prompt
-suggestions saves paying for both.
+suggestions saves paying for both. With `promptWhenIdle` on, a chat left idle
+30 minutes after an answered turn costs one more call, on opus at low effort,
+sent only Claude's last answer.
 </details>
 
 <details>

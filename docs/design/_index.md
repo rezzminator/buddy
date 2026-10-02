@@ -10,7 +10,7 @@ Characters are JSON files, seven shipped and any number of your own, and the per
 | --- | --- |
 | [Engine](./engine.md) | the band above the prompt, the tick, motion, the brain's states, particles, the speech bubble |
 | [Characters](./characters.md) | the character contract, where characters come from, the line events, adding one |
-| [Voice](./voice.md) | questions (a completion on the chat's last turns), `commentAfterEachTurn`, the one-line rule and token caps, `model` |
+| [Voice](./voice.md) | questions (a completion on the chat's last turns), `commentAfterEachTurn`, the second brain and the suggestion's use, steering by the user's rules, away mode (`promptWhenIdle`), the one-line rule and token caps, `model` |
 | [chatTurnsToRead](./chatTurnsToRead.md) | `chatTurnsToRead`: the short-term memory, the chat's last turns with what the buddy and you said after each, kept per session, fed into every prompt |
 | [Original companion](./original-companion.md) | recomputing the companion Claude Code hatched: identity, hash, PRNG, bones, species art, privacy, legal |
 | [Drawer](./drawer.md) | `/buddy` alone: the conversation spanning the memory, the memory row, the full height, the personality picker's pane and groups, the live preview, the ctrl+x shortcuts, persistence, error lines |
@@ -49,11 +49,11 @@ flowchart LR
 | Only the adapter touches `$`, passes it only to its top-level functions, and spells every call `$.noun.event(...)` | otherwise Claude Code loads the module with zero hooks; `npm run validate:plugin` reports it |
 | Every hook catches, logs `{what} failed: {err}` on the transcript (`$.ui.log` through `notice()`, which names the plugin) and the plugin log, and returns `next(e)` or the original result | a broken buddy never blocks the prompt of everyone who installed it |
 | An error never looks like "no buddy" | a bad character draws the duck with a bubble naming why; the personality picker says why inside the group |
-| Only a question, or the end-of-turn call while `commentAfterEachTurn`, `suggestNextPrompt` (the second brain) or `promptToMainChat` is on, calls a model | walking, reactions and every other command stay local and free |
+| Only a question, the end-of-turn call while `commentAfterEachTurn`, `suggestNextPrompt` (the second brain) or `promptToMainChat` is on, or the away call while `promptWhenIdle` is on, calls a model | walking, reactions and every other command stay local and free |
 
 ## What persists
 
-`$.store` survives `/reload` and restarts. The buddy's memory of each chat (`memory.json`, and `memory.md` beside it for you to read) and its round files (`saveRounds`) are kept in the chat's own folder beside its transcript ([chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept)); the only other file written is the plugin log (`logFile`, [Verification](./verification.md#logging)).
+`$.store` survives `/reload` and restarts. The buddy's memory of each chat (`memory.json`: the turns, the memory items, the ended ones and each live rule's `strikes`; and `memory.md` beside it for you to read) and its round files (`saveRounds`) are kept in the chat's own folder beside its transcript ([chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept)); the only other file written is the plugin log (`logFile`, [Verification](./verification.md#logging)).
 
 | Key | Holds | Written by |
 | --- | --- | --- |
