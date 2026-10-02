@@ -18,7 +18,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// This file lives at {repo}/.claude/skills/mirror/; a symlink to it resolves here too.
+// This file lives at {repo}/.claude/skills/mirror/.
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const TAGS = ['DESIRE', 'VERDICT', 'WHY', 'COMMENT_AFTER_EACH_TURN', 'PROMPT_TO_MAIN_CHAT', 'SUGGEST_NEXT_PROMPT', 'MEMORY'];
 // Where the captured system's persona ends: every version's character rule opens with it.
