@@ -3160,7 +3160,7 @@ describe("a turn's numbers", () => {
 
 /**
  * The kit loads the plugin under test with its manifest's defaults, so
- * promptToMainChat is off here unless a test gives `options`, and an inline
+ * promptToMainChat is on here unless a test gives `options`, and an inline
  * plugin cannot import buddy's code. What the kit shows: a plugin's own submission reaches its own prompt.submit hook
  * without the `{ kind: 'plugin', name }` origin the engine docs promise, so
  * buddy's hook, which knows its own prompt by that origin, is proven here on
@@ -3228,7 +3228,7 @@ describe('promptToMainChat', () => {
     expect((await ui.find({ type: 'Box', key: 'bubble' }))?.props.borderColor).toBeUndefined();
     await ui.unmount();
   });
-  test('off (the default): no PROMPT_TO_MAIN_CHAT line is asked for and nothing is sent, though the reply writes one', async ($, on) => {
+  test('off: no PROMPT_TO_MAIN_CHAT line is asked for and nothing is sent, though the reply writes one', { options: { promptToMainChat: false } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
     await $.session.start(START);
     await prompt($, 'fix the login bug', 't1');
@@ -3268,7 +3268,7 @@ describe('promptToMainChat', () => {
     await $.prompt.submit({ text: TO_CLAUDE, origin: { kind: 'plugin', name: 'buddy' } } as never);
     expect(w.submitted.at(-1)).toEqual({ text: TO_CLAUDE, context: [BUDDY_PROMPT_CONTEXT, RULES] });
   });
-  test('off: a live rule rides no prompt', async ($, on) => {
+  test('off: a live rule rides no prompt', { options: { promptToMainChat: false } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, ruled());
     await $.session.start(START);
     await w.clock.settle();
@@ -3471,7 +3471,7 @@ describe('promptWhenIdle', () => {
   /** Half an hour of the band's clock is thousands of ticks: each test has time for its stretches. */
   const SLOW = { timeoutMs: 60_000 };
   /** On, with no end-of-turn call: every completion is the away call's. */
-  const ON = { ...SLOW, options: { promptWhenIdle: true, commentAfterEachTurn: false, suggestNextPrompt: false } };
+  const ON = { ...SLOW, options: { promptWhenIdle: true, commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: false } };
   /** A character whose clock ticks as seldom as a character may (stepMs 1000), so 30 minutes pass in 1800 ticks. */
   const SLOW_FIXTURE = { builtins: { 'idler.json': JSON.stringify({ ...JSON.parse(fixture('idler', 'Idler', 'i_i')), motion: { restChance: 0, stepMs: 1000 } }) } };
   const PUSHED = 'Run the remaining replay and report.';

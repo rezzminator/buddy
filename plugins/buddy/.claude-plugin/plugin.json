@@ -64,7 +64,7 @@
       "type": "boolean",
       "title": "Prompt the main chat",
       "description": "The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours; Claude reads it as the buddy's, never yours.",
-      "default": false
+      "default": true
     },
     "promptWhenIdle": {
       "type": "boolean",

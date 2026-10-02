@@ -55,7 +55,7 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   effort: 'low',
   secondsBetweenComments: 0,
   suggestNextPrompt: true,
-  promptToMainChat: false,
+  promptToMainChat: true,
   promptWhenIdle: false,
   chatTurnsToRead: CHAT_TURNS_TO_READ_DEFAULT,
   logLevel: 'info',

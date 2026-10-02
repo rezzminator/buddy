@@ -4,7 +4,7 @@ import { DEFAULTS, expandHome, logPath, observeEffort, resolveEffort, resolveMod
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, promptToMainChat: false, promptWhenIdle: false, chatTurnsToRead: 4, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', saveRounds: true, ambiguousCharacterWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, promptToMainChat: true, promptWhenIdle: false, chatTurnsToRead: 4, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', saveRounds: true, ambiguousCharacterWidth: 'narrow' });
   });
   test('good values', () => {
     const o = resolveOptions({ character: ' Cat ', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: 'false', model: 'sonnet', effort: ' HIGH ', secondsBetweenComments: '10' });
@@ -201,11 +201,13 @@ describe('config.example.json', () => {
 });
 
 describe('the promptToMainChat option', () => {
-  test('off unless set; true or "true" turns it on; any other value is ignored by name', () => {
-    expect(resolveOptions({}).promptToMainChat).toBe(false);
+  test('on unless set; false or "false" turns it off; any other value is ignored by name', () => {
+    expect(resolveOptions({}).promptToMainChat).toBe(true);
+    expect(resolveOptions({ promptToMainChat: false })).toMatchObject({ promptToMainChat: false, errors: [] });
+    expect(resolveOptions({ promptToMainChat: 'false' })).toMatchObject({ promptToMainChat: false, errors: [] });
     expect(resolveOptions({ promptToMainChat: true })).toMatchObject({ promptToMainChat: true, errors: [] });
     expect(resolveOptions({ promptToMainChat: 'true' })).toMatchObject({ promptToMainChat: true, errors: [] });
-    expect(resolveOptions({ promptToMainChat: 'yes' })).toMatchObject({ promptToMainChat: false, errors: ['option promptToMainChat ignored: "yes" is not true or false'] });
+    expect(resolveOptions({ promptToMainChat: 'yes' })).toMatchObject({ promptToMainChat: true, errors: ['option promptToMainChat ignored: "yes" is not true or false'] });
   });
 });
 
