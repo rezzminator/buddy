@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { REACTIONS, TEST_FAIL, TEST_PASS, bashCommand, classifyToolCall, toolOutput } from '../plugins/buddy/src/reactions.ts';
+import { COMMAND_CAP, REACTIONS, TEST_FAIL, TEST_PASS, bashCommand, classifyToolCall, toolOutput } from '../plugins/buddy/src/reactions.ts';
 
 const bash = (output: string, isError = false) => ({ tool: 'Bash', isError, denied: false, output, command: 'npm test' });
 
@@ -199,11 +199,21 @@ describe("a runner's summary lines, and nothing else, are its result", () => {
 
 describe('the test-runner check stays fast on a long command', () => {
   const run = (command: string) => classifyToolCall({ tool: 'Bash', isError: false, denied: false, output: '3 passed', command });
-  test.each(['pnpm ', 'yarn exec ', 'mvn '])('80 KB of %j runs in under 50 ms', (token) => {
+  // The budget separates the capped read from an uncapped one, not a fast machine from a slow one:
+  // the regex is still quadratic within COMMAND_CAP (up to ~35 ms idle, up to 130 ms beside concurrent
+  // test runs), while reading the whole 80 KB takes 1.3-2.4 s here. A 50 ms budget failed 9 times in
+  // 36 loaded runs.
+  test.each(['pnpm ', 'yarn exec ', 'mvn '])('80 KB of %j runs in under 400 ms', (token) => {
     const command = token.repeat(Math.ceil(80_000 / token.length));
     const t0 = performance.now();
     run(command);
-    expect(performance.now() - t0).toBeLessThan(50);
+    expect(performance.now() - t0).toBeLessThan(400);
+  });
+  test('only the first COMMAND_CAP characters are read for a runner', () => {
+    const inside = `echo ${'x'.repeat(COMMAND_CAP - 'echo ; npm test'.length)}; npm test`;
+    expect(inside).toHaveLength(COMMAND_CAP);
+    expect(run(inside)).toBe('testPass');
+    expect(run(`echo x${inside.slice('echo '.length)}`)).toBe(null); // one character later, `npm test` ends past the cap
   });
   test('a runner at the start of a long command is still found', () => {
     expect(run(`npm test && echo ${'x'.repeat(80_000)}`)).toBe('testPass');
