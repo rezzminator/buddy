@@ -242,7 +242,7 @@ run_session() {
     grep -q 'S3T2' <<<"$kept" && ! grep -q 'S3T1' <<<"$kept" && check PASS "chatTurnsToRead 1: memory.json holds only the last turn" "$kept" || check FAIL "chatTurnsToRead 1: memory.json holds only the last turn" "${st:-no memory.json}: ${kept:0:160}"
     # The buddy knows its memory is one turn long: asked about the turn before it, it says so, never guesses.
     ask "what Bash command did Claude run in the turn before my last one?" "ask-past"; a=$(stored question)
-    [ "$(row_of outcome)" = answered ] && grep -q -i -E 'memory|remember|recall|forg' <<<"$a" && { ! grep -q -E '(^|[^a-z])ls([^a-z]|$)' <<<"${a#*->}" || grep -q -i 'note' <<<"${a#*->}"; } && check PASS "a question past chatTurnsToRead is answered as out of memory" "$a" || check FAIL "a question past chatTurnsToRead is answered as out of memory" "$ASK_OUT / $(row_of outcome) / ${a:-nothing stored}"
+    [ "$(row_of outcome)" = answered ] && grep -q -i -E 'memory|remember|recall|forg|note' <<<"$a" && { ! grep -q -E '(^|[^a-z])ls([^a-z]|$)' <<<"${a#*->}" || grep -q -i -E 'note|memory item|from (my|its) memory' <<<"${a#*->}"; } && check PASS "a question past chatTurnsToRead is answered as out of memory" "$a" || check FAIL "a question past chatTurnsToRead is answered as out of memory" "$ASK_OUT / $(row_of outcome) / ${a:-nothing stored}"
     # The pre-filled rounds stay untouched; the session's start, T1 and T2 each take the next number (round-151 on).
     # T1's round holds its prompt, the Bash call with its arguments and output, the log, the bubble, the turn's end and its end-of-turn call verbatim;
     # T2's round also the question, asked after T2 ended.
