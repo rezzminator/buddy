@@ -34,6 +34,8 @@ export const TURN_PROMPT_HEAD = 4800;
 export const TURN_PROMPT_TAIL = 2400;
 /** The most prompts delivered into one turn while it ran that it keeps, the newest, each cut like its prompt. */
 export const ADDED_MAX = 3;
+/** The most agent reports one turn keeps, the newest. */
+export const RETURNED_MAX = 4;
 /** How a prompt delivered into a turn while it ran is said, in the memory and in the round file. */
 export const ADDED_LABEL = 'The user added while Claude worked:';
 /** How much of a task notification's result, the report it brought, is kept from its start and from its end. */
@@ -201,7 +203,9 @@ function cappedTurn(t: Turn): Turn {
   const turn: Turn = { prompt: ends(cleanPrompt(t.prompt), TURN_PROMPT_HEAD, TURN_PROMPT_TAIL), answer: ends(cleanAnswer(t.answer), TURN_ANSWER_HEAD, TURN_ANSWER_TAIL) };
   const did = (t.did ?? []).slice(0, DID_MAX).map((d) => (d.length > DID_LINE_CAP ? `${d.slice(0, DID_LINE_CAP - 1)}…` : d)).filter((d) => d);
   const added = (t.added ?? []).map((a) => ends(cleanPrompt(a), TURN_PROMPT_HEAD, TURN_PROMPT_TAIL)).filter((a) => a).slice(-ADDED_MAX);
-  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }), ...(t.interrupted === true ? { interrupted: true } : {}), ...(t.ended === undefined ? {} : { ended: t.ended }), ...(added.length > 0 ? { added } : {}) };
+  // What an agent returned, cut like a task notification's report: the same report, whether it came back at once or later.
+  const returned = (t.returned ?? []).map((r) => ends(r.trim(), NOTIFICATION_RESULT_HEAD, NOTIFICATION_RESULT_TAIL)).filter((r) => r).slice(-RETURNED_MAX);
+  return { ...turn, ...(did.length > 0 ? { did } : {}), ...(returned.length > 0 ? { returned } : {}), ...(t.from === undefined ? {} : { from: t.from }), ...(t.stats === undefined ? {} : { stats: t.stats }), ...(t.interrupted === true ? { interrupted: true } : {}), ...(t.ended === undefined ? {} : { ended: t.ended }), ...(added.length > 0 ? { added } : {}) };
 }
 
 /** The timeline with the answered turn `turnId` added last, at `at`, kept to its last `n` blocks: a turnless first block goes once `n` turns follow it. A turn sent again as it was after one interrupted, or ended by an error or a refusal, before any answer takes that one's place, its steps first and its exchanges kept, so one ask holds one of the `n`. */
@@ -210,7 +214,8 @@ export function addTurn(blocks: readonly Block[], turnId: string, turn: Turn, n:
   const resent = (last?.turn?.interrupted === true || last?.turn?.ended !== undefined) && cleanAnswer(last.turn.answer) === '' && last.turn.from === turn.from && cleanPrompt(last.turn.prompt) === cleanPrompt(turn.prompt);
   const kept = resent ? blocks.slice(0, -1) : blocks;
   const did = resent ? [...(last!.turn!.did ?? []), ...(turn.did ?? [])] : turn.did;
-  const t: Turn = did === undefined ? turn : { ...turn, did };
+  const returned = resent ? [...(last!.turn!.returned ?? []), ...(turn.returned ?? [])] : turn.returned;
+  const t: Turn = { ...turn, ...(did === undefined ? {} : { did }), ...(returned === undefined ? {} : { returned }) };
   const full = cleanPrompt(t.prompt).length + cleanAnswer(t.answer).length;
   return [...kept, { turnId, turn: cappedTurn(t), ...(at === undefined ? {} : { at }), full, characters: resent ? last!.characters : {} }].slice(-Math.max(1, n));
 }
@@ -292,13 +297,14 @@ function turnLines(t: Turn, k: number, prev: TurnStats | undefined, older: boole
     : t.ended === 'error' ? 'Claude answered, before an error ended the turn:'
     : t.ended === 'refusal' ? 'Claude answered, before the model refused and ended the turn:'
     : 'Claude answered:';
-  if (!older) return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.added ?? []).map((a) => `${ADDED_LABEL} ${a}`), ...(t.did ? [didLine(t.did, null)] : []), ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];
+  if (!older) return [`Turn ${k}. ${asked}`, t.prompt || '(not seen)', ...(t.added ?? []).map((a) => `${ADDED_LABEL} ${a}`), ...(t.did ? [didLine(t.did, null)] : []), ...(t.returned ?? []).map((r) => `Its agent ${r}`), ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];
   const failed = t.stats?.failed ?? 0;
   return [
     `Turn ${k}. ${asked}`,
     ends(t.prompt || '(not seen)', STORY_PROMPT_HEAD, STORY_PROMPT_TAIL),
     ...(t.added ?? []).map((a) => ends(`${ADDED_LABEL} ${a}`, STORY_ADDED_HEAD, STORY_ADDED_TAIL)),
     ...(t.did ? [didLine(t.did)] : []),
+    ...(t.returned ?? []).map((r) => ends(`Its agent ${r}`, STORY_ADDED_HEAD, STORY_ADDED_TAIL)),
     ...(failed > 0 ? [`${failed} tool call${failed === 1 ? '' : 's'} failed.`] : []),
     answered,
     ends(t.answer || '(no text)', STORY_ANSWER_HEAD, STORY_ANSWER_TAIL),
@@ -403,9 +409,10 @@ function turnOf(v: unknown): Turn | null {
   if (t.interrupted !== undefined && typeof t.interrupted !== 'boolean') return null;
   if (t.ended !== undefined && t.ended !== 'error' && t.ended !== 'refusal') return null;
   if (t.added !== undefined && !(Array.isArray(t.added) && t.added.every((a) => typeof a === 'string'))) return null;
+  if (t.returned !== undefined && !(Array.isArray(t.returned) && t.returned.every((r) => typeof r === 'string'))) return null;
   const stats = t.stats === undefined ? undefined : turnStatsOf(t.stats);
   if (stats === null) return null;
-  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}), ...(stats ? { stats } : {}), ...(t.interrupted === true ? { interrupted: true } : {}), ...(t.ended === 'error' || t.ended === 'refusal' ? { ended: t.ended } : {}), ...(Array.isArray(t.added) ? { added: t.added as string[] } : {}) });
+  return cappedTurn({ prompt: t.prompt, answer: t.answer, ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}), ...(Array.isArray(t.returned) ? { returned: t.returned as string[] } : {}), ...(typeof t.from === 'string' ? { from: t.from } : {}), ...(stats ? { stats } : {}), ...(t.interrupted === true ? { interrupted: true } : {}), ...(t.ended === 'error' || t.ended === 'refusal' ? { ended: t.ended } : {}), ...(Array.isArray(t.added) ? { added: t.added as string[] } : {}) });
 }
 
 /** Stored notes, each character's cleaned (cleanNotes); a character whose notes are not a list of text is dropped, counted in `dropped`. */

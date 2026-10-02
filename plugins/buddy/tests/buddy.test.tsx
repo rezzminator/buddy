@@ -1261,8 +1261,8 @@ describe('hook paths', () => {
     await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
-    // The subagent's call and run are counted apart from the main loop's own.
-    expect(w.completes[0]?.prompt).toMatch(/\nNumbers: \d+s · 1 tool call \(Bash 1\) · 1 subagent run: 1 tool call\n/);
+    // The subagent's call counts toward nothing: the turn's numbers are the main loop's own.
+    expect(w.completes[0]?.prompt).toMatch(/\nNumbers: \d+s · 1 tool call \(Bash 1\)\n/);
     await ui.unmount();
   });
 
@@ -2664,29 +2664,34 @@ describe("a turn's numbers", () => {
     await $.tool.call({ tool: 'Bash', command: 'npm test' } as never);
     await $.tool.call({ tool: 'Edit', file_path: 'src/a.ts', old_string: 'x', new_string: 'y' } as never);
     await $.tool.call({ tool: 'Bash', command: 'git commit -m "ship"' } as never);
-    await $.tool.call({ tool: 'Grep', pattern: 'x', agentId: 'sub1' } as never);
+    // A subagent's own work (a test run, an edit, a commit) is never the main turn's: the buddy sees only what the agent returns.
+    await $.tool.call({ tool: 'Bash', command: 'npm test', agentId: 'sub1' } as never);
+    await $.tool.call({ tool: 'Edit', file_path: 'src/b.ts', old_string: 'x', new_string: 'y', agentId: 'sub1' } as never);
+    await $.tool.call({ tool: 'Bash', command: 'git commit -m "sub"', agentId: 'sub1' } as never);
     await $.turn.complete({ reason: 'answer', answer: 'sub done', isAborted: false, turnId: 's1', agentId: 'sub1', usage: { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, model: 'claude-haiku-5' } } as never);
     await $.turn.complete({ reason: 'answer', answer: 'Shipped.', isAborted: false, turnId: 't1', durationMs: 134_000, usage: { input_tokens: 1_000, output_tokens: 2_000, cache_read_input_tokens: 9_000, cache_creation_input_tokens: 0, model: 'claude-opus-5' } } as never);
     await w.clock.settle();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const filed = (memory(w) as any).blocks.find((b: { turnId?: string }) => b.turnId === 't1').turn.stats;
     expect(filed).toMatchObject({
-      ms: 134_000, requests: 2, tools: { Bash: 2, Edit: 1 }, agents: { runs: 1, tools: 1, tokens: 150 }, files: { read: 0, edited: 1, wrote: 0 }, lines: { added: 1, removed: 1 },
-      tests: { passed: 1, failed: 0 }, git: { commits: 1, pushes: 0 }, stops: { maxTokens: 1, contextFull: 0 }, tokens: { in: 1_000, out: 2_000, cacheRead: 9_000, cacheWrite: 0 },
+      ms: 134_000, requests: 2, tools: { Bash: 2, Edit: 1 }, files: { read: 0, edited: 1, wrote: 0 }, lines: { added: 1, removed: 1 },
+      tests: { passed: 1, failed: 0, seq: 'p' }, git: { commits: 1, pushes: 0 }, stops: { maxTokens: 1, contextFull: 0 }, tokens: { in: 1_000, out: 2_000, cacheRead: 9_000, cacheWrite: 0 },
       model: 'claude-opus-5', effort: 'medium', context: { percent: 25, window: 200_000 }, limits: { fiveHour: 71 },
     });
+    expect(filed.agents).toBeUndefined();
     expect(filed.usd.toFixed(2)).toBe('0.42');
     expect(usageReads).toBe(2);
     expect(w.completes[0]!.prompt).toContain(
       'Turn 1. The user asked Claude:\nship it\nClaude did: ran npm test; edited a.ts; ran git commit -m "ship"\n' +
-        'Numbers: 2m14s · 2 model requests · 3 tool calls (Bash 2, Edit 1) · 1 subagent run: 1 tool call, 150 tokens · files 1 edited · lines +1 −1 · test runs 1 passed · 1 commit · ' +
+        'Numbers: 2m14s · 2 model requests · 3 tool calls (Bash 2, Edit 1) · files 1 edited · lines +1 −1 · test runs 1 passed · 1 commit · ' +
         'cut at max tokens 1× · tokens 10k in (90% cached), 2k out · $0.42 · context 25% full of 200k · 5-hour limit 71% used · on opus-5 at medium effort\nClaude answered:\nShipped.',
     );
     expect(w.completes[0]!.prompt.endsWith(`\n\n${JUST_ENDED}`)).toBe(true);
-    expect(records(w).find((r) => r.event === 'turn.numbers')).toMatchObject({ ms: 134_000, requests: 2, tools: 3, agentRuns: 1, context: 25 });
+    expect(records(w).find((r) => r.event === 'turn.numbers')).toMatchObject({ ms: 134_000, requests: 2, tools: 3, context: 25 });
+    expect(records(w).find((r) => r.event === 'turn.numbers')).not.toHaveProperty('agentRuns');
     await $.command.run(run(''));
     await w.clock.settle();
-    expect(JSON.stringify(await ui.drawn())).toContain('2m14s · 4 tools · $0.42');
+    expect(JSON.stringify(await ui.drawn())).toContain('2m14s · 3 tools · $0.42');
     // A subagent still running after the turn ended counts toward no turn.
     await $.tool.call({ tool: 'Grep', pattern: 'late', agentId: 'sub2' } as never);
     await prompt($, 'next', 't2');

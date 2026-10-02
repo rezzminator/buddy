@@ -118,6 +118,22 @@ describe('the timeline', () => {
     expect(b[0]!.turn!.did).toEqual(['Run the tests', 'edited a.ts']);
     expect(addTurn([], 't1', { prompt: 'go', answer: 'ok', did: [] }, 4)[0]!.turn).toEqual({ prompt: 'go', answer: 'ok' });
   });
+  test("what an agent returned, kept with its turn to a task notification's report ends: shown under what the turn did, the latest turn whole, an older one cut like an added prompt", () => {
+    const long = `DONE ${'r'.repeat(NOTIFICATION_RESULT_HEAD + NOTIFICATION_RESULT_TAIL + 500)} END`;
+    let b = addTurn([], 't1', { prompt: 'audit it', answer: 'Audited.', did: ['agent: Audit'], returned: [`“Audit” returned: ${long}`] }, 4);
+    const kept = b[0]!.turn!.returned![0]!;
+    expect(kept.startsWith('“Audit” returned: DONE ')).toBe(true);
+    expect(kept.endsWith(' END')).toBe(true);
+    expect(kept.length).toBeLessThan(NOTIFICATION_RESULT_HEAD + NOTIFICATION_RESULT_TAIL + 100);
+    expect(render(b, 'cat', 4)).toContain('Claude did: agent: Audit\nIts agent “Audit” returned: DONE r');
+    b = addTurn(b, 't2', turn('next'), 4);
+    const older = render(b, 'cat', 4).split('\n').find((l) => l.startsWith('Its agent “Audit” returned:'))!;
+    expect(older.length).toBeLessThanOrEqual(`Its agent ${kept}`.length);
+    expect(older.length).toBeLessThan(STORY_ADDED_HEAD + STORY_ADDED_TAIL + 60);
+    // Stored and read back whole; a returned that is not text makes the turn unreadable.
+    expect(chatTurnsToReadOf({ at: 1, blocks: b }).blocks).toEqual(b);
+    expect(chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'a', answer: 'b', returned: [3] }, exchanges: [] }] }).blocks).toEqual([]);
+  });
   test('a failed step is kept whole, its reason past the step cap included; cut only past DID_LINE_CAP', () => {
     const failed = `${'z'.repeat(DID_TEXT_CAP - 1)}… (failed: ${'r'.repeat(FAIL_REASON_CAP)})`;
     expect(addTurn([], 't1', { prompt: 'go', answer: 'ok', did: [failed] }, 4)[0]!.turn!.did).toEqual([failed]);

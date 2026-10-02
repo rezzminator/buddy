@@ -5,7 +5,8 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 ## [Unreleased]
 
 ### Fixed
-- A subagent's test runs count under its own numbers (`subagents: 5 tool calls, test runs 1 failed`), never as the main loop's: a background agent's deliberately failing run no longer reads as Claude's own failed test, which had the buddy ask Claude about a failure it never saw.
+- The buddy sees only the main chat, as you do: a subagent's tool calls, files, lines, test runs, commits and tokens no longer count in the turn's numbers (the `subagents` group is gone), so a background agent's deliberately failing run no longer reads as Claude's own failed test, which had the buddy ask Claude about a failure it never saw. What a foreground agent returns is read under the turn's steps (`Its agent “…” returned: …`), and an agent the harness launched asynchronously reads as reporting back later.
+- Test runs are said in the order they happened (`test runs 1 failed, then 2 passed`), not as totals alone, so a red fixed by a later green no longer reads as an open failure.
 
 ### Added
 - `memory.md` beside each chat's `memory.json` (`{config}/projects/{project}/{session id}/buddy/`): the buddy's memory as you can read it, headed `# What {name} remembers`, the same text the character drawn now reads before every reply, its own notes first. It is rewritten whenever `memory.json` is written and whenever the drawn character changes (a pick, `/buddy reload`, a session start); a failed write is logged and never stops the buddy. The drawer's last row gives its absolute path, `memory  {path}`.

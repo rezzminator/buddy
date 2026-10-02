@@ -1,15 +1,16 @@
 // The numbers of one main turn, as the buddy remembers them beside what Claude
 // did: how long it ran and after what pause, its model requests, its tool
-// calls by name with their failures and refusals, its subagents, the files it
+// calls by name with their failures and refusals, the files it
 // touched and the lines it changed, the tests it ran, its commits and pushes,
 // its web reads, its tokens and cost, the context window after it, the rate
 // limits it neared, and the signs of a turn going in circles (a file edited
 // over and over, a shell command run again unchanged, a response cut at max
 // tokens). Every number is counted in code as the turn runs; the model reads
 // them as one line per remembered turn (renderStats), a few dozen tokens.
-// The main loop's own tool calls are counted by name; its subagents' in one
-// number; what a call did (files, lines, tests, git, web) counts whoever made
-// it, and only when it succeeded. A main-loop shell command's own edits are
+// Only the main loop's own tool calls count, by name: a subagent's calls are
+// its own work, which the buddy hears of only as the user does, by what the
+// agent returns. What a call did (files, lines, tests, git, web) counts only
+// when it succeeded. A main-loop shell command's own edits are
 // measured, never guessed: the files it names (shellTargets), read before and
 // after it runs, count only when they really changed (shellChanges), whatever
 // its exit; a tree sweep of the folders it works in (shellFolders) catches
@@ -58,16 +59,14 @@ export type TurnStats = {
   denied?: number;
   /** The main loop's shell commands run again unchanged in the same turn. */
   reruns?: number;
-  /** The subagent runs that ended during the turn, their tool calls, every token they spent, and their test runs (only when some ran). */
-  agents?: { runs: number; tools: number; tokens: number; tests?: { passed: number; failed: number } };
   /** Distinct files read, edited and written, and deleted by a shell command (only when some were). */
   files?: { read: number; edited: number; wrote: number; deleted?: number };
   /** The file edited most, by name, once edited HOT_EDITS times or more. */
   hot?: { file: string; edits: number };
   /** Lines added and removed by edits and writes; a write counts all its lines as added. `unmeasured`: the files a shell command changed whose lines could not be counted. */
   lines?: { added: number; removed: number; unmeasured?: number };
-  /** The main loop's test runs that passed and that failed; a subagent's are under `agents`. */
-  tests?: { passed: number; failed: number };
+  /** Test runs that passed and that failed; `seq`, their outcomes in the order they ran (`p`, `f`), the last TEST_SEQ_MAX. */
+  tests?: { passed: number; failed: number; seq?: string };
   git?: { commits: number; pushes: number };
   /** Web pages fetched and searches made. */
   web?: number;
@@ -98,9 +97,6 @@ export type Tally = {
   denied: number;
   commands: Set<string>;
   reruns: number;
-  agentRuns: number;
-  agentTools: number;
-  agentTokens: number;
   read: Set<string>;
   edited: Set<string>;
   wrote: Set<string>;
@@ -111,8 +107,8 @@ export type Tally = {
   unmeasured: Set<string>;
   passed: number;
   failedTests: number;
-  agentPassed: number;
-  agentFailedTests: number;
+  /** Each test run's outcome in order, `p` or `f`. */
+  testSeq: string;
   commits: number;
   pushes: number;
   web: number;
@@ -156,8 +152,6 @@ export type CountedCall = {
   denied: boolean;
   /** The call's test outcome (reactions.ts classifyToolCall). */
   outcome: 'testPass' | 'testFail' | 'toolFail' | null;
-  /** Made by the main loop, not a subagent. */
-  main: boolean;
 };
 
 /** A new turn's tally: `now` and `lastEndAt` (the previous main turn's end, if any) make its gap. */
@@ -172,9 +166,6 @@ export function openTally(turnId: string, now: number, lastEndAt?: number): Tall
     denied: 0,
     commands: new Set(),
     reruns: 0,
-    agentRuns: 0,
-    agentTools: 0,
-    agentTokens: 0,
     read: new Set(),
     edited: new Set(),
     wrote: new Set(),
@@ -185,8 +176,7 @@ export function openTally(turnId: string, now: number, lastEndAt?: number): Tall
     unmeasured: new Set(),
     passed: 0,
     failedTests: 0,
-    agentPassed: 0,
-    agentFailedTests: 0,
+    testSeq: '',
     commits: 0,
     pushes: 0,
     web: 0,
@@ -202,38 +192,27 @@ export function countStep(t: Tally, stopReason: string | null): void {
   if (stopReason === 'model_context_window_exceeded') t.contextFull++;
 }
 
-/** A subagent run that ended during the turn, with the tokens it spent. */
-export function countAgentRun(t: Tally, usage?: Partial<ApiUsage>): void {
-  t.agentRuns++;
-  const u = tokensOf(usage);
-  t.agentTokens += u.in + u.out + u.cacheRead + u.cacheWrite;
-}
-
 const WEB = /^(?:WebFetch|WebSearch)$|^mcp__.*(?:harvester|web|fetch|browser|playwright)/i;
 /** A git commit or push where a command starts (never inside a quoted string), past git's own options (`-C dir`, `-c key=value`, `--no-pager`). */
 const GIT = /(?:^|[;&|(\n])\s*(?:\w+=\S*\s+)*git(?:\s+-[Cc]\s+\S+|\s+--?[\w-]+(?:=\S+)?)*\s+(commit|push)\b/g;
 
-/** One tool call, by the main loop or a subagent. */
+/** One tool call of the main loop's own; a subagent's is never counted. */
 export function countToolCall(t: Tally, c: CountedCall): void {
-  if (c.main) {
-    t.tools[c.tool] = (t.tools[c.tool] ?? 0) + 1;
-    if (c.denied) t.denied++;
-    else if (c.failed) t.failed++;
-    const command = c.tool === 'Bash' ? text(c.args.command).replace(/\s+/g, ' ').trim() : '';
-    if (command) {
-      if (t.commands.has(command)) t.reruns++;
-      else t.commands.add(command);
-    }
-  } else {
-    t.agentTools++;
+  t.tools[c.tool] = (t.tools[c.tool] ?? 0) + 1;
+  if (c.denied) t.denied++;
+  else if (c.failed) t.failed++;
+  const command = c.tool === 'Bash' ? text(c.args.command).replace(/\s+/g, ' ').trim() : '';
+  if (command) {
+    if (t.commands.has(command)) t.reruns++;
+    else t.commands.add(command);
   }
   if (c.outcome === 'testPass') {
-    if (c.main) t.passed++;
-    else t.agentPassed++;
+    t.passed++;
+    t.testSeq += 'p';
   }
   if (c.outcome === 'testFail') {
-    if (c.main) t.failedTests++;
-    else t.agentFailedTests++;
+    t.failedTests++;
+    t.testSeq += 'f';
   }
   if (c.failed || c.denied) return;
   const file = text(c.args.file_path) || text(c.args.notebook_path);
@@ -491,11 +470,10 @@ export function closeTally(
     ...(t.failed > 0 ? { failed: t.failed } : {}),
     ...(t.denied > 0 ? { denied: t.denied } : {}),
     ...(t.reruns > 0 ? { reruns: t.reruns } : {}),
-    ...(some(t.agentRuns, t.agentTools) ? { agents: { runs: t.agentRuns, tools: t.agentTools, tokens: t.agentTokens, ...(some(t.agentPassed, t.agentFailedTests) ? { tests: { passed: t.agentPassed, failed: t.agentFailedTests } } : {}) } } : {}),
     ...(some(t.read.size, t.edited.size, t.wrote.size, t.deleted.size) ? { files: { read: t.read.size, edited: t.edited.size, wrote: t.wrote.size, ...(t.deleted.size > 0 ? { deleted: t.deleted.size } : {}) } } : {}),
     ...(hot && hot[1] >= HOT_EDITS ? { hot: { file: hot[0].replace(/\/+$/, '').split('/').pop() ?? hot[0], edits: hot[1] } } : {}),
     ...(some(t.added, t.removed, t.unmeasured.size) ? { lines: { added: t.added, removed: t.removed, ...(t.unmeasured.size > 0 ? { unmeasured: t.unmeasured.size } : {}) } } : {}),
-    ...(some(t.passed, t.failedTests) ? { tests: { passed: t.passed, failed: t.failedTests } } : {}),
+    ...(some(t.passed, t.failedTests) ? { tests: { passed: t.passed, failed: t.failedTests, seq: t.testSeq.slice(-TEST_SEQ_MAX) } } : {}),
     ...(some(t.commits, t.pushes) ? { git: { commits: t.commits, pushes: t.pushes } } : {}),
     ...(t.web > 0 ? { web: t.web } : {}),
     ...(some(t.maxTokens, t.contextFull) ? { stops: { maxTokens: t.maxTokens, contextFull: t.contextFull } } : {}),
@@ -532,8 +510,22 @@ export function dollars(usd: number): string {
 }
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${count(n)} ${n === 1 ? one : many}`;
-const testRuns = (t: { passed: number; failed: number }): string =>
-  `test runs ${[t.passed ? `${t.passed} passed` : '', t.failed ? `${t.failed} failed` : ''].filter(Boolean).join(', ')}`;
+/** How many test runs' order a turn keeps. */
+export const TEST_SEQ_MAX = 40;
+/** Stretches of the same outcome, in order: `ffpp` is 2 failed, then 2 passed. */
+const stretches = (seq: string): string[] => (seq.match(/p+|f+/g) ?? []).map((r) => `${r.length} ${r[0] === 'p' ? 'passed' : 'failed'}`);
+/**
+ * Test runs in the order they ran, so a failure fixed later in the turn reads
+ * as fixed: `1 failed, then 2 passed`; past four stretches, the totals and the
+ * last two. Stored numbers without an order read as totals.
+ */
+const testRuns = (t: { passed: number; failed: number; seq?: string }): string => {
+  const totals = [t.passed ? `${t.passed} passed` : '', t.failed ? `${t.failed} failed` : ''].filter(Boolean).join(', ');
+  const runs = t.seq ? stretches(t.seq) : [];
+  if (runs.length < 2) return `test runs ${totals}`;
+  if (runs.length <= 4 && t.seq!.length === t.passed + t.failed) return `test runs ${runs.join(', then ')}`;
+  return `test runs ${totals}, ending ${runs.slice(-2).join(', then ')}`;
+};
 /** A model id without its vendor prefix: claude-opus-5 is opus-5. */
 const modelName = (m: string): string => m.replace(/^claude-/, '');
 /** A tool by its own name, an MCP tool's server dropped: mcp__professor__chat_new is chat_new. */
@@ -555,11 +547,6 @@ export function renderStats(s: TurnStats, prev?: TurnStats): string {
     if (byUse.length > TOOL_NAMES_MAX) named.push(plural(byUse.length - TOOL_NAMES_MAX, 'more kind'));
     const trouble = [s.failed ? `${s.failed} failed` : '', s.denied ? `${s.denied} denied` : '', s.reruns ? `${plural(s.reruns, 'shell command')} run again unchanged` : ''].filter(Boolean);
     parts.push([`${plural(total, 'tool call')} (${named.join(', ')})`, ...trouble].join(', '));
-  }
-  if (s.agents) {
-    // Runs still going when the turn ended show only their calls so far.
-    const spent = [s.agents.tools ? plural(s.agents.tools, 'tool call') : '', s.agents.tokens ? `${count(s.agents.tokens)} tokens` : '', s.agents.tests ? testRuns(s.agents.tests) : ''].filter(Boolean).join(', ');
-    parts.push(`${s.agents.runs ? plural(s.agents.runs, 'subagent run') : 'subagents'}${spent ? `: ${spent}` : ''}`);
   }
   if (s.files) {
     const f = [s.files.read ? `${count(s.files.read)} read` : '', s.files.edited ? `${count(s.files.edited)} edited` : '', s.files.wrote ? `${count(s.files.wrote)} written` : '', s.files.deleted ? `${count(s.files.deleted)} deleted` : ''].filter(Boolean);
@@ -590,7 +577,7 @@ export function renderStats(s: TurnStats, prev?: TurnStats): string {
 
 /** The turn's numbers for the drawer's row of it: its time, its tool calls, its cost or else its tokens. */
 export function statsBrief(s: TurnStats): string {
-  const tools = Object.values(s.tools ?? {}).reduce((n, k) => n + k, 0) + (s.agents?.tools ?? 0);
+  const tools = Object.values(s.tools ?? {}).reduce((n, k) => n + k, 0);
   const spent = s.usd !== undefined ? dollars(s.usd) : s.tokens ? `${count(s.tokens.in + s.tokens.cacheRead + s.tokens.cacheWrite + s.tokens.out)} tokens` : '';
   return [span(s.ms), tools > 0 ? plural(tools, 'tool') : '', spent].filter(Boolean).join(' · ');
 }
@@ -611,11 +598,10 @@ export function turnStatsOf(v: unknown): TurnStats | null {
   const ok =
     [s.gapMs, s.requests, s.failed, s.denied, s.reruns, s.web, s.usd].every((n) => n === undefined || isCount(n)) &&
     (s.tools === undefined || (counts(s.tools, Object.keys(s.tools as object)) && Object.keys(s.tools as object).length > 0)) &&
-    (s.agents === undefined || (counts(s.agents, ['runs', 'tools', 'tokens']) && ((s.agents as { tests?: unknown }).tests === undefined || counts((s.agents as { tests: object }).tests, ['passed', 'failed'])))) &&
     (s.files === undefined || (counts(s.files, ['read', 'edited', 'wrote']) && counts(s.files, ['deleted'], true))) &&
     (s.hot === undefined || (typeof (s.hot as { file?: unknown }).file === 'string' && counts(s.hot, ['edits']))) &&
     (s.lines === undefined || (counts(s.lines, ['added', 'removed']) && counts(s.lines, ['unmeasured'], true))) &&
-    (s.tests === undefined || counts(s.tests, ['passed', 'failed'])) &&
+    (s.tests === undefined || (counts(s.tests, ['passed', 'failed']) && ((s.tests as { seq?: unknown }).seq === undefined || /^[pf]+$/.test(String((s.tests as { seq?: unknown }).seq))))) &&
     (s.git === undefined || counts(s.git, ['commits', 'pushes'])) &&
     (s.stops === undefined || counts(s.stops, ['maxTokens', 'contextFull'])) &&
     (s.tokens === undefined || counts(s.tokens, ['in', 'out', 'cacheRead', 'cacheWrite'])) &&
@@ -623,5 +609,8 @@ export function turnStatsOf(v: unknown): TurnStats | null {
     (s.effort === undefined || typeof s.effort === 'string') &&
     (s.context === undefined || counts(s.context, ['percent', 'window'])) &&
     (s.limits === undefined || counts(s.limits, ['fiveHour', 'sevenDay'], true));
-  return ok ? (s as TurnStats) : null;
+  if (!ok) return null;
+  // Numbers stored before a subagent's work was left out may still carry it: never read.
+  const { agents: _subagents, ...own } = s;
+  return own as TurnStats;
 }

@@ -28,7 +28,7 @@ export const SHORT_COMMAND_CAP = 72;
  * kept outside the step's cap), or a file under a verb, gathered with the
  * turn's other files under that verb.
  */
-export type Action = { text: string; fail?: string } | { verb: FileVerb; file: string };
+export type Action = { text: string; fail?: string; returned?: string } | { verb: FileVerb; file: string };
 export type FileVerb = 'read' | 'edited' | 'wrote' | 'searched';
 /** Why a step did not do its work: it errored (`failed`) or was refused (`denied`); `reason` one line, redacted, maybe empty. */
 export type Failure = { kind: 'failed' | 'denied'; reason: string };
@@ -100,7 +100,7 @@ export function failureReason(output: string): string {
  * arguments, flat), `failure` why it errored or was denied, null when it did
  * its work. Null for a bookkeeping tool, or a file tool with no file.
  */
-export function actionOf(call: { tool: string; [argument: string]: unknown }, failure: Failure | null): Action | null {
+export function actionOf(call: { tool: string; [argument: string]: unknown }, failure: Failure | null, output = ''): Action | null {
   const fail = failure ? (failure.reason ? `${failure.kind}: ${failure.reason}` : failure.kind) : undefined;
   const text = (t: string): Action | null => (t ? (fail === undefined ? { text: t } : { text: t, fail }) : null);
   const file = (verb: FileVerb, f: string): Action | null => (!f ? null : fail === undefined ? { verb, file: f } : text(`${INFINITIVE[verb]} ${f}`));
@@ -123,9 +123,14 @@ export function actionOf(call: { tool: string; [argument: string]: unknown }, fa
     case 'Glob':
       return file('searched', str(call.pattern).slice(0, 40));
     case 'Agent':
-    case 'Task':
-      if (background) return text(str(call.description) ? `agent in the background (reports back later): ${str(call.description)}` : 'ran an agent in the background');
-      return text(str(call.description) ? `agent: ${str(call.description)}` : 'ran an agent');
+    case 'Task': {
+      const name = str(call.description);
+      // Launched async by its flag or by the harness: its result is only the launch acknowledgement, its report comes back as a task notification.
+      if (background || /^Async agent launched/.test(output.trimStart())) return text(name ? `agent in the background (reports back later): ${name}` : 'ran an agent in the background');
+      const step = text(name ? `agent: ${name}` : 'ran an agent');
+      const report = fail === undefined ? agentReport(output) : '';
+      return step && report ? { ...step, returned: `“${name || 'an agent'}” returned: ${report}` } : step;
+    }
     case 'Skill':
       return text(`skill ${str(call.skill)}`.trim());
     case 'WebSearch':
@@ -141,6 +146,17 @@ export function actionOf(call: { tool: string; [argument: string]: unknown }, fa
   // An MCP tool by its own name, its server dropped: mcp__professor__chat_new is "chat new".
   if (call.tool.startsWith('mcp__')) return text(call.tool.split('__').slice(2).join(' ').replace(/_/g, ' '));
   return text(call.tool);
+}
+
+/** An agent's report without the resume pointer and usage block the harness appends after it. */
+function agentReport(output: string): string {
+  const resume = output.search(/^agentId: /m);
+  return (resume === -1 ? output : output.slice(0, resume)).replace(/<usage>[\s\S]*?<\/usage>/g, '').trim();
+}
+
+/** What the turn's agents returned, in order: the user sees it in the main chat, so the buddy does; their own calls it never hears of. */
+export function returnedOf(actions: readonly Action[]): string[] {
+  return actions.flatMap((a) => ('returned' in a && a.returned ? [a.returned] : []));
 }
 
 /**

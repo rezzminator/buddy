@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import {
-  DID_FILES_MAX, DID_LINE_CAP, DID_MAX, DID_TEXT_CAP, FAIL_REASON_CAP, actionOf, denialReason, didOf, failureReason, redact, type Action, type Failure,
+  DID_FILES_MAX, DID_LINE_CAP, DID_MAX, DID_TEXT_CAP, FAIL_REASON_CAP, actionOf, denialReason, didOf, failureReason, redact, returnedOf, type Action, type Failure,
 } from '../plugins/buddy/src/did.ts';
 
 const did = (...calls: [Record<string, unknown> & { tool: string }, (boolean | Failure)?][]): string[] =>
@@ -20,6 +20,19 @@ describe('a step', () => {
     expect(ran('cat /Users/x/a/b.ts')).toBe('ran cat b.ts');
     expect(ran('git -C ~/work/repo status')).toBe('ran git -C repo status');
     expect(ran('curl -s https://example.com/api/v1')).toBe('ran curl -s https://example.com/api/v1');
+  });
+  test("what an agent returned rides with its step, its resume and usage lines dropped; an agent launched async is background work, its acknowledgement no report", () => {
+    const fg = actionOf({ tool: 'Agent', description: 'Audit the diff' }, null, 'DONE: 3 findings, all fixed.\nagentId: a1b2 (for resuming to continue this agent\'s work if needed)\n<usage>total_tokens: 5</usage>');
+    expect(fg).toEqual({ text: 'agent: Audit the diff', returned: '“Audit the diff” returned: DONE: 3 findings, all fixed.' });
+    expect(didOf([fg!])).toEqual(['agent: Audit the diff']);
+    expect(returnedOf([fg!, { text: 'Run the tests' }, { verb: 'read', file: 'a.ts' }])).toEqual(['“Audit the diff” returned: DONE: 3 findings, all fixed.']);
+    const bg = actionOf({ tool: 'Agent', description: 'Audit the diff' }, null, 'Async agent launched successfully.\nagentId: a1 (internal ID - do not mention to user.)');
+    expect(bg).toEqual({ text: 'agent in the background (reports back later): Audit the diff' });
+    expect(returnedOf([bg!])).toEqual([]);
+    // A failed agent says why as any failed step; nothing returned.
+    expect(actionOf({ tool: 'Task', description: 'Audit' }, { kind: 'failed', reason: 'timed out' }, 'timed out')).toEqual({ text: 'agent: Audit', fail: 'failed: timed out' });
+    expect(actionOf({ tool: 'Agent' }, null, 'Fixed.')).toEqual({ text: 'ran an agent', returned: '“an agent” returned: Fixed.' });
+    expect(actionOf({ tool: 'Agent', description: 'Audit' }, null, '  \n')).toEqual({ text: 'agent: Audit' });
   });
   test('background work says so; a foreground call is unchanged', () => {
     expect(did([{ tool: 'Bash', command: 'npm run dev', description: 'Start the dev server', run_in_background: true }])).toEqual(['Start the dev server (in the background, reports back later)']);

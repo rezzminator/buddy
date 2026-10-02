@@ -225,7 +225,7 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
  */
 /** How a turn that was not answered or interrupted ended (Claude Code's `turn.complete` reasons). */
 export type TurnCut = 'error' | 'refusal';
-export type Turn = { prompt: string; answer: string; did?: string[]; from?: string; stats?: TurnStats; interrupted?: true; ended?: TurnCut; added?: string[] };
+export type Turn = { prompt: string; answer: string; did?: string[]; returned?: string[]; from?: string; stats?: TurnStats; interrupted?: true; ended?: TurnCut; added?: string[] };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
