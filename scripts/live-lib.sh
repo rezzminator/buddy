@@ -21,6 +21,9 @@ live_require() {
   [ -x "$CLAUDE_BIN" ] || { echo "ERROR no claude binary found (set CLAUDE_BIN)"; exit 2; }
   command -v tmux >/dev/null || { echo "ERROR tmux not found"; exit 2; }
   command -v jq >/dev/null || { echo "ERROR jq not found"; exit 2; }
+  command -v node >/dev/null || { echo "ERROR node not found"; exit 2; }
+  command -v npm >/dev/null || { echo "ERROR npm not found"; exit 2; }
+  LIVE_PATH="$(dirname "$(command -v node)"):$(dirname "$(command -v npm)"):/usr/bin:/bin:/usr/sbin:/sbin"
 }
 
 # Every session runs isolated from yours: its own config dir in the run folder
@@ -31,13 +34,27 @@ live_require() {
 # leaves no transcript, store entry or fleet row in your own config dir, and
 # every run starts on the default character with an empty store.
 # It signs in with a long-lived token from `claude setup-token`, read from
-# $BUDDY_LIVE_TOKEN_FILE (default ~/.config/buddy/live-token) at launch, never
-# written into the run folder or a command line.
+# $BUDDY_LIVE_TOKEN_FILE (default ~/.config/buddy/live-token); without one, with
+# the OAuth access token of the logged-in Claude config dir named by
+# $BUDDY_LIVE_CREDENTIALS_FROM, read from its .credentials.json with jq. Either
+# is read at each launch, never written into the run folder or a command line,
+# and the run keeps its own config dir.
 # Sets LIVE_CONFIG, PROJECTS and LIVE_CLAUDE, the launcher to run in
-# place of claude; exits 2 without a token.
+# place of claude; exits 2 with neither source.
 live_isolate() {
   local token=${BUDDY_LIVE_TOKEN_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/buddy/live-token}
-  [ -s "$token" ] || { printf '%s\n' "ERROR no sign-in token at $token: run \`claude setup-token\`, then save the token it prints there (chmod 600), or point BUDDY_LIVE_TOKEN_FILE at it" >&2; exit 2; }
+  local JQ creds token_arg
+  JQ=$(command -v jq)
+  if [ -s "$token" ]; then
+    token_arg="CLAUDE_CODE_OAUTH_TOKEN=\"\$(cat '$token')\""
+  elif [ -n "${BUDDY_LIVE_CREDENTIALS_FROM:-}" ] &&
+       creds=$BUDDY_LIVE_CREDENTIALS_FROM/.credentials.json &&
+       "$JQ" -e '.claudeAiOauth.accessToken | type == "string" and length > 0' "$creds" >/dev/null 2>&1; then
+    token_arg="CLAUDE_CODE_OAUTH_TOKEN=\"\$('$JQ' -r '.claudeAiOauth.accessToken' '$creds')\""
+  else
+    printf '%s\n' "ERROR no sign-in: no token at $token (run \`claude setup-token\`, save the token it prints there with chmod 600, or point BUDDY_LIVE_TOKEN_FILE at it), and BUDDY_LIVE_CREDENTIALS_FROM (${BUDDY_LIVE_CREDENTIALS_FROM:-unset}) is no logged-in Claude config dir: its .credentials.json holds no claudeAiOauth.accessToken" >&2
+    exit 2
+  fi
   LIVE_CONFIG=$RUN/config
   PROJECTS=$LIVE_CONFIG/projects
   mkdir -p "$LIVE_CONFIG"
@@ -48,8 +65,8 @@ live_isolate() {
   LIVE_CLAUDE=$RUN/claude
   cat > "$LIVE_CLAUDE" <<LAUNCH
 #!/bin/sh
-exec env -i HOME="\$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin" TERM="\${TERM:-xterm-256color}" COLORTERM="\${COLORTERM:-truecolor}" LANG="\${LANG:-en_US.UTF-8}" TMPDIR="\${TMPDIR:-/tmp}" \\
-  CLAUDE_CONFIG_DIR="$LIVE_CONFIG" CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 CLAUDE_CODE_OAUTH_TOKEN="\$(cat '$token')" \\
+exec env -i HOME="\$HOME" PATH="$LIVE_PATH" TERM="\${TERM:-xterm-256color}" COLORTERM="\${COLORTERM:-truecolor}" LANG="\${LANG:-en_US.UTF-8}" TMPDIR="\${TMPDIR:-/tmp}" \\
+  CLAUDE_CONFIG_DIR="$LIVE_CONFIG" CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 $token_arg \\
   '$CLAUDE_BIN' "\$@"
 LAUNCH
   chmod 700 "$LIVE_CLAUDE"
@@ -65,26 +82,41 @@ log() { echo "$(date +%T) $*" >> "$LOG"; }
 rows_of() { jq -r '[.poses[][][]] | map(gsub("^ +| +$"; "")) | map(select(length >= 4)) | unique[]' "$CHARS/$1.json"; }
 pool_of() { jq -r --arg e "$2" '.lines[$e][]? | gsub(" +"; " ")' "$CHARS/$1.json"; }
 
-# Boot: the trust dialog defaults to "No, exit", so Down then Enter; waits for the prompt, 30 s at most.
+# Boot: the trust dialog defaults to "No, exit", so Down then Enter; waits for
+# the prompt and buddy's session.start (its command registered), 30 s at most.
 live_boot() {
-  local pane
-  for _ in $(seq 1 30); do
+  local pane t0=$SECONDS
+  while [ $((SECONDS - t0)) -lt 30 ]; do
     sleep 1
     pane=$($T capture-pane -p -t "$TGT")
-    if grep -q -i 'trust' <<<"$pane"; then $T send-keys -t "$TGT" Down; sleep 1; $T send-keys -t "$TGT" Enter; log "trust accepted"; sleep 3; fi
-    if grep -q -E 'Enter to confirm' <<<"$pane"; then $T send-keys -t "$TGT" Enter; log "confirm accepted"; sleep 3; fi
+    if grep -q -F 'Yes, I trust this folder' <<<"$pane"; then
+      printf '%s\n' "$pane" > "$RUN/boot-trust.txt"
+      if grep -q -E '^ *❯.*Yes, I trust this folder' <<<"$pane"; then
+        $T send-keys -t "$TGT" Enter; log "trust accepted"; sleep 3
+      else
+        $T send-keys -t "$TGT" Down; log "trust selecting Yes"
+      fi
+      continue
+    fi
+    if grep -q -E 'Enter to confirm' <<<"$pane"; then $T send-keys -t "$TGT" Enter; log "confirm accepted"; sleep 3; continue; fi
     # The prompt glyph is followed by a space or a no-break space (U+00A0), as Claude Code draws it.
-    grep -q -E $'^ *(>|❯)( |\xc2\xa0)' <<<"$pane" && ! grep -q -i -E 'trust|Enter to confirm' <<<"$pane" && break
+    if grep -q -E $'^ *(>|❯)( |\xc2\xa0)' <<<"$pane" && grep -q '"event":"session.start"' "$RUN/buddy.log" 2>/dev/null; then return 0; fi
   done
+  pane > "$RUN/boot-timeout.txt"
+  echo "ERROR no ready buddy prompt in 30 s; pane in $RUN/boot-timeout.txt" >&2
+  exit 2
 }
 
 # -H: a config dir's projects/ may be a symlink (accounts sharing one), which find does not enter without it.
-transcript() { find -H "$PROJECTS" -maxdepth 2 -name "$ID.jsonl" 2>/dev/null | head -1; }
+# A fresh CLI has no projects/ until its first prompt: no transcript yet, never a failure (pipefail, ERR traps).
+transcript() { [ -d "$PROJECTS" ] || return 0; { find -H "$PROJECTS" -maxdepth 2 -name "$ID.jsonl" 2>/dev/null || true; } | head -1; }
 pane() { $T capture-pane -p -t "$TGT"; }
 # The bubble's text: what sits between the round border's side bars, joined.
 bubble() { pane | grep '│' | sed -n 's/.*│ *\(.*[^ ]\) *│.*/\1/p' | tr '\n' ' ' | tr -s ' '; }
 shows_any() { local p; p=$(pane); while IFS= read -r r; do [ -n "$r" ] && grep -q -F -- "$r" <<<"$p" && return 0; done < "$1"; return 1; }
-bubble_has_any() { local b; b=$(bubble); while IFS= read -r l; do [ -n "$l" ] && grep -q -F -- "$l" <<<"$b" && return 0; done < "$1"; return 1; }
+# Whether text $1 holds any line of pool file $2; a check and its evidence read one capture, never two.
+has_any() { local l; while IFS= read -r l; do [ -n "$l" ] && grep -q -F -- "$l" <<<"$1" && return 0; done < "$2"; return 1; }
+bubble_has_any() { has_any "$(bubble)" "$1"; }
 send() { $T send-keys -t "$TGT" -l "$1"; sleep 1; $T send-keys -t "$TGT" Enter; log "<- $1"; }
 # Each /buddy reply as one line (a multi-line reply joined by " / ").
 stdout_rows() {
@@ -111,7 +143,7 @@ answered() {
     b=$(bubble)
     if grep -q "couldn't answer" <<<"$b"; then echo "FAILED: $b"; return 1; fi
     grep -q 'still thinking about your last question' <<<"$b" && continue
-    [ -n "$b" ] && ! bubble_has_any "$RUN/thinking.pool" && { echo "$b"; return 0; }
+    [ -n "$b" ] && ! has_any "$b" "$RUN/thinking.pool" && { echo "$b"; return 0; }
   done
   echo "TIMEOUT: $(bubble)"; return 1
 }

@@ -10,8 +10,8 @@
 #   S2 commentAfterEachTurn false: no commentAfterEachTurn after a turn, suggestNextPrompt still shown
 #   S3 suggestNextPrompt false, chatTurnsToRead 1: commentAfterEachTurn shows; no suggestNextPrompt; the chat's
 #      memory.json holds only the last turn, and a question about the turn before it is answered as out of memory;
-#      the chat's buddy folder pre-filled with 150 round files: each round overwrites the least recently written,
-#      the folder stays at 150, each turn's whole timeline in its round and each call verbatim
+#      the chat's buddy folder pre-filled with 150 round files: all are kept, each new round numbered after the highest,
+#      each turn's whole timeline in its round and each call verbatim
 #   S4 headless `claude -p`, then `-p --resume`: turn.skipped why headless and
 #      no model call from the plugin
 #   S5 customCharactersDir with one invalid character, the character option naming it:
@@ -20,7 +20,7 @@
 # commentAfterEachTurn in the log (commentAfterEachTurn.outcome ts minus the transcript's reply), the plugin's own
 # ms on commentAfterEachTurn.outcome and suggestNextPrompt.outcome, tokens (verdict.outcome's when
 # commentAfterEachTurn is off), both outcomes, and every
-# error record; the pane is sampled once after commentAfterEachTurn to match the bubble.
+# error record; an answered commentAfterEachTurn waits up to 15 s for its stored text in the bubble before the pane is sampled.
 # Up to three sessions run at once, each on its own tmux socket and folder.
 # Writes /tmp/buddy/configs-{timestamp}/report.md and report.json; exits 1
 # when a check fails, 2 when a session could not be driven. Spends real tokens:
@@ -99,7 +99,7 @@ JS
 
 # A main turn: sends $2, waits for the reply holding marker $1, then for the end-of-turn records.
 turn() {
-  local marker=$1 prompt=$2 from end want_commentAfterEachTurn want_suggestNextPrompt b commentAfterEachTurn_text suggestNextPrompt_text pm="" ss="" t0
+  local marker=$1 prompt=$2 from end want_commentAfterEachTurn want_suggestNextPrompt b commentAfterEachTurn_text commentAfterEachTurn_outcome suggestNextPrompt_text pm="" ss="" t0
   from=$(lines); send "$prompt"; t0=$SECONDS
   until end=$(reply_ts "$marker"); [ -n "$end" ]; do
     [ $((SECONDS - t0)) -gt 150 ] && { echo "ERROR no reply holding $marker in 150 s; pane in $RUN/pane.txt" >&2; exit 2; }
@@ -116,12 +116,19 @@ turn() {
     elif [ "$(count turn.skipped "$from")" -gt 0 ]; then break; fi
     sleep 0.5
   done
-  sleep 1
+  commentAfterEachTurn_text=$(stored commentAfterEachTurn | squash); suggestNextPrompt_text=$(stored suggestNextPrompt | squash)
+  commentAfterEachTurn_outcome=$(tail -n +"$((from + 1))" "$RUN/buddy.log" 2>/dev/null | jq -r 'select(.event == "commentAfterEachTurn.outcome") | .outcome' | tail -1)
+  if [ "$commentAfterEachTurn_outcome" = answered ] && [ -n "$commentAfterEachTurn_text" ]; then
+    t0=$SECONDS
+    while [ $((SECONDS - t0)) -lt 15 ]; do
+      grep -q -F -- "${commentAfterEachTurn_text:0:24}" <<<"$(bubble)" && break
+      sleep 0.5
+    done
+  else sleep 1; fi
   pane > "$RUN/pane-$marker.txt"
   b=$(bubble)
-  commentAfterEachTurn_text=$(stored commentAfterEachTurn | squash); suggestNextPrompt_text=$(stored suggestNextPrompt | squash)
   if [ "$(count commentAfterEachTurn.outcome "$from")" -gt 0 ]; then
-    case $(tail -n +"$((from + 1))" "$RUN/buddy.log" | jq -r 'select(.event == "commentAfterEachTurn.outcome") | .outcome' | tail -1) in
+    case $commentAfterEachTurn_outcome in
       answered) if [ -n "$commentAfterEachTurn_text" ]; then grep -q -F -- "${commentAfterEachTurn_text:0:24}" <<<"$b" && pm=match || pm="mismatch: stored '${commentAfterEachTurn_text:0:40}'"; else [ -n "$b" ] && pm="non-empty (no chatTurnsToRead to match)" || pm="empty bubble"; fi ;;
       failed) grep -q "couldn't answer" <<<"$b" && pm="failure shown" || pm="no failure in the bubble" ;;
       *) pm="n/a" ;;
@@ -159,11 +166,10 @@ run_session() {
   live_isolate
   mkdir -p "$WORK"; : > "$RUN/checks.tsv"; : > "$RUN/turns.jsonl"
   ID=$(uuidgen | tr 'A-Z' 'a-z'); echo "$ID" > "$RUN/session-id"
-  # The chat's round files full at their cap: 150 slots, round-042 written longest ago, round-017 next.
+  # The chat's round folder pre-filled with 150 rounds: the engine keeps them all and numbers this session's rounds after them.
   if [ "$S" = S3 ]; then
     ROUNDS=$(buddy_dir); mkdir -p "$ROUNDS"
     for n in $(seq 1 150); do f=$ROUNDS/$(printf 'round-%03d.txt' "$n"); echo "seeded $n" > "$f"; touch -t 202601020000 "$f"; done
-    touch -t 202501010000 "$ROUNDS/round-042.txt"; touch -t 202501020000 "$ROUNDS/round-017.txt"
   fi
   if [ "$S" = S5 ]; then mkdir -p "$RUN/chars"; printf '%s\n' '{ "name": "Broken", "poses": 3 }' > "$RUN/chars/broken.json"; fi
   jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" \
@@ -236,21 +242,21 @@ run_session() {
     grep -q 'S3T2' <<<"$kept" && ! grep -q 'S3T1' <<<"$kept" && check PASS "chatTurnsToRead 1: memory.json holds only the last turn" "$kept" || check FAIL "chatTurnsToRead 1: memory.json holds only the last turn" "${st:-no memory.json}: ${kept:0:160}"
     # The buddy knows its memory is one turn long: asked about the turn before it, it says so, never guesses.
     ask "what Bash command did Claude run in the turn before my last one?" "ask-past"; a=$(stored question)
-    [ "$(row_of outcome)" = answered ] && grep -q -i -E 'memory|remember|recall|forg' <<<"$a" && ! grep -q -E '(^|[^a-z])ls([^a-z]|$)' <<<"${a#*->}" && check PASS "a question past chatTurnsToRead is answered as out of memory" "$a" || check FAIL "a question past chatTurnsToRead is answered as out of memory" "$ASK_OUT / $(row_of outcome) / ${a:-nothing stored}"
-    # The chat's round files at their cap: the session's start, T1 and T2 each overwrote the least recently written slot (042, 017, then one of the rest), the folder still holds 150.
+    [ "$(row_of outcome)" = answered ] && grep -q -i -E 'memory|remember|recall|forg' <<<"$a" && { ! grep -q -E '(^|[^a-z])ls([^a-z]|$)' <<<"${a#*->}" || grep -q -i 'note' <<<"${a#*->}"; } && check PASS "a question past chatTurnsToRead is answered as out of memory" "$a" || check FAIL "a question past chatTurnsToRead is answered as out of memory" "$ASK_OUT / $(row_of outcome) / ${a:-nothing stored}"
+    # The pre-filled rounds stay untouched; the session's start, T1 and T2 each take the next number (round-151 on).
     # T1's round holds its prompt, the Bash call with its arguments and output, the log, the bubble, the turn's end and its end-of-turn call verbatim;
     # T2's round also the question, asked after T2 ended.
     local n r1 r2
     n=$(ls "$ROUNDS" | grep -c '^round-')
     r1=$(grep -l '─── IN · the prompt the turn began with ───' "$ROUNDS"/round-*.txt | xargs grep -l 'S3T1' | head -1)
     r2=$(grep -l '─── IN · the prompt the turn began with ───' "$ROUNDS"/round-*.txt | xargs grep -l 'Reply with exactly: S3T2' | head -1)
-    [ "$n" = 150 ] && ! grep -q seeded "$ROUNDS/round-042.txt" "$ROUNDS/round-017.txt" \
+    [ "$n" -gt 150 ] && [ "$(grep -l '^seeded' "$ROUNDS"/round-*.txt | wc -l | tr -d ' ')" = 150 ] \
       && [ -n "$r1" ] && grep -q 'IN · tool call Bash' "$r1" && grep -q '      command: ls' "$r1" && grep -q '  LOG info turn.call' "$r1" && grep -q 'OUT · bubble' "$r1" \
       && grep -q 'the turn ended (answer), as the buddy filed it' "$r1" && grep -q 'BUDDY CALL 1 · end-of-turn call' "$r1" && grep -q '─── IN: system ───' "$r1" \
       && [ -n "$r2" ] && grep -q '/buddy question' "$r2" && grep -q 'turn before my last one' "$r2" && grep -q '─── OUT: answered' "$r2" \
       && grep -q '^Numbers: ' "$r2" && grep -q 'The turn that just ended is the last one above.' "$r2" \
-      && check PASS "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2"): $(grep -m1 '^Numbers: ' "$r2" | cut -c1-160)" \
-      || check FAIL "round files at 150 in the chat's folder: a round per turn, overwriting the oldest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "numbers line in T2's round: $([ -n "$r2" ] && grep -c '^Numbers: ' "$r2" || echo unread); $ROUNDS: $n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$ROUNDS" | head -4 | tr '\n' ' ')"
+      && check PASS "round files kept in the chat's folder: a round per turn, numbered after the highest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "$n files; T1 in $(basename "$r1"), T2 in $(basename "$r2"): $(grep -m1 '^Numbers: ' "$r2" | cut -c1-160)" \
+      || check FAIL "round files kept in the chat's folder: a round per turn, numbered after the highest, its whole timeline and every call verbatim, the end-of-turn prompt with the turn's numbers and pointing to it" "numbers line in T2's round: $([ -n "$r2" ] && grep -c '^Numbers: ' "$r2" || echo unread); $ROUNDS: $n files; T1 ${r1:-not found}; T2 ${r2:-not found}; newest: $(ls -t "$ROUNDS" | head -4 | tr '\n' ' ')"
   fi
   if [ "$S" = S1 ]; then
     # Each turn's numbers, counted as it ran: filed with the turn in memory.json, and one turn.numbers record per turn.

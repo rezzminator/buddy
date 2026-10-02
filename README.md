@@ -530,6 +530,7 @@ npm test              # unit tests (vitest) and function-hook tests (claude plug
 npm run typecheck
 npm run validate:plugin
 claude setup-token    # once, for the live scripts: save the token to ~/.config/buddy/live-token (chmod 600)
+                     # or set BUDDY_LIVE_CREDENTIALS_FROM to a logged-in Claude config dir (e.g. ~/.claude): its access token is read at each launch
 npm run live          # live proof in tmux, spends a few cents of Haiku
 npm run live:configs  # five sessions, one per configuration, every turn measured; report in /tmp/buddy/configs-*/
 npm run live:drawer   # one session: two turns, a question, then /buddy opens the drawer, kept and closed with ctrl+x q; screen in /tmp/buddy/drawer-*/

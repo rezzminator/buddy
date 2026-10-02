@@ -91,6 +91,8 @@ persona_of() { jq -r '.persona | gsub("\\s+"; " ") | .[0:40]' "$CHARS/$1.json"; 
 name_of() { jq -r '.name' "$CHARS/$1.json"; }
 DEF_NAME=$(name_of "$DEFAULT")
 in_pane() { pane | grep -q -F -- "$1"; }
+# The live drawer's framed guide, never a shortcut quoted in an old command reply.
+drawer_open() { pane | grep -q -E '^│.*ctrl\+x q close'; }
 index_of() { grep -n -x -- "$1" <<<"$IDS" | cut -d: -f1; }
 # The newest menu's Shipped group as drawn, or nothing when no menu is drawn.
 shipped() { pane | awk '/Shipped/ { buf = ""; on = 1 } on { buf = buf $0 "\n" } /Yours/ { on = 0 } END { printf "%s", buf }'; }
@@ -160,16 +162,27 @@ out=$(command_out "/buddy what is your favourite tool") || exit 2
 got=$(answered); v=$?
 if [ $v -eq 0 ] && grep -q 'Asked' <<<"$out"; then add "(d) question before a reply" PASS "$got"; else add "(d) question before a reply" FAIL "$out / $got"; fi
 
-send "Run this Bash command: npm test. Then reply with exactly: T1"
+# A model answer holds the bubble for 15 s; tool words roll at one in three.
+# Let that answer expire, then require a real testPass line within 24 test turns.
+sleep 16
 seen=""
-for _ in $(seq 1 180); do
-  sleep 0.5
-  [ -z "$seen" ] && bubble_has_any "$RUN/testpass.pool" && { seen=$(bubble); pane > "$RUN/e.txt"; }
-  f=$(transcript)
-  [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("T1"))' "$f" >/dev/null 2>&1 && [ -n "$seen" ] && break
+for attempt in $(seq 1 24); do
+  marker="T1-$attempt"
+  send "Run this Bash command: npm test. Then reply with exactly: $marker"
+  done_at=-1
+  for _ in $(seq 1 180); do
+    sleep 0.5
+    if [ -z "$seen" ]; then b=$(bubble); has_any "$b" "$RUN/testpass.pool" && { seen=$b; pane > "$RUN/e.txt"; }; fi
+    f=$(transcript)
+    if [ -n "$f" ] && jq -e --arg marker "$marker" 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains($marker))' "$f" >/dev/null 2>&1; then
+      [ "$done_at" -ge 0 ] || done_at=$SECONDS
+      { [ -n "$seen" ] || [ $((SECONDS - done_at)) -ge 3 ]; } && break
+    fi
+  done
+  [ "$done_at" -ge 0 ] || { echo "ERROR no reply holding $marker in 90 s; pane in $RUN/pane.txt" >&2; exit 2; }
+  [ -n "$seen" ] && break
 done
-[ -n "$(transcript)" ] || { echo "ERROR no transcript for $ID under $PROJECTS"; exit 2; }
-if [ -n "$seen" ]; then add "(e) a test pass shows a testPass line" PASS "$seen"; else add "(e) a test pass shows a testPass line" FAIL "no testPass line seen"; fi
+if [ -n "$seen" ]; then add "(e) a test pass shows a testPass line" PASS "$seen"; else add "(e) a test pass shows a testPass line" FAIL "no testPass line seen in 24 test turns"; fi
 sleep 7
 
 out=$(command_out "/buddy what did we just run") || exit 2
@@ -208,11 +221,11 @@ if lit | grep -q -F "($DEFAULT)" && in_pane "$(about_of "$DEFAULT")"; then add "
 else add "(i) Up goes back to $DEFAULT" FAIL "pane in $RUN/i-back.txt"; fi
 $T send-keys -t proof Escape; sleep 2
 pane > "$RUN/i-esc.txt"
-if ! in_pane "Shipped" && in_pane "ctrl+x q close"; then add "(i) Esc closes the pane, the drawer open" PASS "no list, the drawer's guide drawn"
+if ! in_pane "Shipped" && drawer_open; then add "(i) Esc closes the pane, the drawer open" PASS "no list, the drawer's guide drawn"
 else add "(i) Esc closes the pane, the drawer open" FAIL "pane in $RUN/i-esc.txt"; fi
 $T send-keys -t proof C-x q; sleep 2
 pane > "$RUN/i-close.txt"
-if ! in_pane "ctrl+x q close" && shows_any "$RUN/default.rows"; then add "(i) ctrl+x q folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
+if ! drawer_open && shows_any "$RUN/default.rows"; then add "(i) ctrl+x q folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
 else add "(i) ctrl+x q folds it, $DEFAULT drawn" FAIL "pane in $RUN/i-close.txt"; fi
 picker_open
 if step_to "$PICK" && in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi
