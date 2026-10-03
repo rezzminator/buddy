@@ -1360,7 +1360,7 @@ describe('hook paths', () => {
     // Turn 1 and its comment and suggestion are gone together; turn 2 is the oldest remembered, its own comment and suggestion under it.
     // Turn 1's suggestion stays only as what was in the box when turn 2 was sent.
     expect(p).not.toMatch(/ask number 1\b|comment on 1\.|you suggested the user's next prompt: next after 1\b/);
-    expect(p).toContain("Turn 2. The user asked Claude:\nsuggested: next after 1\nsent: ask number 2\nClaude answered:\nreply number 2\n- After this turn, you commented: comment on 2.\n  With it, you suggested the user's next prompt: next after 2\n\nTurn 3. The user asked Claude:\nsuggested: next after 2\nsent: ask number 3");
+    expect(p).toContain("Turn 2. The user asked Claude:\nsuggested: (not taken; Claude saw only sent) next after 1\nsent: ask number 2\nClaude answered:\nreply number 2\n- After this turn, you commented: comment on 2.\n  With it, you suggested the user's next prompt: next after 2\n\nTurn 3. The user asked Claude:\nsuggested: (not taken; Claude saw only sent) next after 2\nsent: ask number 3");
     expect(p.endsWith("- After this turn, you commented: comment on 5.\n  With it, you suggested the user's next prompt: next after 5\n\nThe user asks you directly: what did you say about the first turn?")).toBe(true);
     // The store holds the same four turns, never more.
     expect((memory(w) as { blocks: { turnId?: string }[] }).blocks.map((b) => b.turnId)).toEqual(['t2', 't3', 't4', 't5']);
@@ -1762,8 +1762,36 @@ describe('a taken suggestion', () => {
     // The box's suggestion was answered: the same words typed later are the user's.
     await $.turn.complete({ reason: 'answer', answer: 'Green.', isAborted: false, turnId: 't2' } as never);
     await w.clock.settle();
-    expect(w.completes[1]!.prompt).toContain('Turn 2. The user asked Claude:\nsuggested: run the tests\nsent: please run the tests\n');
+    expect(w.completes[1]!.prompt).toContain('Turn 2. The user asked Claude:\nsuggested: (not taken; Claude saw only sent) run the tests\nsent: please run the tests\n');
     expect(records(w).filter((r) => r.event === 'suggestNextPrompt.taken')).toHaveLength(0);
+    await ui.unmount();
+  });
+});
+
+describe('a repeated suggestion', () => {
+  test('a near-repeat of one the user passed over is held back and logged; a distinct one shows, and one the user took may come again', async ($, on) => {
+    const close = 'Stop the flight-watch timer now, then tell me what else must close before a runbook relaunch';
+    const list = 'Stop the flight-watch timer, then list every chat that must close before the M7 runbook relaunch';
+    const reply = (s: string) => ({ isAnswered: true, text: `COMMENT_AFTER_EACH_TURN: Hm.\nSUGGEST_NEXT_PROMPT: ${s}` });
+    const w = world(on, { character: 'fixy' }, { queue: [reply(close), reply(list), reply('run the tests'), reply('run the tests')] });
+    await $.session.start(START);
+    const ui = await band($);
+    const turn = async (text: string, id: string) => {
+      await prompt($, text, id);
+      await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: id } as never);
+      await w.clock.settle();
+    };
+    await turn('watch the flight', 't1');
+    expect(w.suggested).toEqual([close]);
+    // Passed over: the next suggestion asks nearly the same, and never reaches the prompt box.
+    await turn('how is the flight going?', 't2');
+    expect(w.suggested).toEqual([close]);
+    expect(records(w).filter((r) => r.event === 'suggestNextPrompt.outcome').map((r) => r.outcome)).toEqual(['shown', 'repeat']);
+    // A distinct one shows; taken, the same again shows too.
+    await turn('and now?', 't3');
+    await turn('run the tests', 't4');
+    expect(w.suggested).toEqual([close, 'run the tests', 'run the tests']);
+    expect(records(w).filter((r) => r.event === 'suggestNextPrompt.outcome').map((r) => r.outcome)).toEqual(['shown', 'repeat', 'shown', 'shown']);
     await ui.unmount();
   });
 });
@@ -3721,3 +3749,43 @@ describe('promptWhenIdle', () => {
   });
 });
 
+
+describe('a call a reload abandoned', () => {
+  const callsFile = () => `${chatDir()}/calls.json`;
+  const outcomes = (w: { files: Record<string, string> }) => records(w).filter((r) => r.event === 'call.outcome');
+  const kept = (w: { files: Record<string, string> }) => JSON.parse(w.files[callsFile()]!);
+
+  test('a call kept from before the load logs one abandoned outcome, and a second load logs none', async ($, on) => {
+    // The kit's clock answers `$.clock` only: the adapter's Date.now() is the real one, and so is this.
+    const at = Date.now() - 8_000;
+    const w = world(on, {}, {}, { files: { [callsFile()]: JSON.stringify({ version: 1, calls: [{ id: 'old', kind: 'endOfTurn', at, turnId: 't9' }] }) } });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(outcomes(w)).toMatchObject([{ outcome: 'abandoned', kind: 'endOfTurn', turnId: 't9' }]);
+    expect(outcomes(w)[0].ms).toBeGreaterThanOrEqual(8_000);
+    expect(kept(w)).toEqual({ version: 1, calls: [] });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(outcomes(w)).toHaveLength(1);
+  });
+
+  test('an end-of-turn call is kept while it runs, never abandoned by a load meanwhile, and dropped when it ends', async ($, on) => {
+    const w = world(on, {}, { completeDelayMs: 5_000 });
+    await $.session.start(START);
+    await prompt($, 'fix it', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'A', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(1);
+    expect(kept(w).calls).toMatchObject([{ kind: 'endOfTurn', turnId: 't1' }]);
+    // A load while it runs: the call is this load's own, still running.
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(kept(w).calls).toHaveLength(1);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(kept(w)).toEqual({ version: 1, calls: [] });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(outcomes(w)).toEqual([]);
+  });
+});

@@ -98,18 +98,63 @@ const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
 /** `command`: the Bash command; its output is a test result only when it runs a test runner. */
 export type ToolCall = { tool: string; isError: boolean; denied: boolean; output: string; command?: string };
 
+/** A command's segments split at `&&`, `||`, `;`, `|` and newlines outside quotes, each with the separator before it. */
+export function segments(command: string): { sep: string; text: string }[] {
+  const out: { sep: string; text: string }[] = [];
+  let sep = '';
+  let text = '';
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (quote) {
+      if (c === quote) quote = '';
+      text += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      text += c;
+    } else {
+      const two = command.slice(i, i + 2);
+      const s = two === '&&' || two === '||' ? two : c === ';' || c === '|' || c === '\n' ? c : '';
+      if (!s) text += c;
+      else {
+        out.push({ sep, text: text.trim() });
+        sep = s;
+        text = '';
+        i += s.length - 1;
+      }
+    }
+  }
+  out.push({ sep, text: text.trim() });
+  return out.filter((g) => g.text !== '');
+}
+
+/**
+ * Whether a failed Bash call's tests passed and a later command of its chain
+ * failed: its last test runner's segment (TEST_RUNNER, in the command's first
+ * COMMAND_CAP characters) is followed by a command it does not pipe into, and
+ * its output, color codes stripped, has a pass summary line and no fail one.
+ */
+export function passedThenLaterFailed(output: string, command: string): boolean {
+  const out = output.replace(ANSI, '');
+  if (!TEST_PASS.test(out) || TEST_FAIL.test(out)) return false;
+  const g = segments(command.slice(0, COMMAND_CAP));
+  const runner = g.findLastIndex((s) => TEST_RUNNER.test(s.text));
+  return runner >= 0 && g.slice(runner + 1).some((s) => s.sep !== '|');
+}
+
 /**
  * A denied or failed call is `toolFail`; the output of a Bash test runner
  * (TEST_RUNNER, on the command's first COMMAND_CAP characters), color codes
  * stripped, with a fail summary line is `testFail`, with a pass one and no fail
- * one `testPass`; any other command's output is no test result.
+ * one `testPass`, unless the call failed and no later command of its chain
+ * did (passedThenLaterFailed); any other command's output is no test result.
  */
 export function classifyToolCall(c: ToolCall): Outcome | null {
   if (c.denied) return 'toolFail';
   if (c.tool === 'Bash' && TEST_RUNNER.test((c.command ?? '').slice(0, COMMAND_CAP))) {
     const out = c.output.replace(ANSI, '');
     if (TEST_FAIL.test(out)) return 'testFail';
-    if (TEST_PASS.test(out)) return c.isError ? 'toolFail' : 'testPass';
+    if (TEST_PASS.test(out)) return c.isError && !passedThenLaterFailed(c.output, c.command ?? '') ? 'toolFail' : 'testPass';
   }
   return c.isError ? 'toolFail' : null;
 }

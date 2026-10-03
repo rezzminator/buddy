@@ -278,6 +278,15 @@ describe('render', () => {
     const b = addTurn([], 't1', { prompt: 'run the tests now', answer: 'Ran.', suggested: 'run the tests' }, 4);
     expect(render(b, 'cat', 4)).toContain('Turn 1. The user asked Claude:\nsuggested: run the tests\nsent: run the tests now\n');
   });
+  test("a suggestion the user did not take is marked not taken, Claude having seen only what was sent; a taken one, unedited or extended, is not", () => {
+    const not = render(addTurn([], 't1', { prompt: "It's from buddy, do it", answer: 'Done.', suggested: 'Go. Then draft the transfer correction' }, 4), 'cat', 4);
+    expect(not).toContain("Turn 1. The user asked Claude:\nsuggested: (not taken; Claude saw only sent) Go. Then draft the transfer correction\nsent: It's from buddy, do it\n");
+    const edited = render(addTurn([], 't1', { prompt: 'please keep main safe', answer: 'Ok.', suggested: 'keep main safe' }, 4), 'cat', 4);
+    expect(edited).toContain('suggested: (not taken; Claude saw only sent) keep main safe\nsent: please keep main safe\n');
+    for (const prompt of ['keep main safe', 'Keep main safe.', 'keep main safe, never push']) {
+      expect(render(addTurn([], 't1', { prompt, answer: 'Ok.', suggested: 'keep main safe' }, 4), 'cat', 4)).toContain(`suggested: keep main safe\nsent: ${prompt}\n`);
+    }
+  });
   test('a user turn sent with no suggestion in the box shows none', () => {
     expect(render(addTurn([], 't1', turn('build it'), 4), 'cat', 4)).toContain('Turn 1. The user asked Claude:\nsuggested: none\nsent: build it\n');
   });
@@ -287,14 +296,14 @@ describe('render', () => {
     expect(r).toContain('Turn 1. The user asked Claude:\nsuggested: token saved, run the proof\nsent: token saved, run the proof\n');
     expect(r).not.toContain('your own suggested prompt, unedited');
   });
-  test("an older user turn cuts its suggestion to the story head and tail, what was sent to the user's story head and tail", () => {
+  test("an older user turn cuts its suggestion to the story head and tail, what was sent to the user's story head and tail, a suggestion not taken still marked", () => {
     const many = (tag: string, n = 200): string => Array.from({ length: n }, (_, i) => `${tag}${i}`).join(' ');
     const ask = many('ask');
     const said = many('said', 800);
     let b = addTurn([], 't1', { prompt: said, answer: 'One.', suggested: ask }, 4);
     b = addTurn(b, 't2', turn('next'), 4);
     const r = render(b, 'cat', 4);
-    expect(r).toContain(`Turn 1. The user asked Claude:\nsuggested: ${ask.slice(0, STORY_PROMPT_HEAD)} [cut] ${ask.slice(-STORY_PROMPT_TAIL)}\nsent: ${said.slice(0, STORY_USER_PROMPT_HEAD)} [cut] ${said.slice(-STORY_USER_PROMPT_TAIL)}\n`);
+    expect(r).toContain(`Turn 1. The user asked Claude:\nsuggested: (not taken; Claude saw only sent) ${ask.slice(0, STORY_PROMPT_HEAD)} [cut] ${ask.slice(-STORY_PROMPT_TAIL)}\nsent: ${said.slice(0, STORY_USER_PROMPT_HEAD)} [cut] ${said.slice(-STORY_USER_PROMPT_TAIL)}\n`);
   });
   test('a prompt not the user\'s shows no suggestion line', () => {
     const r = render(addTurn([], 't1', { ...turn('fix it'), from: 'peer' }, 4), 'cat', 4);

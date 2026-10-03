@@ -55,6 +55,13 @@ describe('classifyToolCall', () => {
   });
   test('a pass pattern in a failed call is a tool failure', () => {
     expect(classifyToolCall(bash('5 passed\nsegfault', true))).toBe('toolFail');
+    expect(classifyToolCall({ tool: 'Bash', isError: true, denied: false, output: '5 passed\ncoverage below 80%', command: 'npx vitest run --coverage | tee out.log' })).toBe('toolFail');
+  });
+  test('a test run that passed before a later command of its chain failed is a pass; a failing one still fails', () => {
+    const command = `./scripts/dev.sh iso run 'go -C tool test -count=1 -run "TestConfigShow" ./cmd/tool/' 2>&1 | tail -3; make -C tool build 2>&1 | tail -1; ls tool/tmp/bin/`;
+    const output = "Exit code 2\nok  \texample.com/tool/cmd/tool\t4.790s\n\nall steps passed.\nmake: Leaving directory 'tool'\nls: cannot access 'tool/tmp/bin/': No such file or directory";
+    expect(classifyToolCall({ tool: 'Bash', isError: true, denied: false, output, command })).toBe('testPass');
+    expect(classifyToolCall({ tool: 'Bash', isError: true, denied: false, output: output.replace('ok  ', 'FAIL'), command })).toBe('testFail');
   });
   test('only Bash is read for tests; plain success is nothing', () => {
     expect(classifyToolCall({ tool: 'Read', isError: false, denied: false, output: '12 passed' })).toBeNull();

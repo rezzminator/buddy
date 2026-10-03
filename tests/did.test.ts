@@ -26,6 +26,12 @@ describe('a step', () => {
     expect(ran('git -C ~/work/repo status')).toBe('ran git -C repo status');
     expect(ran('curl -s https://example.com/api/v1')).toBe('ran curl -s https://example.com/api/v1');
   });
+  test('a path whose last part another word of the command shares stays whole', () => {
+    const ran = (command: string): string | undefined => did([{ tool: 'Bash', command }])[0];
+    expect(ran('ls -d tmp app/tmp 2>&1')).toBe('ran ls -d tmp app/tmp 2>&1');
+    expect(ran('diff a/x.ts b/x.ts')).toBe('ran diff a/x.ts b/x.ts');
+    expect(ran('ls -d tmp app/tmp/bin')).toBe('ran ls -d tmp bin');
+  });
   test("what an agent returned rides with its step, its resume and usage lines dropped; an agent launched async is background work, its acknowledgement no report", () => {
     const fg = actionOf({ tool: 'Agent', description: 'Audit the diff' }, null, 'DONE: 3 findings, all fixed.\nagentId: a1b2 (for resuming to continue this agent\'s work if needed)\n<usage>total_tokens: 5</usage>');
     expect(fg).toEqual({ text: 'agent: Audit the diff', returned: '“Audit the diff” returned (5 tokens · report 28 chars): DONE: 3 findings, all fixed.' });
@@ -133,6 +139,30 @@ describe('a failed or denied step', () => {
     expect(sized).toBe(`${'z'.repeat(DID_TEXT_CAP - 6)} [cut] [call 250 · output 40 chars] (failed: boom)`);
     const worst = didOf([actionOf({ tool: 'Bash', command: 'a', description: 'z'.repeat(200) }, { kind: 'denied', reason: denialReason('d'.repeat(300)) }, '', { size: { call: 999_499, output: 999_499 } })!])[0]!;
     expect(worst.length).toBeLessThanOrEqual(DID_LINE_CAP);
+  });
+});
+
+describe('a test run that passed before a later command of its chain failed', () => {
+  // The audited case: the go test passed, then a trailing `ls` exited 2.
+  const command = `./scripts/dev.sh iso run 'go -C tool test -count=1 -run "TestConfigShow" ./cmd/tool/' 2>&1 | tail -3; make -C tool build 2>&1 | tail -1; ls tool/tmp/bin/`;
+  const output = "Exit code 2\nok  \texample.com/tool/cmd/tool\t4.790s\n\nall steps passed.\nmake: Leaving directory 'tool'\nls: cannot access 'tool/tmp/bin/': No such file or directory";
+  test('its reason says the tests passed and a later command failed, with its exit and error line', () => {
+    expect(failureReason(output, command)).toMatch(/^tests passed, a later command failed \(exit 2\): ls: cannot access 'tool\/tmp\/bin\/'/);
+  });
+  test('its step is never marked failed', () => {
+    const step = did([{ tool: 'Bash', command, description: 'Run TestConfigShow, build, list the binaries' }, { kind: 'failed', reason: failureReason(output, command) }])[0]!;
+    expect(step).toMatch(/^Run TestConfigShow, build, list the binaries \(tests passed, a later command failed \(exit 2\): ls: cannot access/);
+    expect(step).not.toContain('failed: ');
+  });
+  test('an exit 1 from a trailing check after the passing tests names the check', () => {
+    expect(failureReason('Exit code 1\nok  \texample.com/tool\t0.1s', 'go test ./... && grep -q done out.log')).toBe('tests passed, then exit 1 from its last check (`grep -q done out.log`)');
+  });
+  test('a plain failing test still reads as failed', () => {
+    const red = failureReason(output.replace('ok  ', 'FAIL'), command);
+    expect(red).toMatch(/^exit 2: FAIL example\.com\/tool\/cmd\/tool/);
+    expect(did([{ tool: 'Bash', command, description: 'Run the test' }, { kind: 'failed', reason: red }])[0]).toContain('(failed: exit 2: FAIL');
+    expect(failureReason('Exit code 1\n5 passed\nError: coverage below 80%', 'npx vitest run --coverage')).toBe('exit 1: Error: coverage below 80%');
+    expect(failureReason('Exit code 1\n5 passed\nError: coverage below 80%', 'npx vitest run --coverage | tee out.log')).toBe('exit 1: Error: coverage below 80%');
   });
 });
 

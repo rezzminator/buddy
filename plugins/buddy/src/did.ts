@@ -12,6 +12,7 @@
 // is marked `[cut]` (src/cuts.ts).
 
 import { CUT, cutBrief, cutReport } from './cuts.ts';
+import { TEST_PASS, passedThenLaterFailed, segments } from './reactions.ts';
 import { count, span } from './stats.ts';
 
 /** The most steps kept of one turn: past it the first few and the last stay, the middle is counted. */
@@ -60,16 +61,21 @@ const fileName = (v: unknown): string => str(v).replace(/\/+$/, '').split('/').p
 /** `s` at most `n` characters: past it, its start and a ` [cut]` mark, `n` in all. */
 const cut = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - CUT.length - 1)} ${CUT}` : s);
 
+/** A path in a shell command: it starts at a word's start, so nothing before it is glued on. */
+const PATH = /(?<![\w.~:/-])[\w.~-]*(?:\/[\w.~-]+)+\/?/g;
+/** A path's last part; a lone `/tmp` stays whole. */
+const lastPart = (path: string): string => (/^\/[\w.~-]+\/?$/.test(path) ? path : (path.replace(/\/+$/, '').split('/').pop() ?? path));
+
 /**
  * A shell command without its leading `cd`s, every path cut to its last part
- * (a path starts at a word's start, so nothing before it is glued on; a URL
- * stays whole; a lone `/tmp` stays), at most SHORT_COMMAND_CAP characters.
+ * (PATH; a URL stays whole), unless another word of the command would then
+ * read the same (`ls -d tmp app/tmp` stays whole), at most SHORT_COMMAND_CAP characters.
  */
 function shortCommand(command: string): string {
-  const c = command
-    .replace(/^(cd \S+ *(&&|;) *)+/, '')
-    .replace(/(?<![\w.~:/-])[\w.~-]*(?:\/[\w.~-]+)+\/?/g, (path) => (/^\/[\w.~-]+\/?$/.test(path) ? path : (path.replace(/\/+$/, '').split('/').pop() ?? path)));
-  return cut(c, SHORT_COMMAND_CAP);
+  const c = command.replace(/^(cd \S+ *(&&|;) *)+/, '');
+  const words = new Map<string, number>();
+  for (const w of c.replace(PATH, lastPart).split(/[\s'"=]+/)) words.set(w, (words.get(w) ?? 0) + 1);
+  return cut(c.replace(PATH, (path) => ((words.get(lastPart(path)) ?? 0) > 1 ? path : lastPart(path))), SHORT_COMMAND_CAP);
 }
 
 /** Secrets a reason must never carry, each to `[redacted]`. */
@@ -90,36 +96,6 @@ export function denialReason(deny: string): string {
   return cut(redact(oneSpaced(deny)), FAIL_REASON_CAP);
 }
 
-/** A command's segments split at `&&`, `||`, `;`, `|` and newlines outside quotes, each with the separator before it. */
-function segments(command: string): { sep: string; text: string }[] {
-  const out: { sep: string; text: string }[] = [];
-  let sep = '';
-  let text = '';
-  let quote = '';
-  for (let i = 0; i < command.length; i++) {
-    const c = command[i]!;
-    if (quote) {
-      if (c === quote) quote = '';
-      text += c;
-    } else if (c === "'" || c === '"') {
-      quote = c;
-      text += c;
-    } else {
-      const two = command.slice(i, i + 2);
-      const s = two === '&&' || two === '||' ? two : c === ';' || c === '|' || c === '\n' ? c : '';
-      if (!s) text += c;
-      else {
-        out.push({ sep, text: text.trim() });
-        sep = s;
-        text = '';
-        i += s.length - 1;
-      }
-    }
-  }
-  out.push({ sep, text: text.trim() });
-  return out.filter((g) => g.text !== '');
-}
-
 const CHECK = /^(?:grep|test|diff|cmp|\[\[?)(?:\s|$)/;
 const PRINTS = /^(?:echo|printf|cat|head|tail)(?:\s|$)/;
 
@@ -138,12 +114,19 @@ function lastCheck(command: string): string | null {
   return last.sep === '&&' && PRINTS.test(last.text) && before && CHECK.test(before.text) ? before.text : null;
 }
 
+/** How the reason of a failed test command whose tests passed starts (passedThenLaterFailed): its step is never marked failed. */
+export const TESTS_PASSED = 'tests passed, ';
+
 /**
  * Why a failed tool call failed, from its output: colors gone, the first line
  * that names an error (else the last line), after `exit N: ` when the output
  * gave an exit code; one line, redacted, at most FAIL_REASON_CAP. Empty for
  * an empty output. Given the Bash `command`, an exit 1 from the check it ends
  * on (lastCheck) reads `exit 1 from its last check (`{check, cut to 40}`)`.
+ * When its tests passed and a later command of the chain failed
+ * (passedThenLaterFailed), it reads `tests passed, a later command failed (exit N)`,
+ * or `tests passed, then exit 1 from its last check (…)`, its line read only
+ * after the last pass summary line.
  */
 export function failureReason(output: string, command = ''): string {
   let exit: string | null = null;
@@ -152,9 +135,14 @@ export function failureReason(output: string, command = ''): string {
     if (m) exit = m[1] ?? null;
     return l !== '' && !m;
   });
-  const line = lines.find((l) => /error|fail|fatal|denied|not found|no such|cannot|can't|refused|invalid|exception|traceback|panic/i.test(l)) ?? lines.at(-1) ?? '';
+  const passed = command !== '' && passedThenLaterFailed(output, command);
+  const after = passed ? lines.slice(lines.findLastIndex((l) => TEST_PASS.test(l)) + 1) : lines;
+  const line = after.find((l) => /error|fail|fatal|denied|not found|no such|cannot|can't|refused|invalid|exception|traceback|panic/i.test(l)) ?? after.at(-1) ?? '';
   const check = exit === '1' ? lastCheck(command) : null;
-  const head = check === null ? (exit === null ? '' : `exit ${exit}`) : `exit 1 from its last check (\`${cut(oneSpaced(check), 40)}\`)`;
+  const checked = check === null ? null : `exit 1 from its last check (\`${cut(oneSpaced(check), 40)}\`)`;
+  const head = passed
+    ? `${TESTS_PASSED}${checked ? `then ${checked}` : `a later command failed${exit === null ? '' : ` (exit ${exit})`}`}`
+    : (checked ?? (exit === null ? '' : `exit ${exit}`));
   const reason = !head ? line : line ? `${head}: ${line}` : head;
   return cut(redact(oneSpaced(reason)), FAIL_REASON_CAP);
 }
@@ -211,7 +199,8 @@ const AGENT_STEP = /^agent(?: in the background \(reports back later\))?: (.*)$/
  * and its typed result. Null for a bookkeeping tool, or a file tool with no file.
  */
 export function actionOf(call: { tool: string; [argument: string]: unknown }, failure: Failure | null, output = '', seen: { size?: Size; result?: unknown } = {}): Action | null {
-  const fail = failure ? (failure.reason ? `${failure.kind}: ${failure.reason}` : failure.kind) : undefined;
+  // A test command whose tests passed before a later command failed is no failed step: its reason alone.
+  const fail = failure ? (failure.kind === 'failed' && failure.reason.startsWith(TESTS_PASSED) ? failure.reason : failure.reason ? `${failure.kind}: ${failure.reason}` : failure.kind) : undefined;
   const sized = seen.size ? { size: seen.size } : {};
   const text = (t: string): Action | null => (t ? (fail === undefined ? { text: t, ...sized } : { text: t, fail, ...sized }) : null);
   const file = (verb: FileVerb, f: string): Action | null => (!f ? null : fail === undefined ? { verb, file: f, ...sized } : text(`${INFINITIVE[verb]} ${f}`));

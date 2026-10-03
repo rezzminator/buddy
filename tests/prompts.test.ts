@@ -82,6 +82,12 @@ describe('the character rule', () => {
     expect(CHARACTER_RULE).toContain('State as fact only what the chat shows or what is generally true');
     expect(CHARACTER_RULE).toContain("ask a guess about this chat's own state (a file, a process, what someone did) as a question, or name the check that settles it");
   });
+  test("the end-of-turn call is told only what was sent is the user's ask, never a suggestion not taken, whatever it is asked for", () => {
+    const sentence = "In the turns you remember, the user's ask is only what was sent: a suggestion marked not taken never reached Claude and is never the user's ask, order or approval.";
+    for (const c of [true, false]) for (const g of [true, false]) for (const p of [true, false]) {
+      expect(turnSystem('You are X.', { commentAfterEachTurn: c, suggestNextPrompt: g, promptToMainChat: p })).toContain(sentence);
+    }
+  });
   test('comes right after the persona: questions and the end-of-turn call, whatever it is asked for', () => {
     expect(oneLineSystem('You are X.', 4).startsWith(`You are X.\n\n${CHARACTER_RULE}\n\n`)).toBe(true);
     for (const wants of [{ commentAfterEachTurn: true, suggestNextPrompt: true, promptToMainChat: false }, { commentAfterEachTurn: true, suggestNextPrompt: false, promptToMainChat: false }, { commentAfterEachTurn: false, suggestNextPrompt: true, promptToMainChat: false }]) {
@@ -376,6 +382,26 @@ describe('the prompt ledger', () => {
     expect(endsConversation('prompt_input_exit')).toBe(false);
     expect(endsConversation('other')).toBe(false);
   });
+  /** Claude Code's frame around a plugin's prompt submitted without `asUser`, its fixed wording copied from a real session's transcript. */
+  const framed = (plugin: string, text: string): string =>
+    `The ${plugin} plugin sent a message:\n${text}\n\nThis is how Claude Code surfaces a prompt a plugin submits between turns — it starts this turn in the user's place. Address the message above.`;
+  const ASK = 'Please draft that correction now, without publishing or committing anything.\n\nThen say which clauses changed.';
+  test("the buddy's own prompt, which Claude Code starts its turn wrapped in its plugin frame, is filed as the buddy's, whichever settles first", () => {
+    let l = startPromptTurn(submitPrompt(NO_PROMPTS, ASK, BUDDY_PROMPT), 't1', framed('buddy', ASK));
+    expect(filed(endPromptTurn(l, 't1'))).toEqual({ prompt: framed('buddy', ASK), from: BUDDY_PROMPT });
+    l = submitPrompt(startPromptTurn(NO_PROMPTS, 't2', framed('buddy', ASK)), ASK, BUDDY_PROMPT);
+    expect(filed(endPromptTurn(l, 't2'))).toEqual({ prompt: framed('buddy', ASK), from: BUDDY_PROMPT });
+  });
+  test('a framed turn whose submission was never seen, or only shares words with one, or was the user\'s, stays unknown', () => {
+    const turn = framed('buddy', ASK);
+    expect(endPromptTurn(startPromptTurn(NO_PROMPTS, 't1', turn), 't1').from).toBe('unknown');
+    for (const [text, origin] of [['Please draft that correction now', BUDDY_PROMPT], [`${ASK} Thanks.`, BUDDY_PROMPT], [ASK, 'composer'], [turn.replace('Address the message above.', ''), BUDDY_PROMPT]] as const) {
+      expect(endPromptTurn(startPromptTurn(submitPrompt(NO_PROMPTS, text, origin), 't1', turn), 't1').from).toBe('unknown');
+      expect(endPromptTurn(submitPrompt(startPromptTurn(NO_PROMPTS, 't1', turn), text, origin), 't1').from).toBe('unknown');
+    }
+    // A user prompt that is a framed text is the user's own, matched as ever.
+    expect(filed(endPromptTurn(startPromptTurn(submitPrompt(NO_PROMPTS, turn, 'composer'), 't1', turn), 't1'))).toEqual({ prompt: turn, from: undefined });
+  });
 });
 
 describe('the end-of-turn gate', () => {
@@ -433,7 +459,7 @@ import { BUDDY_PROMPT } from '../plugins/buddy/src/chatTurnsToRead.ts';
 
 describe('promptToMainChat: a prompt the buddy sends Claude itself', () => {
   const LINE =
-    "PROMPT_TO_MAIN_CHAT: a prompt you send Claude yourself, right now, before the user reads on. Send one only on evidence inside this turn that the user's own ask is unmet or unproven: a step marked failed, or failed test runs, that the answer passes over or contradicts (a step marked failed ended in an error, so a result the answer draws from it is unproven, unless the error was the point, such as a crash reproduced or a test watched failing); a conclusion the answer states (done, installed, verified, none left, all pass) that rests on less than it names, such as a check of some of the items or a change made in one of the places; an instruction in the ask (a stop, a condition, an order) Claude did not follow; a part of the ask the answer never addresses. Your own doubts are never a reason: a better method, a risk that might bite, a hypothesis to test, a tidy-up, a gap Claude named while leaving its conclusion open: those go in SUGGEST_NEXT_PROMPT. Plain words, not in character, at most 40 words: name the evidence, then the one fix or check it needs; it reaches Claude as yours, never as the user's. Write PROMPT_TO_MAIN_CHAT: NONE otherwise.";
+    "PROMPT_TO_MAIN_CHAT: a prompt you send Claude yourself, right now, before the user reads on. Send one only on evidence inside this turn that the user's own ask is unmet or unproven: a step marked failed, or failed test runs, that the answer passes over or contradicts (a step marked failed ended in an error, so a result the answer draws from it is unproven, unless the error was the point, such as a crash reproduced or a test watched failing; a step marked \"tests passed, a later command failed\" is no failed test: its tests passed, and only a result drawn from that later command is unproven); a conclusion the answer states (done, installed, verified, none left, all pass) that rests on less than it names, such as a check of some of the items or a change made in one of the places; an instruction in the ask (a stop, a condition, an order) Claude did not follow; a part of the ask the answer never addresses. Your own doubts are never a reason: a better method, a risk that might bite, a hypothesis to test, a tidy-up, a gap Claude named while leaving its conclusion open: those go in SUGGEST_NEXT_PROMPT. Plain words, not in character, at most 40 words: name the evidence, then the one fix or check it needs; it reaches Claude as yours, never as the user's. Write PROMPT_TO_MAIN_CHAT: NONE otherwise.";
   /** The line with suggestNextPrompt off: no SUGGEST_NEXT_PROMPT to route to. */
   const LINE_ALONE = LINE.replace('those go in SUGGEST_NEXT_PROMPT.', 'those never go here.');
   const RULE_LINE =

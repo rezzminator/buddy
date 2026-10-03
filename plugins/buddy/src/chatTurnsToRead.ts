@@ -91,6 +91,9 @@ export const LINES_PER_TURN_MAX = 3;
 export const COMPACTION = 'compaction';
 /** The `from` of a turn the user began with the buddy's own suggestion, sent unedited: the user's choice, the buddy's words. */
 export const TAKEN_SUGGESTION = 'taken-suggestion';
+
+/** Before a user turn's `suggested:` text the prompt did not take: Claude never saw it, only what was `sent:`. */
+export const NOT_TAKEN_MARK = '(not taken; Claude saw only sent)';
 /** The `from` of a turn the buddy's own prompt began (promptToMainChat): this plugin's own origin. */
 export const BUDDY_PROMPT = 'buddy-prompt';
 /** How the turn the buddy's own prompt began is labelled, to the buddy and in its rounds. */
@@ -396,7 +399,8 @@ function midTurnLines(t: Turn, older: boolean): string[] {
  * user's is never shown as what the user asked, one of unknown origin never
  * said not to be, a signed cross-chat message said to be one. A user's
  * prompt is shown as the suggestion in the box (`suggested:`, `none` when
- * there was none) and what was `sent:`. After the prompt, what happened while
+ * there was none, NOT_TAKEN_MARK before one the prompt did not take) and what
+ * was `sent:`, all Claude saw. After the prompt, what happened while
  * the turn ran (midTurnLines); after its steps, its agents' briefs and
  * reports. `prev`: the numbers of the turn remembered before it.
  * `older`: a turn before the last, in the story form: its prompt, added
@@ -416,18 +420,19 @@ function turnLines(t: Turn, k: number, prev: TurnStats | undefined, older: boole
     : t.ended === 'error' ? 'Claude answered, before an error ended the turn:'
     : t.ended === 'refusal' ? 'Claude answered, before the model refused and ended the turn:'
     : 'Claude answered:';
-  // A user turn shows the suggestion in the box beside what was sent: a taken one, filed before `suggested` was kept, sent its suggestion as it was.
+  // A user turn shows the suggestion in the box beside what was sent: a taken one, filed before `suggested` was kept, sent its suggestion as it was; one the prompt neither is nor starts with (suggestionUse) is marked not taken, never the ask.
   const users = t.from === undefined || t.from === TAKEN_SUGGESTION;
   const suggested = t.suggested ?? (t.from === TAKEN_SUGGESTION ? t.prompt : 'none');
+  const notTaken = t.suggested !== undefined && suggestionUse(t.suggested, t.prompt) === null ? `${NOT_TAKEN_MARK} ` : '';
   const prompt = t.prompt || '(not seen)';
   const agents = [...(t.briefed ?? []).map((b) => `Claude briefed its agent ${b}`), ...(t.returned ?? []).map((r) => `Its agent ${r}`)];
-  if (!older) return [`Turn ${k}. ${asked}`, ...(users ? [`suggested: ${suggested}`, `sent: ${prompt}`] : [prompt]), ...midTurnLines(t, false), ...(t.did ? [didLine(t.did, null)] : []), ...agents, ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];
+  if (!older) return [`Turn ${k}. ${asked}`, ...(users ? [`suggested: ${notTaken}${suggested}`, `sent: ${prompt}`] : [prompt]), ...midTurnLines(t, false), ...(t.did ? [didLine(t.did, null)] : []), ...agents, ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];
   const failed = t.stats?.failed ?? 0;
   // The user's own words keep more than any other origin's, a taken suggestion's included.
   const sent = t.from === undefined ? ends(prompt, STORY_USER_PROMPT_HEAD, STORY_USER_PROMPT_TAIL) : ends(prompt, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL);
   return [
     `Turn ${k}. ${asked}`,
-    ...(users ? [`suggested: ${ends(suggested, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL)}`, `sent: ${sent}`] : [sent]),
+    ...(users ? [`suggested: ${notTaken}${ends(suggested, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL)}`, `sent: ${sent}`] : [sent]),
     ...midTurnLines(t, true),
     ...(t.did ? [didLine(t.did)] : []),
     ...agents.map((a) => ends(a, STORY_ADDED_HEAD, STORY_ADDED_TAIL)),

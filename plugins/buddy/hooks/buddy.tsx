@@ -15,13 +15,14 @@ import {
 import { applyMemory, migrateNotes, renderItems, type Items, type EndedItems } from '../src/memoryItems.ts';
 import { AWAY_EFFORT, AWAY_IDLE_MS, AWAY_MAX_TOKENS, AWAY_MODEL, AWAY_PUSHES_MAX, AWAY_SYSTEM, awayBody, awayDecision, awayRearmMs, awayRecordOf, awayWaitStale, type AwayRecord, type AwayWait } from '../src/away.ts';
 import { AGAIN_PREFIX, rulePrompt, rulesContext, ruleWarning, sameStrikes, strikeRule, type Strikes } from '../src/steering.ts';
+import { CALLS_FILE, NO_PENDING_CALLS, abandonedCalls, callEnded, callStarted, pendingCallsOf, type PendingCall, type PendingCallKind, type PendingCalls } from '../src/pendingCalls.ts';
 import { AWAY_FILE, MEMORY_FILE, MEMORY_TEXT_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, briefedOf, callSize, denialReason, didOf, failureReason, returnedOf, type Action as Step, type Failure } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, knownEntries, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
 import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { drawerRows } from '../src/drawer.ts';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
-import { Logger, notice, sumUsage, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
+import { Logger, notice, sumUsage, superseded, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
 import { priceCall } from '../src/prices.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
@@ -30,7 +31,7 @@ import {
   ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, EXTENDED_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostTurnOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   sayInTurn, skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Said, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
 } from '../src/prompts.ts';
-import { dropsHarnessSuggestion, heldSuggestionRelease, suggestNextPromptOutcome, suggestionUse, type SuggestionUse } from '../src/suggestNextPrompt.ts';
+import { dropsHarnessSuggestion, heldSuggestionRelease, repeatedSuggestion, suggestNextPromptOutcome, suggestionUse, type SuggestionUse } from '../src/suggestNextPrompt.ts';
 import { roll, type Roll, type Variant } from '../src/hatch.ts';
 import {
   ORIGINAL_ID, VARIANTS, companionOf, identityOf, originalCharacter, savedOriginalOf,
@@ -159,6 +160,10 @@ type State = {
   awayPath: string | null;
   /** The away.json writes in order: each waits for the one before. */
   awayWrites: Promise<void>;
+  /** The ids of the buddy's model calls this load began and that have not ended (keepCall): a load never abandons them. */
+  callsLive: Set<string>;
+  /** The calls.json changes in order: each waits for the one before. */
+  callsWrites: Promise<void>;
   /** The running main turn's numbers as they come in (src/stats.ts), and the session's usage read as it began; null while none runs. */
   tally: { counts: Tally; before: Promise<UsageReading | null> } | null;
   /** When the last main turn of this conversation ended, for the next one's gap; undefined before the first, and after /clear or a resume. */
@@ -242,10 +247,9 @@ function lgT($: EngineInterface, event: string, fields: LogFields = {}): void {
   flushRound($);
 }
 
-/** Every failure: a transcript notice, and an error record with its context and stack. */
+/** Every failure: a transcript notice, and an error record with its context and stack; a render's call a newer render superseded is only an info record (Logger.failed). */
 function log($: EngineInterface, what: string, error: unknown, fields: LogFields = {}): void {
-  say($, `${what} failed: ${message(error)}`);
-  L.error(what, error, fields);
+  if (L.failed(what, error, fields)) say($, `${what} failed: ${message(error)}`);
   L.flush(logIO($)).catch(() => undefined);
   flushRound($);
 }
@@ -327,7 +331,8 @@ type MemoryChange = { blocks: Block[]; items: Items; ended: EndedItems; strikes:
 
 function chatTurnsToReadFailed(st: State, $: EngineInterface, what: string, error: unknown): void {
   log($, what, error, { area: 'chatTurnsToRead' });
-  st.chatTurnsToReadError = `${what} failed: ${message(error)}`;
+  // A render's call a newer render superseded is no failure for the next reply to say.
+  if (!superseded(error)) st.chatTurnsToReadError = `${what} failed: ${message(error)}`;
 }
 
 /**
@@ -448,7 +453,7 @@ async function chainChatTurnsToRead(st: State, $: EngineInterface, what: string,
         await link(live);
       } catch (error) {
         if (live()) throw error;
-        L.error(`${what} (abandoned)`, error, { area: 'chatTurnsToRead' });
+        L.failed(`${what} (abandoned)`, error, { area: 'chatTurnsToRead' });
         L.flush(logIO($)).catch(() => undefined);
       }
     },
@@ -1058,6 +1063,8 @@ async function startSession(st: State, $: EngineInterface): Promise<void> {
   if (st.interactive) loadMemory(st, $);
   // session.start fires at every load, a plugin reload's included: a wait pending before it is armed again.
   if (st.interactive) void rearmAway(st, $);
+  // A call a reload or a restart killed before it ended is logged abandoned, once.
+  if (st.interactive) abandonPendingCalls(st, $);
 }
 
 /** The log's level, file (logPath: the config folder's by default) and session; a failure here leaves file logging off, said. */
@@ -1390,11 +1397,13 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
       // The character drawn as the turn ended: what arrives after a switch is never said by another.
       st.calls++;
       st.userPromptsAtCall.set(e.turnId, st.userPrompts);
+      const callEnd = keepCall(st, $, 'endOfTurn', e.turnId);
       turnCall(st, $, st.b.character, turn, e.turnId, gen, wants, Date.now())
         .catch((error) => log($, 'the end-of-turn call', error))
         .finally(() => {
           st.calls--;
           st.userPromptsAtCall.delete(e.turnId);
+          callEnd();
         });
     } else {
       lg($, 'info', 'turn.skipped', { why: skipReason(gate) });
@@ -1820,6 +1829,72 @@ function keepAway(st: State, $: EngineInterface, wait: AwayWait | null, always =
 }
 
 /**
+ * One buddy model call begins (src/pendingCalls.ts): kept in calls.json in
+ * this session's chat folder until the end it returns is called, so a reload
+ * or a restart that kills it is found at the next load (abandonPendingCalls).
+ * The end takes it out of the file it was written to, wherever the session
+ * has moved since. Never throws.
+ */
+function keepCall(st: State, $: EngineInterface, kind: PendingCallKind, turnId?: string): () => void {
+  const at = Date.now();
+  const call: PendingCall = { id: `${at.toString(36)}.${Math.random().toString(36).slice(2, 10)}`, kind, at, ...(turnId === undefined ? {} : { turnId }) };
+  st.callsLive.add(call.id);
+  let path: string | null = null;
+  changeCalls(st, $, async () => (path = `${await chatFolderFor(st, $, await $.session.id())}/${CALLS_FILE}`), (r) => callStarted(r, call));
+  return () => {
+    st.callsLive.delete(call.id);
+    changeCalls(st, $, async () => path, (r) => callEnded(r, call.id));
+  };
+}
+
+/** calls.json at `path`: 'none' when there is no file, 'unreadable' when it holds no record. */
+async function readCalls($: EngineInterface, path: string): Promise<PendingCalls | 'none' | 'unreadable'> {
+  if (!(await $.fs.exists(path))) return 'none';
+  try {
+    return pendingCallsOf(JSON.parse((await $.fs.read(path)) as string)) ?? 'unreadable';
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/** One change to calls.json at `where` (null: none), read and written after every change before it; an unreadable file is written anew. Never throws. */
+function changeCalls(st: State, $: EngineInterface, where: () => Promise<string | null>, change: (r: PendingCalls) => PendingCalls): void {
+  st.callsWrites = st.callsWrites
+    .then(async () => {
+      const path = await where();
+      if (path === null) return;
+      const kept = await readCalls($, path);
+      await $.fs.write(path, JSON.stringify(change(typeof kept === 'string' ? NO_PENDING_CALLS : kept)));
+    })
+    .catch((error: unknown) => log($, 'keeping the calls in flight', error));
+}
+
+/**
+ * At a load (session.start, a reload's included) in an interactive session:
+ * every call calls.json keeps that this load is not running was killed before
+ * it ended (abandonedCalls). The file is rewritten without them first, then
+ * each logs one `call.outcome` abandoned, so no later load logs it again. In
+ * order with every change to the file. Never throws.
+ */
+function abandonPendingCalls(st: State, $: EngineInterface): void {
+  st.callsWrites = st.callsWrites
+    .then(async () => {
+      const path = `${await chatFolderFor(st, $, await $.session.id())}/${CALLS_FILE}`;
+      const kept = await readCalls($, path);
+      if (kept === 'none') return;
+      if (kept === 'unreadable') {
+        lg($, 'info', 'call.outcome', { outcome: 'unreadable' });
+        return;
+      }
+      const { abandoned, kept: running } = abandonedCalls(kept, st.callsLive, Date.now());
+      if (abandoned.length === 0) return;
+      await $.fs.write(path, JSON.stringify(running));
+      for (const a of abandoned) lg($, 'info', 'call.outcome', { outcome: 'abandoned', ...a });
+    })
+    .catch((error: unknown) => log($, 'finding the calls a reload abandoned', error));
+}
+
+/**
  * At a load (session.start, a reload's included) in an interactive session
  * with promptWhenIdle on: the chat's kept wait is armed again for what remains
  * of AWAY_IDLE_MS (awayRearmMs), and the pushes so far restored. Nothing is
@@ -1919,7 +1994,8 @@ async function awayCall(st: State, $: EngineInterface, gen: number, conversation
     }
     const userPrompts = st.userPrompts;
     const started = Date.now();
-    const r = await completeRecorded(st, $, 'away', { model: AWAY_MODEL, effort: AWAY_EFFORT, system: AWAY_SYSTEM, prompt: awayBody(st.lastAnswer), maxTokens: AWAY_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }, { turns: 0, kept: 0, full: 0 });
+    const callEnd = keepCall(st, $, 'away');
+    const r = await completeRecorded(st, $, 'away', { model: AWAY_MODEL, effort: AWAY_EFFORT, system: AWAY_SYSTEM, prompt: awayBody(st.lastAnswer), maxTokens: AWAY_MAX_TOKENS, timeoutMs: TURN_DEADLINE_MS }, { turns: 0, kept: 0, full: 0 }).finally(callEnd);
     const ms = Date.now() - started;
     // Checked again once the call answered, nothing awaited between it and the send: the buddy still on and drawn, the chat where it was.
     const moved = awaySkip(st, gen, conversation) ?? (st.userPrompts !== userPrompts ? 'the user prompted' : null);
@@ -2019,9 +2095,17 @@ async function showSuggestNextPrompt(st: State, $: EngineInterface, gen: number,
     await giveUpSuggestNextPrompt(st, $, gen, fields.ms ?? 0);
     return null;
   }
+  const repeats = repeatedSuggestion(text, await shownSuggestions(st, $));
   // A later turn ended or started, /clear, or /buddy off came meanwhile: this one is never proposed.
   if (gen !== st.turnGen || st.hidden || st.mainTurn !== undefined) {
     lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'stale', ...fields });
+    return null;
+  }
+  // The same ask, or nearly, as one of the last suggestions shown in this chat that the user passed over: held back, and this turn's given up.
+  if (repeats !== null) {
+    roundEvent(st, $, eventLine(Date.now(), `OUT · prompt-box suggestion (the buddy's) held back, it repeats ${JSON.stringify(repeats)}: ${JSON.stringify(text)}`));
+    lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'repeat', length: text.length, ...fields });
+    await giveUpSuggestNextPrompt(st, $, gen, fields.ms ?? 0);
     return null;
   }
   const { isShown } = await $.prompt.suggest({ text });
@@ -2036,6 +2120,17 @@ async function showSuggestNextPrompt(st: State, $: EngineInterface, gen: number,
     lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'harness-replaced' });
   }
   return text;
+}
+
+/** The drawer's feed once every change made before has landed: the suggestions shown in this chat, each marked taken once the user answered it (repeatedSuggestion). A failed read is logged and gives none, so the suggestion shows. */
+async function shownSuggestions(st: State, $: EngineInterface): Promise<FeedEntry[]> {
+  try {
+    await st.feedChain;
+    return knownEntries(await read($, FEED));
+  } catch (error) {
+    log($, 'reading the suggestions shown', error);
+    return [];
+  }
 }
 
 /** The buddy has no suggestNextPrompt for turn `gen`: the engine's own, held back meanwhile, is shown, and a later one passes. `ms`: the turn's end to the reply, logged on the outcome. */
@@ -2713,13 +2808,16 @@ async function runCommand(st: State, $: EngineInterface, args: string, asQuestio
         // The thinking line at once; ask reads the chatTurnsToRead, the question joining it with its answer.
         beginQuestion(b, Math.random);
         refresh(st, $);
-        ask(st, $, action.text, c).catch((error) => {
-          st.asking = null;
-          log($, 'a /buddy question', error);
-          endQuestion(b);
-          failAnswer(b, message(error), c.id);
-          refresh(st, $);
-        });
+        const callEnd = keepCall(st, $, 'question');
+        ask(st, $, action.text, c)
+          .catch((error) => {
+            st.asking = null;
+            log($, 'a /buddy question', error);
+            endQuestion(b);
+            failAnswer(b, message(error), c.id);
+            refresh(st, $);
+          })
+          .finally(callEnd);
         const trouble = st.chatTurnsToReadError;
         st.chatTurnsToReadError = '';
         return { text: `Asked ${c.name}.${trouble ? ` (Its chatTurnsToRead: ${trouble})` : ''}` };
@@ -2789,6 +2887,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     awayKept: false,
     awayPath: null,
     awayWrites: Promise.resolve(),
+    callsLive: new Set(),
+    callsWrites: Promise.resolve(),
     tally: null,
     lastMainEndAt: undefined,
     usageFailSaid: false,
