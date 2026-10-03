@@ -4,6 +4,8 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-10-03
+
 ### Fixed
 - ctrl+x t in `/buddy` opened the personality picker out of sight in a terminal: the open drawer kept every row above the prompt, so the picker never drew. The drawer now makes room for the picker while it is open, and takes its full height back when you close it with Esc or fold the drawer; in fullscreen the picker sits beside the transcript and the drawer keeps its height.
 - The buddy sees only the main chat, as you do: a subagent's tool calls, files, lines, test runs, commits and tokens no longer count in the turn's numbers (the `subagents` group is gone), so a background agent's deliberately failing run no longer reads as Claude's own failed test, which had the buddy ask Claude about a failure it never saw. What a foreground agent returns is read under the turn's steps (`Its agent “…” returned: …`), and an agent the harness launched asynchronously reads as reporting back later.
