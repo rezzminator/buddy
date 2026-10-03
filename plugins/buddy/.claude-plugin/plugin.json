@@ -1,7 +1,7 @@
 {
   "name": "buddy",
   "version": "1.1.0",
-  "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
+  "description": "Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts",
   "license": "MIT",
   "author": {
     "name": "Reza · Professor",
@@ -9,7 +9,7 @@
   },
   "repository": "https://github.com/rezzminator/buddy",
   "homepage": "https://github.com/rezzminator/buddy",
-  "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "duck", "ascii-art", "terminal-pet", "virtual-pet", "tamagotchi", "function-hooks", "claude-mods", "professor"],
+  "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "coding-companion", "ascii-art", "terminal-pet", "virtual-pet", "duck", "prompt-suggestions", "function-hooks", "claude-code-hooks", "claude-mods", "professor"],
   "types": "./types/index.d.ts",
   "userConfig": {
     "character": {
@@ -87,7 +87,7 @@
     "logFile": {
       "type": "string",
       "title": "Where the plugin log goes (empty = no log file)",
-      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record, capped at 1 MB with one older copy (.1); /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to Claude Code's debug log.",
+      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record; past 1 MB it is archived whole to the next free .1, .2, …, none ever overwritten or deleted; /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to Claude Code's debug log.",
       "default": "$CLAUDE_CONFIG_DIR/buddy/buddy.log"
     },
     "saveRounds": {

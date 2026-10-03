@@ -2,7 +2,7 @@
 
 # buddy
 
-**Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy**
+**Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
 [![Version](https://img.shields.io/badge/version-1.1.0-blue)](./CHANGELOG.md)
@@ -10,9 +10,100 @@
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/ci.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
-[Quick start](#-quick-start) · [Characters](#-characters) · [Docs](docs/design/_index.md) · [Changelog](./CHANGELOG.md) · [Help](#-help)
+![Demo: Terry, a tiny ASCII programmer, paces above the Claude Code prompt; as Claude fixes a failing test he flinches at the error, comments on the one-character fix in a speech bubble, a suggested next prompt appears in the box, and asked "/buddy should we pull in a library for this?" he answers in character](docs/demo/buddy.gif)
+
+[Why](#-why-buddy) · [Quick start](#-quick-start) · [Characters](#-characters) · [Docs](docs/design/_index.md) · [Changelog](./CHANGELOG.md) · [Help](#-help)
 
 </div>
+
+## 🦆 Why buddy
+
+Claude Code once shipped `/buddy`, a companion that sat beside the prompt
+and commented on your work in a speech bubble. It worked up to version
+2.1.96; version 2.1.97 removed it. **buddy** brings a companion back and
+gives it a job: from the line above your prompt it watches every turn, and
+speaks up when Claude cuts a corner.
+
+- **A second opinion on every turn.** After each answer it judges Claude's
+  last move against what you are after: a shortcut gets a yellow warning in
+  the bubble, a wrong move a red scream, a right one a go-ahead.
+- **It pushes back when "done" is not proven.** When the turn shows your
+  ask unmet or unproven, such as a failed test run the answer passes over,
+  it prompts Claude itself, at most once per prompt of yours, and Claude is
+  told the words are buddy's, never yours.
+- **Your rules stick.** Give a standing order once, in your own words:
+  buddy keeps it for the chat and puts it in front of Claude with every
+  prompt. Broken once, it reminds Claude; twice, it says `Again:`; from the
+  third time it warns you instead.
+- **Your next prompt, already written.** After each turn a suggested prompt
+  waits in the prompt box; Tab takes it.
+- **Ask about the chat, get one line.** `/buddy is this safe to merge?` is
+  answered in character, by a buddy told to name what you and Claude both
+  missed.
+- **A companion, not a dashboard.** It walks, cheers a green test run with
+  confetti, winces at a failure and falls asleep after midnight. Seven
+  characters ship with it, your own takes one JSON file, and the picker can
+  bring back the companion the old `/buddy` hatched for you.
+
+Walking, reactions and every command but a question stay local and call no
+model. A question, and one short call at the end of each answered turn,
+spend tokens, and each can be turned off (see the [FAQ](#-faq)).
+
+## 🚀 Quick start
+
+1. Turn on function hooks: add this `env` block to `~/.claude/settings.json`
+   (merged into the object already there), so every new terminal has them.
+
+   ```json
+   { "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } }
+   ```
+
+2. Install:
+
+   ```sh
+   claude plugin marketplace add rezzminator/buddy
+   claude plugin install buddy@buddy
+   ```
+
+3. Start a new session: Quack walks in above your prompt. Type `/buddy` to
+   open its drawer, or `/buddy what are we missing?` to ask it.
+
+<details>
+<summary>Other ways in, and the notices you may see</summary>
+
+- Instead of `settings.json`, you can export the variable in your shell,
+  `export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; an export vanishes in the
+  next terminal.
+- After installing, Claude Code may print `N userConfig options not yet set —
+  run /plugin configure`. You can ignore it: every buddy option has a
+  default, so nothing needs setting and buddy works as installed. Use
+  `/plugin configure` only to change a default.
+- If function hooks are off, buddy says so when a session starts or resumes:
+  `buddy is off: … Add "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } to
+  ~/.claude/settings.json, then start a new session.` (with
+  `CLAUDE_CONFIG_DIR` set it names `$CLAUDE_CONFIG_DIR/settings.json`). The
+  line goes away once the variable is set.
+
+</details>
+
+> [!IMPORTANT]
+> buddy is built on Claude Code's function hooks, an early-access surface
+> that may change between releases. A plugin built on function hooks cannot
+> enter the official plugin directory, so buddy installs from this
+> repository's own marketplace, as above. It is tested on Claude Code
+> 2.1.284.
+
+> [!NOTE]
+> The line above the prompt exists in Claude Code in the terminal and in the
+> desktop app. The VS Code extension and mobile do not draw it, so there the
+> character never appears.
+
+> [!TIP]
+> Coming from an earlier buddy? Petting, ctrl+x n and ctrl+x b, and the
+> `cat` character are gone, and `promptToMainChat` is now on by default;
+> [CHANGELOG.md](./CHANGELOG.md) says how to migrate.
+
+## ✨ What it does
 
 Meet **Quack**, a sarcastic little duck with a sharp tongue, waddling through
 your code with smug confidence. It lives on the line right above your Claude
@@ -34,17 +125,7 @@ after midnight    a tool fails
 
 Every line in those bubbles is one of Quack's own; its art and its lines live
 in [`plugins/buddy/characters/duck.json`](./plugins/buddy/characters/duck.json).
-
----
-
-## 🦆 Why buddy
-
-Claude Code once shipped `/buddy`, a companion that sat beside the prompt
-and commented on your work in a speech bubble. It worked up to version
-2.1.96; version 2.1.97 removed it.
-
-**buddy** brings a companion back as a plugin. It lives inside Claude Code's
-own interface, on the line right above the prompt, sees every tool call as it
+It lives inside Claude Code's own interface, sees every tool call as it
 happens, and answers you through Claude Code's own model calls: it needs no
 server of its own.
 
@@ -81,6 +162,16 @@ server of its own.
   and kept for you to read in the chat's `memory.md`, its path at the
   drawer's foot: the items by kind with their keys, the newest ended ones,
   then the turns.
+- 📣 **Steers Claude, on evidence.** With `promptToMainChat` (on by
+  default) the same call may send Claude a prompt of its own, at most one
+  per prompt of yours, only when the turn shows your ask unmet or unproven;
+  its words show yellow in the bubble. Your live rules ride every prompt
+  Claude gets, and a rule broken again climbs a ladder: a reminder, then
+  `Again:`, then a warning to you.
+- 💤 **Wakes an idle chat, if you let it.** With `promptWhenIdle` on (off
+  by default), a chat left idle 30 minutes after an answered turn gets one
+  call asking whether Claude left work it owes; a step naming a git push,
+  a deletion, a publication or an account step is refused in code.
 - 📊 **The numbers of every turn.** Each turn it remembers comes with one
   line counted in code, never by a model: time and the pause before it,
   model requests, the main loop's own tool calls by tool with failures and
@@ -100,51 +191,8 @@ server of its own.
   `/buddy off` hides it, and it stays hidden across restarts.
 
 Quack is the default. buddy also ships the Professor, a robot, a
-ghost, a dragon and a yellow duck, and draws your own characters from a folder of JSON
+ghost, a dragon, a yellow duck and Terry, and draws your own characters from a folder of JSON
 files (see [Characters](#-characters)).
-
-## 🚀 Quick start
-
-1. Turn on function hooks: add this `env` block to `~/.claude/settings.json`
-   (merged into the object already there), so every new terminal has them.
-
-   ```json
-   { "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } }
-   ```
-
-   Or export it in your shell, `export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`;
-   an export vanishes in the next terminal.
-
-2. Install:
-
-   ```sh
-   claude plugin marketplace add rezzminator/buddy
-   claude plugin install buddy@buddy
-   ```
-
-Start a new session and Quack walks in above your prompt; type `/buddy` to
-open its drawer.
-
-After installing, Claude Code may print `N userConfig options not yet set —
-run /plugin configure`. You can ignore it: every buddy option has a default,
-so nothing needs setting and buddy works as installed. Use
-`/plugin configure` only to change a default.
-
-If function hooks are off, buddy says so when a session starts or resumes:
-`buddy is off: … Add "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } to
-~/.claude/settings.json, then start a new session.` (with `CLAUDE_CONFIG_DIR`
-set it names `$CLAUDE_CONFIG_DIR/settings.json`). The line goes away once
-the variable is set.
-
-> **Early access.** buddy is built on Claude Code's function hooks, an
-> early-access surface that may change between releases. A plugin built on
-> function hooks cannot enter the official plugin directory, so buddy
-> installs from this repository's own marketplace, as above. It is tested on
-> Claude Code 2.1.284.
-
-> **Where it shows.** The line above the prompt exists in Claude Code in the
-> terminal and in the desktop app. The VS Code extension and mobile do not
-> draw it, so there the character never appears.
 
 ## 🧭 Commands
 
@@ -245,6 +293,17 @@ Yours when it is your own.
 ## 🧠 How it works
 
 The full design, decision by decision, lives in [docs/design](docs/design/_index.md).
+
+```mermaid
+flowchart LR
+  T["Tool calls and test runs"] -- "local, no model" --> R["Pose, canned line, confetti"]
+  E["An answered turn ends"] --> C["One short call on model at effort:<br/>memory items + the last chatTurnsToRead turns + the turn's numbers"]
+  C --> B["commentAfterEachTurn in the bubble"]
+  C --> V["Verdict: RIGHT, SHORTCUT (yellow) or WRONG (red)"]
+  C --> N["suggestNextPrompt in the prompt box"]
+  C --> M["Memory item edits, checked in code:<br/>memory.json and memory.md"]
+  C -- "promptToMainChat, on evidence only" --> P["A prompt to Claude"]
+```
 
 - **Walking.** The character steps one column every `stepMs` (200 ms unless
   the character says otherwise), turns at the edge, and rests now and then.
@@ -408,8 +467,9 @@ The full design, decision by decision, lives in [docs/design](docs/design/_index
   leaves Claude Code's own alone; with it on, turning off Claude Code's own
   prompt suggestions saves paying for both.
 - **`promptToMainChat`** (on by default): the buddy may prompt Claude itself; what it sent shows in the bubble, its words yellow.
-  The same end-of-turn call may write one more line, a prompt of at most 40
-  words the buddy sends Claude right away, only on evidence inside the turn
+  The same end-of-turn call may write one more line, a prompt it is told to
+  keep to 40 words (one past 400 characters is never sent) that the buddy
+  sends Claude right away, only on evidence inside the turn
   that your own ask is unmet or unproven: a failed step or test run the
   answer passes over, a "done" that rests on less than it names, an
   instruction in your ask Claude did not follow, a part of the ask it never
@@ -574,7 +634,10 @@ of the conversation. `commentAfterEachTurn` and `suggestNextPrompt` are on by de
 turn them off, and with `suggestNextPrompt` on, turning off Claude Code's own prompt
 suggestions saves paying for both. With `promptWhenIdle` on, a chat left idle
 30 minutes after an answered turn costs one more call, on opus at low effort,
-sent only Claude's last answer.
+sent only Claude's last answer. A prompt the buddy sends Claude
+(`promptToMainChat`, on by default, or a `promptWhenIdle` push) starts a
+turn of your main chat, which spends that chat's tokens like any prompt;
+`promptToMainChat: false`, and `promptWhenIdle` left off, stop both.
 </details>
 
 <details>
@@ -633,7 +696,7 @@ buddy is built and maintained with [Professor](https://github.com/rezzminator/pr
 - A question, or buddy not showing up: see the [FAQ](#-faq), then
   [SUPPORT.md](./SUPPORT.md).
 - A bug or an idea: [open an issue](https://github.com/rezzminator/buddy/issues/new/choose);
-  there is a template for bugs, features and new characters.
+  there is a template for bugs, questions, features and new characters.
 - A security problem: [SECURITY.md](./SECURITY.md), never a public issue.
 
 ## 🤝 Contributing
@@ -644,8 +707,6 @@ issues labelled
 [`good first issue`](https://github.com/rezzminator/buddy/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 are a place to start. Everyone taking part follows the
 [Code of Conduct](./CODE_OF_CONDUCT.md).
-
-<sub>Keywords: Claude Code buddy · /buddy · Claude Code companion · terminal pet · ASCII pet · tamagotchi · speech bubble · Claude Code plugin · function hooks · Claude Mods · custom characters</sub>
 
 ## License
 

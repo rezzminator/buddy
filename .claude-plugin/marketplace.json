@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
+  "description": "Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts",
   "owner": {
     "name": "rezzminator",
     "url": "https://github.com/rezzminator"
@@ -14,10 +14,10 @@
         "path": "plugins/buddy",
         "ref": "main"
       },
-      "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
+      "description": "Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts",
       "version": "1.1.0",
       "license": "MIT",
-      "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "duck", "ascii-art", "terminal-pet", "virtual-pet", "tamagotchi", "function-hooks", "claude-mods", "professor"],
+      "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "coding-companion", "ascii-art", "terminal-pet", "virtual-pet", "duck", "prompt-suggestions", "function-hooks", "claude-code-hooks", "claude-mods", "professor"],
       "author": {
         "name": "Reza · Professor",
         "url": "https://github.com/rezzminator/professor"
