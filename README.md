@@ -91,7 +91,7 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 > that may change between releases. A plugin built on function hooks cannot
 > enter the official plugin directory, so buddy installs from this
 > repository's own marketplace, as above. It is tested on Claude Code
-> 2.1.284.
+> 2.1.289.
 
 > [!NOTE]
 > The line above the prompt exists in Claude Code in the terminal and in the
