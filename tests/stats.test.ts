@@ -2,11 +2,11 @@ import { describe, expect, test } from 'vitest';
 import {
   HOT_EDITS, LIMIT_SAID_PERCENT, TOOL_NAMES_MAX,
   SHELL_CANDIDATES_MAX,
-  changedLines, closeTally, count, countAgentRun, countShellChanges, countStep, countToolCall, dollars, fileLineDelta, openTally, renderStats, shellChanges, shellFolders, shellTargets, span, statsBrief, sweptChanges, sweptShellChange, turnStatsOf,
+  changedLines, closeTally, count, countShellChanges, countStep, countToolCall, dollars, fileLineDelta, openTally, renderStats, shellChanges, shellFolders, shellTargets, span, statsBrief, sweptChanges, sweptShellChange, turnStatsOf,
   type CountedCall, type TurnStats,
 } from '../plugins/buddy/src/stats.ts';
 
-const call = (tool: string, args: Record<string, unknown> = {}, more: Partial<CountedCall> = {}): CountedCall => ({ tool, args, failed: false, denied: false, outcome: null, main: true, ...more });
+const call = (tool: string, args: Record<string, unknown> = {}, more: Partial<CountedCall> = {}): CountedCall => ({ tool, args, failed: false, denied: false, outcome: null, ...more });
 const usage = (input: number, output: number, cacheRead = 0, cacheWrite = 0) => ({ input_tokens: input, output_tokens: output, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: cacheWrite });
 
 describe('the tally', () => {
@@ -23,9 +23,8 @@ describe('the tally', () => {
     countToolCall(t, call('Bash', { command: 'npm test' }, { failed: true }));
     countToolCall(t, call('Bash', { command: 'ls' }, { denied: true }));
     countToolCall(t, call('Read', { file_path: '/r/a.ts' }));
-    countToolCall(t, call('Grep', { pattern: 'x' }, { main: false }));
     const s = closeTally(t, { ms: 0 }, null, null);
-    expect(s).toMatchObject({ tools: { Bash: 3, Read: 1 }, failed: 1, denied: 1, reruns: 1, agents: { runs: 0, tools: 1, tokens: 0 }, files: { read: 1, edited: 0, wrote: 0 } });
+    expect(s).toMatchObject({ tools: { Bash: 3, Read: 1 }, failed: 1, denied: 1, reruns: 1, files: { read: 1, edited: 0, wrote: 0 } });
   });
 
   test('files are counted once each; the file edited HOT_EDITS times is the hot one; a failed call touches nothing', () => {
@@ -36,8 +35,7 @@ describe('the tally', () => {
     countToolCall(t, call('Read', { file_path: '/r/src/x.ts' }));
     countToolCall(t, call('Read', { file_path: '/r/src/x.ts' }));
     countToolCall(t, call('Edit', { file_path: '/r/failed.ts', old_string: 'a', new_string: 'b' }, { failed: true }));
-    // A subagent's edit is the turn's work too.
-    countToolCall(t, call('NotebookEdit', { notebook_path: '/r/n.ipynb', new_source: 'x' }, { main: false }));
+    countToolCall(t, call('NotebookEdit', { notebook_path: '/r/n.ipynb', new_source: 'x' }));
     const s = closeTally(t, { ms: 0 }, null, null);
     expect(s.files).toEqual({ read: 1, edited: 3, wrote: 1 });
     expect(s.hot).toEqual({ file: 'buddy.tsx', edits: HOT_EDITS });
@@ -66,31 +64,29 @@ describe('the tally', () => {
     countToolCall(t, call('Bash', { command: 'npm test' }, { outcome: 'testPass' }));
     countToolCall(t, call('Bash', { command: 'npm test -- a' }, { outcome: 'testFail', failed: true }));
     countToolCall(t, call('Bash', { command: 'git -C repo commit -m x && git --no-pager push origin develop' }));
-    countToolCall(t, call('Bash', { command: 'git -c user.name=x commit --amend' }, { main: false }));
+    countToolCall(t, call('Bash', { command: 'git -c user.name=x commit --amend' }));
     countToolCall(t, call('Bash', { command: 'git push' }, { failed: true }));
     countToolCall(t, call('Bash', { command: 'echo "git commit" is how' }));
     countToolCall(t, call('Bash', { command: 'git log --oneline' }));
     countToolCall(t, call('WebFetch', { url: 'https://example.com' }));
     countToolCall(t, call('mcp__professor__harvester_read'));
-    countToolCall(t, call('mcp__playwright__browser_click', {}, { main: false }));
+    countToolCall(t, call('mcp__playwright__browser_click', {}));
     countToolCall(t, call('mcp__professor__chat_ls'));
     const s = closeTally(t, { ms: 0 }, null, null);
-    expect(s.tests).toEqual({ passed: 1, failed: 1 });
+    expect(s.tests).toEqual({ passed: 1, failed: 1, seq: 'pf' });
     // A commit in a quoted string, and a log, are no commits.
     expect(s.git).toEqual({ commits: 2, pushes: 1 });
     expect(s.web).toBe(3);
   });
 
-  test('model requests and why they stopped; subagent runs with every token they spent', () => {
+  test('model requests and why they stopped', () => {
     const t = openTally('t', 0);
     countStep(t, 'tool_use');
     countStep(t, 'max_tokens');
     countStep(t, 'model_context_window_exceeded');
     countStep(t, null);
-    countAgentRun(t, usage(10, 20, 30, 40));
-    countAgentRun(t);
     const s = closeTally(t, { ms: 0 }, null, null);
-    expect(s).toMatchObject({ requests: 4, stops: { maxTokens: 1, contextFull: 1 }, agents: { runs: 2, tools: 0, tokens: 100 } });
+    expect(s).toMatchObject({ requests: 4, stops: { maxTokens: 1, contextFull: 1 } });
   });
 
   test("the main loop's tokens, model and effort; the cost between the session's usage at the start and the end; the context and limits after", () => {
@@ -101,6 +97,24 @@ describe('the tally', () => {
     expect(s.usd).toBeCloseTo(0.42);
     // The engine's own percent wins; a numeric effort is kept as text.
     expect(closeTally(openTally('t', 0), { ms: 0, effort: 31 }, null, { context: { tokens: 1, window: 10, percent: 62.4 } })).toMatchObject({ effort: '31', context: { percent: 62, window: 10 } });
+  });
+
+  test('test runs keep their order: a failure fixed later in the turn reads as fixed, one left at the end as open', () => {
+    const run = (...outcomes: ('testPass' | 'testFail')[]) => {
+      const t = openTally('t', 0);
+      for (const outcome of outcomes) countToolCall(t, call('Bash', { command: 'go test ./...' }, { outcome }));
+      return closeTally(t, { ms: 0 }, null, null);
+    };
+    const fixed = run('testFail', 'testPass', 'testPass');
+    expect(fixed.tests).toEqual({ passed: 2, failed: 1, seq: 'fpp' });
+    expect(renderStats(fixed)).toBe('Numbers: 0s · 3 tool calls (Bash 3), 2 shell commands run again unchanged · test runs 1 failed, then 2 passed');
+    expect(renderStats(run('testPass', 'testFail'))).toContain('test runs 1 passed, then 1 failed');
+    expect(renderStats(run('testPass', 'testPass'))).toContain('test runs 2 passed');
+    // Past four stretches: the totals, then how it ended.
+    expect(renderStats(run('testFail', 'testPass', 'testFail', 'testPass', 'testFail', 'testPass'))).toContain('test runs 3 passed, 3 failed, ending 1 failed, then 1 passed');
+    expect(turnStatsOf(JSON.parse(JSON.stringify(fixed)))).toEqual(fixed);
+    // Numbers stored without an order read as totals.
+    expect(renderStats({ ms: 0, tests: { passed: 2, failed: 1 } })).toBe('Numbers: 0s · test runs 2 passed, 1 failed');
   });
 
   test('no cost without both readings, none that went down (a /clear); no context without a window', () => {
@@ -114,7 +128,7 @@ describe('the tally', () => {
 describe('the line the model reads', () => {
   const full: TurnStats = {
     ms: 252_000, gapMs: 840_000, requests: 31, tools: { Bash: 20, Edit: 12, Read: 10, Grep: 3, Glob: 1, Write: 1 }, failed: 3, denied: 1, reruns: 2,
-    agents: { runs: 2, tools: 57, tokens: 340_000 }, files: { read: 8, edited: 5, wrote: 1 }, hot: { file: 'buddy.tsx', edits: 9 }, lines: { added: 212, removed: 47 },
+    files: { read: 8, edited: 5, wrote: 1 }, hot: { file: 'buddy.tsx', edits: 9 }, lines: { added: 212, removed: 47 },
     tests: { passed: 2, failed: 1 }, git: { commits: 1, pushes: 1 }, web: 3, stops: { maxTokens: 1, contextFull: 0 },
     tokens: { in: 60_000, out: 18_000, cacheRead: 1_140_000, cacheWrite: 0 }, model: 'claude-opus-5', effort: 'xhigh', usd: 0.42,
     context: { percent: 62, window: 200_000 }, limits: { fiveHour: 71, sevenDay: 33 },
@@ -123,7 +137,7 @@ describe('the line the model reads', () => {
   test('every group, the most used tools named first, the rest counted', () => {
     expect(renderStats(full)).toBe(
       'Numbers: 4m12s, after a 14m00s pause · 31 model requests · 47 tool calls (Bash 20, Edit 12, Read 10, Grep 3, 2 more kinds), 3 failed, 1 denied, 2 shell commands run again unchanged · ' +
-        '2 subagent runs: 57 tool calls, 340k tokens · files 8 read, 5 edited, 1 written; buddy.tsx edited 9× · lines +212 −47 · test runs 2 passed, 1 failed · 1 commit, 1 push · 3 web reads · ' +
+        'files 8 read, 5 edited, 1 written; buddy.tsx edited 9× · lines +212 −47 · test runs 2 passed, 1 failed · 1 commit, 1 push · 3 web reads · ' +
         'cut at max tokens 1× · tokens 1.2M in (95% cached), 18k out · $0.42 · context 62% full of 200k · 5-hour limit 71% used · on opus-5 at xhigh effort',
     );
     expect(Object.keys(full.tools!).length).toBeGreaterThan(TOOL_NAMES_MAX);
@@ -142,16 +156,14 @@ describe('the line the model reads', () => {
     expect(renderStats({ ms: 1, limits: { sevenDay: LIMIT_SAID_PERCENT } })).toBe('Numbers: 0s · weekly limit 50% used');
   });
 
-  test('subagents still running at the turn\'s end show their calls alone; one call is singular', () => {
-    expect(renderStats({ ms: 0, agents: { runs: 0, tools: 1, tokens: 0 } })).toBe('Numbers: 0s · subagents: 1 tool call');
-    expect(renderStats({ ms: 0, agents: { runs: 1, tools: 0, tokens: 0 } })).toBe('Numbers: 0s · 1 subagent run');
+  test('one push past zero commits; an MCP tool by its own name', () => {
     expect(renderStats({ ms: 0, tools: { Read: 1 }, git: { commits: 0, pushes: 2 } })).toBe('Numbers: 0s · 1 tool call (Read 1) · 2 pushes');
     // An MCP tool by its own name, its server dropped.
     expect(renderStats({ ms: 0, tools: { mcp__professor__chat_new: 2, mcp__x: 1 } })).toBe('Numbers: 0s · 3 tool calls (chat_new 2, mcp__x 1)');
   });
 
-  test('the drawer\'s brief: its time, its tool calls with its subagents\', its cost, else its tokens', () => {
-    expect(statsBrief(full)).toBe('4m12s · 104 tools · $0.42');
+  test('the drawer\'s brief: its time, its tool calls, its cost, else its tokens', () => {
+    expect(statsBrief(full)).toBe('4m12s · 47 tools · $0.42');
     expect(statsBrief({ ms: 12_000, tools: { Read: 1 }, tokens: { in: 1, out: 1, cacheRead: 998, cacheWrite: 0 } })).toBe('12s · 1 tool · 1k tokens');
     expect(statsBrief({ ms: 500 })).toBe('1s');
   });
@@ -173,10 +185,12 @@ describe('stored numbers', () => {
   });
 
   test('any malformed field makes it unreadable', () => {
-    for (const bad of [null, [], 'x', {}, { ms: -1 }, { ms: 1, tools: {} }, { ms: 1, tools: { Bash: 'x' } }, { ms: 1, agents: { runs: 1 } }, { ms: 1, hot: { edits: 3 } }, { ms: 1, model: 3 }, { ms: 1, effort: 3 }, { ms: 1, limits: { fiveHour: 'x' } }, { ms: 1, usd: Number.NaN }, { ms: 1, context: { percent: 3 } }]) {
+    for (const bad of [null, [], 'x', {}, { ms: -1 }, { ms: 1, tools: {} }, { ms: 1, tools: { Bash: 'x' } }, { ms: 1, tests: { passed: 1, failed: 0, seq: 'x' } }, { ms: 1, hot: { edits: 3 } }, { ms: 1, model: 3 }, { ms: 1, effort: 3 }, { ms: 1, limits: { fiveHour: 'x' } }, { ms: 1, usd: Number.NaN }, { ms: 1, context: { percent: 3 } }]) {
       expect(turnStatsOf(bad)).toBeNull();
     }
     expect(turnStatsOf({ ms: 1, limits: {} })).toEqual({ ms: 1, limits: {} });
+    // Numbers stored when a subagent's work still counted: read without it.
+    expect(turnStatsOf({ ms: 1, agents: { runs: 2, tools: 5, tokens: 9, tests: { passed: 0, failed: 1 } } })).toEqual({ ms: 1 });
   });
 });
 
@@ -188,6 +202,12 @@ describe("a shell command's own edits", () => {
     expect(shellTargets('cat /etc/hosts ../up/b.txt', '/w/app', '/h')).toEqual(['/etc/hosts', '/w/up/b.txt']);
     expect(shellTargets('git -C sub commit -a && cat notes.md 2>/dev/null', '/w/app', '/h')).toEqual(['/w/app/notes.md', '/w/app/sub/notes.md']);
     expect(shellTargets(Array.from({ length: 40 }, (_, i) => `f${i}.txt`).join(' '), '/w', '/h')).toHaveLength(SHELL_CANDIDATES_MAX);
+  });
+  test('a temp path is not the work: never a candidate, never a folder swept, unless it lies in the session folder', () => {
+    expect(shellTargets('make > /tmp/x.log 2>&1; cat /real/tmp/y.txt /var/folders/ab/T/z.txt /scratch/t/w.txt src/a.ts', '/w/app', '/h', ['/scratch/t/', '/real/tmp'])).toEqual(['/w/app/src/a.ts']);
+    expect(shellTargets('cd /tmp/x && touch f.txt', '/w/app', '/h')).toEqual(['/w/app/f.txt']);
+    expect(shellTargets('echo hi > out.txt; cat ../other.txt', '/tmp/proj', '/h')).toEqual(['/tmp/proj/out.txt']);
+    expect(shellFolders('cd /tmp/x && make; cd /scratch/t/y; cd sub', '/w/app', '/h', ['/scratch/t'])).toEqual(['/w/app', '/w/app/sub']);
   });
   test('the lines a whole file changed, counted as git counts them: two edits far apart are two lines each way, not the span between', () => {
     const ten = Array.from({ length: 10 }, (_, i) => `line ${i}`);

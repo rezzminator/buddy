@@ -46,14 +46,14 @@ describe('roster', () => {
   test('a missing or invalid choice draws the duck and says why', () => {
     const r = mergeRoster(builtins, []);
     expect(choose(r, 'bad', undefined)).toMatchObject({ character: { name: 'Quacky' }, error: expect.stringMatching(/^Couldn't load bad: not valid JSON: /) });
-    expect(choose(r, 'ghost', undefined).error).toBe("Couldn't load ghost: no such character; the personality tab in /buddy picks another");
+    expect(choose(r, 'ghost', undefined).error).toBe("Couldn't load ghost: no such character; ctrl+x t in /buddy picks another");
   });
   test('no duck file: the stand-in duck, and the error', () => {
     const r = mergeRoster([], []);
     const c = choose(r, undefined, undefined);
     expect(c.character).toBe(STANDIN_DEFAULT);
     expect(c.character.id).toBe('duck');
-    expect(c.error).toBe("Couldn't load duck: no such character; the personality tab in /buddy picks another");
+    expect(c.error).toBe("Couldn't load duck: no such character; ctrl+x t in /buddy picks another");
   });
   test('"original" is reserved for the original companion: a file taking it is an error, never an entry', () => {
     const users = loadEntries([{ name: 'original.json', text: json({ id: 'original', name: 'Impostor' }) }, { name: 'mine.json', text: json({ id: 'mine', name: 'Mine' }) }], 'user');
@@ -69,13 +69,13 @@ describe('roster', () => {
     );
     expect(startWarning(undefined, [], ['option commentAfterEachTurn ignored: 1 is not true or false'])).toBe('option commentAfterEachTurn ignored: 1 is not true or false');
   });
-  test('a roster error, such as a file taking the reserved id "original", is said in the first greeting and points at the personality tab', () => {
+  test('a roster error, such as a file taking the reserved id "original", is said in the first greeting and points at the personality picker', () => {
     const { errors } = mergeRoster(builtins, loadEntries([{ name: 'original.json', text: json({ id: 'original', name: 'Impostor' }) }], 'user'));
     expect(startWarning(undefined, errors, [])).toBe(
-      'original.json (user): "original" is reserved for your original companion; rename the file and its id; the personality tab in /buddy lists your characters',
+      'original.json (user): "original" is reserved for your original companion; rename the file and its id; ctrl+x t in /buddy lists your characters',
     );
-    expect(startWarning("Couldn't load original: no original companion saved; the drawer's personality tab (/buddy) picks one", errors, ['option commentAfterEachTurn ignored: 1 is not true or false'])).toBe(
-      'Couldn\'t load original: no original companion saved; the drawer\'s personality tab (/buddy) picks one; original.json (user): "original" is reserved for your original companion; rename the file and its id; the personality tab in /buddy lists your characters; option commentAfterEachTurn ignored: 1 is not true or false',
+    expect(startWarning("Couldn't load original: no original companion saved; ctrl+x t in /buddy picks one", errors, ['option commentAfterEachTurn ignored: 1 is not true or false'])).toBe(
+      'Couldn\'t load original: no original companion saved; ctrl+x t in /buddy picks one; original.json (user): "original" is reserved for your original companion; rename the file and its id; ctrl+x t in /buddy lists your characters; option commentAfterEachTurn ignored: 1 is not true or false',
     );
   });
 });

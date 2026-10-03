@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, notice, sumUsage, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
+import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, notice, sumUsage, superseded, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
 
 function disk(refuse = false) {
   const files: Record<string, string> = {};
@@ -181,6 +181,28 @@ describe('usageFields', () => {
   test('no usage, or not an object: no fields', () => {
     expect(usageFields(undefined)).toEqual({});
     expect(usageFields('x')).toEqual({});
+  });
+});
+
+describe('superseded', () => {
+  test('only the rejection a newer render gives the call of the render it replaced', () => {
+    expect(superseded(new Error('ui.render: superseded'))).toBe(true);
+    expect(superseded('ui.render: superseded')).toBe(true);
+    expect(superseded(new Error('EACCES: not allowed to write ui.render: superseded'))).toBe(false);
+    expect(superseded(new Error('ui.render: no answer'))).toBe(false);
+    expect(superseded(undefined)).toBe(false);
+  });
+
+  test('failed: a superseded render is an info render.superseded, never an error, and not to be said; any other failure is an error to say', async () => {
+    const d = disk();
+    const L = new Logger('info', '/l/b.log', 1000, () => 0);
+    expect(L.failed('remembering the line', new Error('ui.render: superseded'), { area: 'chatTurnsToRead' })).toBe(false);
+    expect(L.failed('remembering the line', new Error('EACCES'), { area: 'chatTurnsToRead' })).toBe(true);
+    await L.flush(d.io);
+    expect(lines(d.files['/l/b.log']).map(({ ts: _, error, ...r }) => ({ ...r, message: error?.message }))).toEqual([
+      { level: 'info', event: 'render.superseded', what: 'remembering the line', area: 'chatTurnsToRead', message: undefined },
+      { level: 'error', event: 'remembering the line', area: 'chatTurnsToRead', message: 'EACCES' },
+    ]);
   });
 });
 

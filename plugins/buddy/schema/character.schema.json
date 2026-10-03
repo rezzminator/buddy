@@ -8,9 +8,9 @@
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
-    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$", "not": { "const": "original" }, "description": "Unique; the id the personality tab in /buddy stores. Equal to the file name. \"original\" is reserved for your original companion." },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$", "not": { "const": "original" }, "description": "Unique; the id the personality picker in /buddy stores. Equal to the file name. \"original\" is reserved for your original companion." },
     "name": { "type": "string", "minLength": 1, "maxLength": 40, "description": "Display name." },
-    "description": { "type": "string", "minLength": 1, "maxLength": 100, "description": "One line for the personality tab's preview and the hover card." },
+    "description": { "type": "string", "minLength": 1, "maxLength": 100, "description": "One line for the personality picker's preview." },
     "author": { "type": "string", "maxLength": 60, "description": "Credit." },
     "persona": { "type": "string", "minLength": 1, "maxLength": 1200, "description": "The character's voice prompt, second person (\"You are ...\")." },
     "color": {
@@ -33,7 +33,6 @@
         "oops": { "$ref": "#/$defs/frames" },
         "yay": { "$ref": "#/$defs/frames" },
         "thinking": { "$ref": "#/$defs/frames" },
-        "petted": { "$ref": "#/$defs/frames" },
         "working": { "$ref": "#/$defs/frames" },
         "sleep": { "$ref": "#/$defs/frames" }
       }
@@ -47,7 +46,6 @@
         "toolFail": { "$ref": "#/$defs/pool" },
         "testPass": { "$ref": "#/$defs/pool" },
         "testFail": { "$ref": "#/$defs/pool" },
-        "petted": { "$ref": "#/$defs/pool" },
         "thinking": { "$ref": "#/$defs/pool" },
         "rest": { "$ref": "#/$defs/pool" },
         "working": { "$ref": "#/$defs/pool" },

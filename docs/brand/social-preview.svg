@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <!-- GitHub social preview for rezzminator/buddy: render it to a 1280x640
+       PNG beside it (headless Chrome, window size 1280,640, screenshot) and
+       upload that in Settings, General, Social preview. The bubble line is
+       Quack's own testPass line from plugins/buddy/characters/duck.json. -->
+  <rect width="1280" height="640" fill="#1e1e2e"/>
+  <rect y="584" width="1280" height="56" fill="#181825"/>
+
+  <g font-family="'DejaVu Sans', 'Helvetica Neue', Arial, sans-serif">
+    <rect x="72" y="66" width="246" height="40" rx="20" fill="none" stroke="#D97757" stroke-width="2"/>
+    <text x="195" y="93" font-size="20" fill="#D97757" text-anchor="middle">Claude Code plugin</text>
+    <text x="66" y="236" font-size="136" font-weight="700" fill="#ffffff" letter-spacing="-3">buddy</text>
+    <text font-size="33" fill="#cdd6f4">
+      <tspan x="72" y="312">Claude Code buddy plugin: an ASCII</tspan>
+      <tspan x="72" y="360">companion above your prompt that</tspan>
+      <tspan x="72" y="408"><tspan fill="#a6e3a1">remembers your rules</tspan> and <tspan fill="#f9e2af">flags</tspan></tspan>
+      <tspan x="72" y="456" fill="#f9e2af">Claude's shortcuts</tspan>
+    </text>
+    <text x="72" y="520" font-size="22" fill="#9399b2">Seven characters built in, or draw your own in JSON</text>
+    <text x="72" y="620" font-size="22" fill="#9399b2">github.com/rezzminator/buddy</text>
+    <text x="1208" y="620" font-size="22" fill="#9399b2" text-anchor="end">MIT license</text>
+  </g>
+
+  <!-- A Claude Code window: Quack cheers a passing test run above the prompt. -->
+  <rect x="704" y="96" width="504" height="452" rx="16" fill="#11111b" stroke="#45475a" stroke-width="2"/>
+  <circle cx="732" cy="124" r="7" fill="#f38ba8"/>
+  <circle cx="756" cy="124" r="7" fill="#f9e2af"/>
+  <circle cx="780" cy="124" r="7" fill="#a6e3a1"/>
+
+  <g font-family="'DejaVu Sans Mono', Menlo, Consolas, monospace">
+    <text x="732" y="186" font-size="20" fill="#7f849c">● Ran 1 shell command</text>
+
+    <rect x="908" y="222" width="276" height="92" rx="16" fill="#11111b" stroke="#89b4fa" stroke-width="2"/>
+    <path d="M910 270 L884 286 L910 288" fill="#11111b" stroke="#89b4fa" stroke-width="2" stroke-linejoin="round"/>
+    <rect x="908" y="266" width="4" height="26" fill="#11111b"/>
+    <text font-size="22" font-style="italic" fill="#89b4fa">
+      <tspan x="930" y="260">QUACK! All green,</tspan>
+      <tspan x="930" y="292">like pond weed.</tspan>
+    </text>
+
+    <text font-size="30" fill="#ffffff" xml:space="preserve">
+      <tspan x="728" y="262"> *  .-.</tspan>
+      <tspan x="728" y="300">\__( x)=</tspan>
+      <tspan x="728" y="338"> \_\/_)</tspan>
+      <tspan x="728" y="376">  L  L</tspan>
+    </text>
+    <g font-size="22">
+      <text x="864" y="230" fill="#f9e2af">*</text>
+      <text x="742" y="214" fill="#a6e3a1">+</text>
+      <text x="870" y="356" fill="#f38ba8">.</text>
+      <text x="896" y="384" fill="#89b4fa">'</text>
+    </g>
+
+    <line x1="728" y1="420" x2="1184" y2="420" stroke="#45475a" stroke-width="2"/>
+    <text x="732" y="462" font-size="24" fill="#cdd6f4">&gt;</text>
+    <rect x="760" y="442" width="13" height="26" fill="#cdd6f4"/>
+    <line x1="728" y1="488" x2="1184" y2="488" stroke="#45475a" stroke-width="2"/>
+    <text x="732" y="524" font-size="18" fill="#6c7086">? for shortcuts</text>
+  </g>
+</svg>

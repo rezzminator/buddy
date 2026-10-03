@@ -31,6 +31,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 ### Local
 
 - `npm test` (vitest, then `claude plugin test plugins/buddy`), `npm run typecheck` and `npm run validate:plugin` (root and plugin, `--strict`) pass before a commit.
+- Targeted runs: `npx vitest run tests/{concern}.test.ts` runs one unit file; the hook tests have no targeted runner (`claude plugin test` takes only a folder and runs every file in it, and `plugins/buddy/tests/` holds one file of two to four minutes), so `npm run test:hooks` runs once, at the end of a change, never per edit.
 - `npm run live` runs the live proof and `npm run live:configs` the configuration proof, both with `--plugin-dir plugins/buddy`; run both after any change to the adapter.
 - `npm run release:check` proves a release's versions and CHANGELOG section.
 
@@ -52,8 +53,8 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - A new behaviour lands in the engine as a pure function with a test watched failing first; the adapter only wires it.
 - `$` is passed only to functions declared at the top level of the adapter and always spelled `$.noun.event(...)`, and `$.env` names are string literals: otherwise Claude Code loads the module with zero hooks, and `npm run validate:plugin` reports it.
 - Every hook catches, logs `{what} failed: {err}` through `say` (Claude Code names the plugin on a command's reply, never on a `$.ui.log` transcript line, so `notice()` adds `buddy:`; the debug log's copy then reads `buddy: buddy:`, accepted, as `$.ui.log` has no transcript-only sink), and returns `next(e)` or the original result.
-- A failure shows on screen: a missing or invalid character draws the duck with a bubble naming the error and pointing at the drawer's personality tab (`/buddy`), which lists it as `(invalid)`.
-- Only a `/buddy` question, or `commentAfterEachTurn` or `suggestNextPrompt` when on, calls a model; walking, reactions and every other command stay local.
+- A failure shows on screen: a missing or invalid character draws the duck with a bubble naming the error and pointing at the personality picker (ctrl+x t in `/buddy`), which lists it as `(invalid)`.
+- Only a `/buddy` question, or `commentAfterEachTurn`, `suggestNextPrompt` or `promptWhenIdle` when on, calls a model; walking, reactions and every other command stay local.
 - Dev files live outside the plugin directory, which installs whole.
 
 ### Characters

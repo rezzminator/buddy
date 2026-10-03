@@ -3,16 +3,24 @@
 // line answers), the main chat's compactions, your questions and its answers,
 // its comment after each turn, its second brain's verdict on Claude's last
 // move with what you most deeply want, each next prompt it suggested and
-// whether you sent it, each rewrite of its own notes (one per line), the canned lines it said on its own, and every failure, said as
-// one. Texts are kept whole. It spans exactly what the buddy remembers
-// (src/chatTurnsToRead.ts): the same last turns, nothing before a /clear. No
-// I/O: the adapter keeps the feed in $.state and draws it.
+// whether you sent it, the canned lines it said on its own, and every
+// failure, said as one. Texts are kept whole. It spans exactly what the buddy
+// remembers (src/chatTurnsToRead.ts): the same last turns, nothing before a
+// /clear. No I/O: the adapter keeps the feed in $.state and draws it.
 
 import { COMPACTION, type Block } from './chatTurnsToRead.ts';
 import type { TurnCut, Verdict } from './prompts.ts';
 import { statsBrief } from './stats.ts';
+import { suggestionUse } from './suggestNextPrompt.ts';
 
-export type FeedKind = 'you' | 'compact' | 'ask' | 'answer' | 'comment' | 'verdict' | 'suggest' | 'memory' | 'line' | 'failed' | 'clear';
+/** Every kind this build files and draws; a stored feed may still hold an older build's others. */
+export const FEED_KINDS = ['you', 'compact', 'ask', 'answer', 'comment', 'verdict', 'suggest', 'line', 'failed', 'clear'] as const;
+export type FeedKind = (typeof FEED_KINDS)[number];
+
+/** `feed` without the entries of a kind this build no longer has (an older build's `memory` notes), in order. */
+export function knownEntries(feed: readonly FeedEntry[]): FeedEntry[] {
+  return feed.filter((e) => (FEED_KINDS as readonly string[]).includes(e.kind));
+}
 
 /**
  * One entry. `who` and `color`: the character that said it (its name and
@@ -128,10 +136,22 @@ export function isTaken(suggestion: string, prompt: string): boolean {
 
 /**
  * Your prompt `prompt` was sent: every suggestion not yet answered is taken
- * when the prompt is that suggestion (isTaken), passed over otherwise.
+ * when the prompt is that suggestion or starts with it (suggestionUse,
+ * unedited or extended), passed over otherwise.
  */
 export function answerSuggestions(feed: readonly FeedEntry[], prompt: string): FeedEntry[] {
-  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: isTaken(e.text, prompt) } : e));
+  return feed.map((e) => (e.kind === 'suggest' && e.taken === undefined ? { ...e, taken: suggestionUse(e.text, prompt) !== null } : e));
+}
+
+/**
+ * The buddy's last message to you in the feed: the newest answer, comment or
+ * failure, a failure as the drawer's thread says it; null when none. The hover
+ * card's, after a reload, until the buddy says something new.
+ */
+export function lastMessageOf(feed: readonly FeedEntry[]): string | null {
+  const e = feed.findLast((x) => x.kind === 'answer' || x.kind === 'comment' || x.kind === 'failed');
+  if (!e) return null;
+  return e.kind === 'failed' ? `couldn't answer: ${e.text}` : e.text;
 }
 
 export type FeedStats = {

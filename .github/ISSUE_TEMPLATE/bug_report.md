@@ -26,7 +26,7 @@ assignees: ''
 - `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` set before Claude Code started (in `settings.json` or exported): yes / no
 - Did the session start with `buddy is off: …`? yes / no
 - Character in use (`duck` is the default):
-- Options you changed (`walkOverPromptBar`, `commentAfterEachTurn`, `chatTurnsToRead`, `customCharactersDir`, `ambiguousCharacterWidth`, …):
+- Options you changed (`walkOverPromptBar`, `commentAfterEachTurn`, `suggestNextPrompt`, `promptToMainChat`, `promptWhenIdle`, `chatTurnsToRead`, `customCharactersDir`, `ambiguousCharacterWidth`, …):
 
 **`/buddy log`**
 

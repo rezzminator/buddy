@@ -15,9 +15,9 @@ makes the file invalid.
 | Field | Type | Req | Meaning |
 | --- | --- | --- | --- |
 | `$schema` | string | no | `"../schema/character.schema.json"` in built-ins |
-| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the Yours group of the drawer's personality tab and in the bubble at a session's start and after `/buddy reload`; the id the personality tab stores |
+| `id` | string, `^[a-z0-9][a-z0-9-]{0,31}$` | yes | unique, and not `original`, reserved for your original companion: a file taking it is refused with an error naming the file, shown in the Yours group of the personality picker and in the bubble at a session's start and after `/buddy reload`; the id the personality picker stores |
 | `name` | string ≤ 40 | yes | display name |
-| `description` | string ≤ 100 | yes | one line for the personality tab's preview and the hover card |
+| `description` | string ≤ 100 | yes | one line for the personality picker's preview |
 | `author` | string ≤ 60 | no | credit |
 | `persona` | string ≤ 1200 | yes | the character's voice prompt, 2nd person ("You are …") |
 | `color` | Ink color name or `#rrggbb` | no | sprite color, default `"yellow"` |
@@ -44,7 +44,6 @@ frame is static. A pose you leave out falls back to another:
 | `oops` | no | `idle` | a tool call failed, or a test run failed |
 | `yay` | no | `idle` | a test run passed |
 | `thinking` | no | `idle` | a question is being answered |
-| `petted` | no | `yay` | `/buddy` |
 | `working` | no | `idle` | Claude is working; the character stands still, reading a book for instance |
 | `sleep` | no | `rest` | midnight to 6 am, after a minute with nothing happening; a `z Z` drifts above it |
 
@@ -68,11 +67,10 @@ voice.
 
 | Event | Said when |
 | --- | --- |
-| `greeting` | the session starts, or after a switch in the drawer's personality tab, `/buddy reload` and `/buddy on` |
+| `greeting` | the session starts, or after a pick in the personality picker, `/buddy reload` and `/buddy on` |
 | `toolFail` | a tool call failed or was denied |
 | `testPass` | a Bash command's output reads like a test pass |
 | `testFail` | a Bash command's output reads like a test failure |
-| `petted` | you type `/buddy` |
 | `thinking` | it starts on a question you asked |
 | `rest` | one walking rest in four, for 6 seconds, beside the `rest` pose |
 | `working` | Claude starts working and no bubble is showing: one time in four, for 6 seconds |
@@ -131,7 +129,7 @@ its own:
 ```
 
 Every pose it leaves out falls back as the table above says: `oops`,
-`thinking` and `working` draw `idle`, and `petted` draws `yay`.
+`thinking` and `working` draw `idle`.
 
 ## Try it locally
 
@@ -140,12 +138,12 @@ Every pose it leaves out falls back as the table above says: `oops`,
 2. Point the `customCharactersDir` option at that folder: through `/plugin configure`, or in
    `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersDir`.
    Start a new session.
-3. `/buddy` opens the drawer; its personality tab (ctrl+x t) lists it under Yours, or as `blob (invalid)`
+3. `/buddy` opens the drawer; ctrl+x t there opens the personality picker, which lists it under Yours, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.
-4. ctrl+x n or ctrl+x b onto it draws it.
+4. ↑ or ↓ onto it, then Enter, draws it.
 5. Edit the file, save, and run `/buddy reload` to see the change. Try a
    narrow window as well as a wide one.
-6. Pick your usual character in the personality tab to go back to it.
+6. Pick your usual character in the personality picker to go back to it.
 
 An editor that reads `$schema` checks the file as you type. Inside this
 repository, the built-ins use the relative path
@@ -167,7 +165,7 @@ repository, the built-ins use the relative path
    ```
 
 4. Try it in a real session: `claude --plugin-dir plugins/buddy`, then
-   pick it in the personality tab of `/buddy`.
+   pick it in the personality picker (ctrl+x t in `/buddy`).
 5. Open a pull request against `develop`, with each pose pasted in a text
    block.
 
@@ -181,7 +179,7 @@ A character ships when:
 
 ## Species templates
 
-The "Yours" group of the drawer's personality tab brings back the companion that
+The "Yours" group of the personality picker brings back the companion that
 Claude Code's old `/buddy` hatched for you. Your account decides its species, eye, hat and rarity; its
 look comes from a species template, `plugins/buddy/species/{species}.json`,
 and its hat from `plugins/buddy/species/hats.json`. A template is ASCII art
@@ -246,7 +244,7 @@ node -e 'const t=require("./plugins/buddy/species/blob.json");for(const [p,fs] o
 
 The engine checks a template with `validateSpecies` in
 `plugins/buddy/src/species.ts`, which reports the first thing wrong by its
-path. The drawer's personality tab previews your own companion live. A template ships under
+path. The drawer's personality picker previews your own companion live. A template ships under
 the same rules as a character: the art and the lines are your own work, and
 they are friendly.
 

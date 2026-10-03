@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import {
-  LIST_MIN_WIDTH, allItems, buildMenu, currentKeyOf, findItem, listWidth, previewOf, rowLabel, type MenuInput, type Originals,
+  LIST_MIN_WIDTH, PANE_ROWS_MAX, allItems, buildMenu, currentKeyOf, findItem, listWidth, listWindow, menuRows, paneRows, previewOf, rowLabel, type MenuInput, type Originals,
 } from '../plugins/buddy/src/menu.ts';
 import { loadEntries, mergeRoster } from '../plugins/buddy/src/roster.ts';
 
@@ -86,5 +86,36 @@ describe('listWidth', () => {
     const notice = 'No companion in $CLAUDE_CONFIG_DIR/.claude.json or its backups.';
     expect(listWidth(menu([notice], ['Yellow Duck (yellow-duck)']))).toBe('* Yellow Duck (yellow-duck)'.length);
     expect(listWidth(menu([], ['Cat (cat)']))).toBe(LIST_MIN_WIDTH);
+  });
+});
+
+describe('the list in the personality pane', () => {
+  const rows = menuRows(buildMenu(input()));
+  test('one row each: a group after a gap, its title, its lines, then its entries', () => {
+    expect(rows.map((r) => r.key)).toEqual(['group:0', 'use:bad', 'use:cat', 'use:duck', 'gap:1', 'group:1', 'original:native', 'original:npm', 'use:mine']);
+    expect(rows[0]).toEqual({ key: 'group:0', kind: 'title', text: 'Shipped' });
+    expect(menuRows(buildMenu(input({ roster: mergeRoster([], []), originals: { kind: 'none', notes: [] } }))).map((r) => r.kind)).toEqual(['title', 'line', 'gap', 'title', 'line']);
+  });
+  test('a list that fits is drawn whole; a taller one round the lit entry, a row kept each side for what is left out', () => {
+    expect(listWindow(rows, 'use:cat', 9)).toEqual({ from: 0, to: 9 });
+    expect(listWindow(rows, 'use:cat', 5)).toEqual({ from: 1, to: 4 });
+    expect(listWindow(rows, 'use:mine', 5)).toEqual({ from: 6, to: 9 });
+    expect(listWindow(rows, 'group:0', 5)).toEqual({ from: 0, to: 3 });
+  });
+  test('the entries before and after the lit one are in the window when they fit, so the ring can move onto them', () => {
+    // Centred on duck the window would be cat..Yours: the native roll, the next entry down, is moved in.
+    expect(listWindow(rows, 'use:duck', 7)).toEqual({ from: 2, to: 7 });
+    expect(listWindow(rows, 'original:native', 7)).toEqual({ from: 3, to: 8 });
+    // Too far apart for the window: the lit one centred.
+    expect(listWindow(rows, 'use:duck', 5)).toEqual({ from: 2, to: 5 });
+  });
+  test('the pane asks for its whole list, or the lit preview when taller, at most PANE_ROWS_MAX', () => {
+    expect(paneRows(buildMenu(input()), 'use:cat')).toBe(9);
+    // No shipped characters, Mochi's two rolls: six rows, under the native roll's sprite, name, about, greeting and three card rows.
+    const short = buildMenu(input({ roster: mergeRoster([], []) }));
+    expect(menuRows(short)).toHaveLength(6);
+    expect(paneRows(short, 'original:native')).toBe(1 + 3 + 3);
+    const many = loadEntries(Array.from({ length: 30 }, (_, i) => ({ name: `c${i}.json`, text: char(`c${i}`, `C${i}`) })), 'user');
+    expect(paneRows(buildMenu(input({ roster: mergeRoster(builtins, many) })), 'use:cat')).toBe(PANE_ROWS_MAX);
   });
 });

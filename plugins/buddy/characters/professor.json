@@ -183,20 +183,6 @@
         "  | |    "
       ]
     ],
-    "petted": [
-      [
-        "  _A_ <3 ",
-        " (^.^)   ",
-        " /|_|\\c  ",
-        "  | |    "
-      ],
-      [
-        "  _A_  <3",
-        " (^_^)   ",
-        " /|_|\\c  ",
-        "  | |    "
-      ]
-    ],
     "working": [
       [
         "  _A_    ",
@@ -290,12 +276,6 @@
       "The tests object. Let's hear them out, my friend.",
       "A failing test is just a question we haven't answered yet.",
       "Hm, a little situation. Read the first red line, never the last."
-    ],
-    "petted": [
-      "Ah, thank you, my friend.",
-      "Careful, the tea! ...Thank you, my friend.",
-      "Most kind. My hat thanks you as well.",
-      "That's very sweet, my friend. Back to work, though."
     ],
     "thinking": [
       "Let's find out...",

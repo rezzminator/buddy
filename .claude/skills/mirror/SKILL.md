@@ -38,10 +38,23 @@ node mirror.mjs replay <round-file> [--call N] --arms old,HEAD,tree --runs 3 --o
 - Each call is `claude -p --safe-mode` (no CLAUDE.md, plugins, hooks or MCP) with no tools, on the captured call's model and effort.
 - Rows append to `<dir>/ledger.tsv`; every system, prompt and reply is kept beside it. State the call count (fixtures × arms × runs) before a batch: every call is paid.
 
-## 3. The loop
+## 3. Suite — every audited defect, replayed at once
+
+The suite file is `~/.config/buddy/suite.tsv`, kept out of the repo and built from the audit: one row per audited round, each naming its round file, call, kind, the reply line it judges and the check that line must pass.
+
+```sh
+node .claude/skills/mirror/mirror.mjs suite [suite-file] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--rows id-or-kind,...] [--jobs J]
+```
+
+- Run `--runs 0` first. It is free: every row is read and resolved, every arm's system and prompt are built, and each row's check is scored against its audited reply, so a check that does not describe the reply it came from shows before any money is spent.
+- Before a paid run, state the call count: rows × arms × runs.
+- Verdicts: HOLDS (a defect row whose judged arm, the last of `--arms`, passes every run, or a control that passes two runs in three), FAILS, view (reported, never gating) and DISAGREES (the check's verdict on the audited reply contradicts the row's kind: a defect or view row whose check passes the flawed reply, or a control whose check fails the good one; fix the row).
+- A `view` row's flaw came from what the buddy saw, and a replay changes only the system prompt. It gates only once a hand-edited prompt fixture names it in `prompt` and its kind becomes `defect`. The A/B rounds set the precedent: the captured prompt with only the fixed line changed.
+
+## 4. The loop
 
 1. Fixtures: the live rounds that show the flaw, plus controls — rounds the current prompt handled well.
 2. Hypothesis: one change, named before it is made.
 3. A unit test pinning it, watched failing first.
-4. Replay every fixture, `old,HEAD,tree`, at least 3 runs each. The change holds when `tree` has no flawed row on the fixtures, and the controls stay as good as `HEAD`: a suggestion still useful, a comment still in character. Otherwise back to 2.
+4. Replay every fixture, `old,HEAD,tree`, at least 3 runs each. The change holds when `tree` has no flawed row on the fixtures, and the controls stay as good as `HEAD`: a suggestion still useful, a comment still in character. Otherwise back to 2. Before a prompt change ships, also run `suite --rows defect,control`.
 5. Gates, install, and the user's `/reload`; then back to 1 on your live turns — the running chat keeps the code it loaded.

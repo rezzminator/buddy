@@ -159,20 +159,6 @@
         "  | |    "
       ]
     ],
-    "petted": [
-      [
-        "  ,,, <3 ",
-        " (^-^)   ",
-        " /|=|\\   ",
-        "  | |    "
-      ],
-      [
-        "  ,,,  <3",
-        " (^_^)   ",
-        " /|=|\\   ",
-        "  | |    "
-      ]
-    ],
     "working": [
       [
         "  ,,,    ",
@@ -241,11 +227,6 @@
       "Failing test. Start at the first one; the rest are echoes.",
       "The test is right and the code is proud. Humble the code.",
       "Red means somewhere, an abstraction is hiding the bug."
-    ],
-    "petted": [
-      "Heh. Careful, I'm running in ring 0.",
-      "Thanks. You're alright. You write small functions.",
-      "Okay, okay. Back to the compiler."
     ],
     "thinking": [
       "Hmm. What's the simplest thing that could possibly work?",

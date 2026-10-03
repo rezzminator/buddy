@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Buddy does not show up
+    url: https://github.com/rezzminator/buddy#-faq
+    about: Function hooks off, VS Code or mobile, a narrow window, /buddy off; the FAQ covers each.
+  - name: A security problem
+    url: https://github.com/rezzminator/buddy/security/advisories/new
+    about: Report it privately, never in a public issue (see SECURITY.md).

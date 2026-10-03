@@ -1,21 +1,20 @@
 // `/buddy ...` parsed: alone it opens the drawer; a bare word is a command
 // only when it stands alone, so "reload the page" is a question, not /buddy
-// reload. Petting is the drawer's ctrl+x p, never typed.
+// reload.
 
 export type Action =
   | { kind: 'drawer' }
-  | { kind: 'pet' }
   | { kind: 'off' }
   | { kind: 'on' }
   | { kind: 'reload' }
   | { kind: 'help' }
   | { kind: 'log' }
-  /** `/buddy list` or `/buddy use {id}`, from 0.1.0: switching lives in the drawer's personality tab now. */
+  /** `/buddy list` or `/buddy use {id}`, from 0.1.0: switching lives in the personality pane (ctrl+x t in /buddy) now. */
   | { kind: 'moved' }
   | { kind: 'question'; text: string };
 
 /** The drawer's shortcuts, as its guide and /buddy help say them (hooks/drawer.tsx SHORTCUTS). */
-export const DRAWER_KEYS = 'ctrl+x tab ask · ctrl+x t talk/personality · ctrl+x u use the idea · ctrl+x n/b next/previous character · ctrl+x p pet · ctrl+x q close';
+export const DRAWER_KEYS = 'ctrl+x tab ask · ctrl+x t personality (↑ ↓ and Enter pick, Esc closes) · ctrl+x u use suggested prompt · ctrl+x q close';
 
 export const USAGE = [
   '/buddy               open or fold the drawer: your buddy, your thread with it, its personalities',

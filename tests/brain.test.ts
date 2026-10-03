@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 import {
   ANSWER_MS, COMPLETE_DEADLINE_MS, LAST_BASH_MAX, BUBBLE_MS, ERROR_MS, MODEL_MIN_MS, REST_LINE_CHANCE, SLEEP_IDLE_MS, TOOL_LINE_CHANCE, WAKE_LINE_CHANCE, WORKING_LINE_CHANCE, answer, beginQuestion, createBrain, currentPose, deadlineReason, endQuestion, endTurn, noAnswerReason,
-  failAnswer, farewell, holdsAnswer, sayLine, isMainLoop, isSleepHour, observeBand, period, pet, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
+  failAnswer, farewell, holdsAnswer, sayLine, isMainLoop, isSleepHour, observeBand, period, react, refuseQuestion, sceneOf, setCharacter, tick, wake,
 } from '../plugins/buddy/src/brain.ts';
 import { validateCharacter, type Character } from '../plugins/buddy/src/character.ts';
 import { raw } from './fixtures.ts';
@@ -70,13 +70,9 @@ describe('brain', () => {
     ticks(b, 2000 / 200);
     expect(b.confetti).toBeNull();
   });
-  test('pet, question, answer, lost thread', () => {
+  test('question, answer, lost thread', () => {
     const b = createBrain(char(), true);
-    pet(b, never);
-    expect(b.pets).toBe(1);
-    expect(currentPose(b)).toBe('petted');
     beginQuestion(b, never);
-    expect(b.questions).toBe(1);
     expect(currentPose(b)).toBe('thinking');
     answer(b, 'Forty-two.');
     expect(b.talk).toMatchObject({ text: 'Forty-two.', pose: null, until: b.now + ANSWER_MS });
@@ -84,6 +80,23 @@ describe('brain', () => {
     failAnswer(b, 'api-error');
     expect(b.talk?.text).toBe("Fixy couldn't answer: api-error");
     expect(farewell(b, never)).toBe('Until next time.');
+  });
+  test('the last message to you: an answer or a failure once shown, never a canned line nor the prompt to Claude; a switch keeps it', () => {
+    const b = createBrain(char(), true);
+    expect(b.lastToYou).toBeNull();
+    sayLine(b, 'greeting', null, BUBBLE_MS, never);
+    expect(b.lastToYou).toBeNull();
+    answer(b, 'Forty-two.');
+    expect(b.lastToYou).toBe('Forty-two.');
+    ticks(b, MODEL_MIN_MS / 200);
+    answer(b, 'run the tests', null, undefined, false, undefined, 'claude');
+    expect(b.talk?.text).toBe('run the tests');
+    expect(b.lastToYou).toBe('Forty-two.');
+    ticks(b, MODEL_MIN_MS / 200);
+    failAnswer(b, 'api-error');
+    expect(b.lastToYou).toBe("Fixy couldn't answer: api-error");
+    setCharacter(b, char(), undefined, never);
+    expect(b.lastToYou).toBe("Fixy couldn't answer: api-error");
   });
   test('sleeps 00:00-05:59 after 60 s idle, with the sleep pose; any event wakes him with a line', () => {
     expect([0, 5, 6, 23].map(isSleepHour)).toEqual([true, true, false, false]);
@@ -100,7 +113,7 @@ describe('brain', () => {
     expect(b.sleeping).toBe(false);
     expect(b.talk?.text).toBe('Hi from Fixy.');
   });
-  test('a sleeping buddy woken by a pet, a question, a refusal or a reacted tool call says only that: no wake line nobody sees', () => {
+  test('a sleeping buddy woken by a question, a refusal or a reacted tool call says only that: no wake line nobody sees', () => {
     const asleep = () => {
       const b = createBrain(char(), true);
       ticks(b, (2 * SLEEP_IDLE_MS) / 200, NIGHT);
@@ -113,7 +126,6 @@ describe('brain', () => {
       act(b);
       return { sleeping: b.sleeping, said: b.said.length };
     };
-    expect(woken((b) => pet(b, never))).toEqual({ sleeping: false, said: 1 });
     expect(woken((b) => beginQuestion(b, never))).toEqual({ sleeping: false, said: 0 });
     expect(woken((b) => refuseQuestion(b))).toEqual({ sleeping: false, said: 0 });
     expect(woken((b) => react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, always))).toEqual({ sleeping: false, said: 1 });
@@ -157,7 +169,7 @@ describe('brain', () => {
       ticks(b, 3);
     }
     expect(seen).toEqual(['1', '2', '3', '2', '1', '2', '3', '2', '1']);
-    pet(b, never);
+    sayLine(b, 'toolFail', 'oops', BUBBLE_MS, never);
     ticks(b, 3);
     sceneOf(b);
     b.talk = null;
@@ -246,7 +258,7 @@ describe('a question\'s deadline and failures', () => {
 });
 
 describe('a pending question', () => {
-  const lines = { greeting: ['Hi from Fixy.'], thinking: ['Hmm.'], petted: ['Purr.'], toolFail: ['Ouch.'] };
+  const lines = { greeting: ['Hi from Fixy.'], thinking: ['Hmm.'], toolFail: ['Ouch.'] };
   test('the thinking line has no timer of its own: it stays past any timer, over reactions, until the question ends', () => {
     const b = createBrain(char({ lines }), true);
     beginQuestion(b, never);
@@ -261,11 +273,11 @@ describe('a pending question', () => {
     expect(b.talk).toBeNull();
     expect(b.said).toEqual([]);
   });
-  test('a pet or a refusal covers it for its own time, then it comes back; a switched-in character never says it', () => {
+  test('a canned line or a refusal covers it for its own time, then it comes back; a switched-in character never says it', () => {
     const b = createBrain(char({ lines }), true);
     beginQuestion(b, never);
-    pet(b, never);
-    expect(b.talk?.text).toBe('Purr.');
+    sayLine(b, 'greeting', null, BUBBLE_MS, never);
+    expect(b.talk?.text).toBe('Hi from Fixy.');
     ticks(b, BUBBLE_MS / 200);
     expect(b.talk?.text).toBe('Hmm.');
     refuseQuestion(b);
@@ -312,10 +324,9 @@ describe('a model bubble', () => {
       expect(say(b)).toBe(true);
       const text = b.talk!.text;
       expect(holdsAnswer(b)).toBe(true);
-      for (const event of ['greeting', 'petted', 'toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake'] as const) sayLine(b, event, null, BUBBLE_MS, always);
+      for (const event of ['greeting', 'toolFail', 'testPass', 'testFail', 'working', 'rest', 'wake'] as const) sayLine(b, event, null, BUBBLE_MS, always);
       react(b, { tool: 'Bash', isError: false, denied: false, output: '4 passed', command: 'npm test' }, always);
       react(b, { tool: 'Bash', isError: true, denied: false, output: '', command: 'false' }, always);
-      pet(b, always);
       b.sleeping = true;
       wake(b, always);
       endTurn(b, true, 0);

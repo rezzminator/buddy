@@ -29,7 +29,6 @@ One timer drives everything: `$.clock.every(period, onTick)`.
 The period is the character's `motion.stepMs` when it walks, else `STILL_PERIOD_MS` (300 ms); a switch to a character with another period restarts the timer.
 `/buddy off` stops it and `/buddy on` starts it again, so a hidden buddy costs nothing.
 Two sessions share one store, which raises no change event, so each reads `hidden` back (`syncHidden`): every 15 ticks (`SHARED_TICKS`) while drawn, and on a band draw at most every 3 s (`SHARED_MS`) while hidden; another session's `/buddy off` or `/buddy on` reaches this one that way.
-A pet likewise counts on from the stored pet count.
 
 Each tick advances the brain's own clock, `b.now`, by exactly one period, then expires the bubble and the confetti, checks for sleep, and moves the character.
 Brain time is the tick count times the period, never the wall clock, so a test that advances the clock by N ms sees exactly N ms of behaviour.
@@ -76,7 +75,6 @@ Hidden is the adapter's state, not the brain's: the band yields and the clock st
 | `/buddy on` | `wake`, `greet` | the greeting |
 | a finished tool call | `react` | wakes, adds the call to the turn's tally, reacts per the table below |
 | a turn ends | `wake`, `endTurn` | the tally resets; a `commentAfterEachTurn` is due or not ([Voice](./voice.md)) |
-| ctrl+x p in the drawer | `pet` | `petted` pose and line, one more pet |
 | `/buddy` alone | | opens or folds the drawer ([Drawer](./drawer.md)) |
 | `/buddy {question}` | `beginQuestion`, then `answer` or `failAnswer` | `thinking` until the answer, the failure or the question's deadline (90 s), then the answer for 15 s, or `oops` with the reason; neither shows once another character is drawn |
 | the band draws | `observeBand` | width, height, and work starting or stopping |
@@ -91,7 +89,7 @@ A finished tool call is classified by `classifyToolCall`, and the outcome picks 
 | `testPass` | Bash output matches `TEST_PASS` and not `TEST_FAIL` | `yay` | `testPass` | yes |
 
 Only Bash output is read for tests, and only its last 20,000 characters, where a runner prints its summary.
-Bash output counts as a test result only when the command runs a test runner (`TEST_RUNNER`): `npm`/`pnpm`/`yarn`/`bun test`, `vitest`, `jest`, `mocha`, `ava`, `tap`, `pytest`, `python -m pytest` / `unittest`, `go test`, `cargo test` or `cargo nextest`, `rspec`, `rake test`, `rails test`, `mix test`, `dotnet test`, `mvn test`, `gradle test`, `deno test`, `phpunit` or `ctest`, where a command starts, past any `VAR=value`, a launcher such as `npx` or `bundle exec`, and a path. Its output, color codes stripped, is read against each runner's own summary shapes (`TEST_PASS`, `TEST_FAIL`): a counted summary needs a non-zero count of what it reports, so `3 passed; 0 failed` is a pass and `Attempt 1 failed` or `PASS=1` is no summary, while a runner's per-file or per-test marks (`PASS {file}`, `FAIL`, `--- FAIL`, `not ok N`, `FAILED {path}::{test}`) count with no number. A failure pattern always wins over a pass. Other commands' output (`git log`, `grep`, `ls`) never reacts as a test. Not recognised yet: a gradle pass (gradle prints no count), `make test`, a runner inside `docker` or `bash -c`, and `node --test`.
+Bash output counts as a test result only when the command runs a test runner (`TEST_RUNNER`): `npm`/`pnpm`/`yarn`/`bun test`, `vitest`, `jest`, `mocha`, `ava`, `tap`, `pytest`, `python -m pytest` / `unittest`, `go test`, `cargo test` or `cargo nextest`, `rspec`, `rake test`, `rails test`, `mix test`, `dotnet test`, `mvn test`, `gradle test`, `deno test`, `phpunit`, `ctest` or `claude plugin test` (`go -C dir test` too), where a command starts, past any `VAR=value`, a launcher such as `npx` or `bundle exec`, and a path. An opening quote after a shell's `-c` (`bash -lc '…'`, `sh -c "…"`) or a wrapper's `run` or `exec` (`dev.sh run '…'`) is a command start too, while `echo "npm test"` or `git log --grep "go test"` is none. Its output, color codes stripped, is read against each runner's own summary shapes (`TEST_PASS`, `TEST_FAIL`): a counted summary needs a non-zero count of what it reports, so `3 passed; 0 failed` is a pass and `Attempt 1 failed` or `PASS=1` is no summary, while a runner's per-file or per-test marks (`PASS {file}`, `FAIL`, `--- FAIL`, `not ok N`, `FAILED {path}::{test}`) count with no number. A failure pattern always wins over a pass. Other commands' output (`git log`, `grep`, `ls`) never reacts as a test. Not recognised yet: a gradle pass (gradle prints no count), `make test`, an unquoted runner after `docker exec`, and `node --test`.
 
 ## Particles
 
@@ -121,7 +119,7 @@ Text is measured in terminal cells, not characters (`src/width.ts`): CJK and mos
 | the `thinking` line while a question runs | until the answer, the failure or the question's deadline (90 s) |
 
 While a bubble shows, the character stands still.
-Hovering the sprite shows a card, in terminals that report the mouse: the name, the description (or an original's subtitle), `pets N | questions N | {mood}`, and an original's stat rows.
+Hovering the sprite shows a card, in terminals that report the mouse: the name, then the buddy's last message to you (`lastToYou`: an answer, a comment, a warning or a failure; never a canned line or the prompt sent to Claude), wrapped to the card, at most 72 columns wide (`CARD_MAX_WIDTH`), and cut with `…` to the rows the band draws; `Nothing said to you yet.` before any (`NOTHING_SAID`). After a reload, while the new brain has said nothing, it is the feed's newest answer, comment or failure (`lastMessageOf`).
 The card opens on the side away from the bubble, or not at all when neither side fits.
 
 ## Decisions
@@ -143,11 +141,11 @@ The card opens on the side away from the bubble, or not at all when neither side
 | File | Symbols |
 | --- | --- |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `bandScene`, `drawBand`, `refresh`, `startClock`, `stopClock`, `onTick`, `syncHidden`, `onToolCall`, `onTurnComplete` |
-| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `setCharacter`, `greet`, `react`, `pet`, `wake`, `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason`, `SLEEP_IDLE_MS`, `REST_LINE_CHANCE`, `WORKING_LINE_CHANCE` |
+| [`src/brain.ts`](../../plugins/buddy/src/brain.ts) | `Brain`, `createBrain`, `tick`, `observeBand`, `currentPose`, `setCharacter`, `greet`, `react`, `wake`, `beginQuestion`, `endQuestion`, `answer`, `failAnswer`, `refuseQuestion`, `endTurn`, `isSleepHour`, `sceneOf`, `BUBBLE_MS`, `ANSWER_MS`, `ERROR_MS`, `COMPLETE_DEADLINE_MS`, `deadlineReason`, `noAnswerReason`, `SLEEP_IDLE_MS`, `REST_LINE_CHANCE`, `WORKING_LINE_CHANCE` |
 | [`src/motion.ts`](../../plugins/buddy/src/motion.ts) | `tickMotion`, `maxX`, `periodMs`, `STILL_FRAME_MS`, `STILL_PERIOD_MS` |
 | [`src/reactions.ts`](../../plugins/buddy/src/reactions.ts) | `REACTIONS`, `classifyToolCall`, `TEST_RUNNER`, `TEST_PASS`, `TEST_FAIL`, `toolOutput`, `bashCommand` |
 | [`src/particles.ts`](../../plugins/buddy/src/particles.ts) | `particles`, `CONFETTI_MS`, `CONFETTI_TICK_MS`, `CONFETTI_ROWS` |
-| [`src/scene.ts`](../../plugins/buddy/src/scene.ts) | `Scene`, `buildScene`, `bubbleWidth`, `MOODS`, `MIN_BUBBLE_COLS`, `MIN_EFFECT_COLS` |
+| [`src/scene.ts`](../../plugins/buddy/src/scene.ts) | `Scene`, `buildScene`, `bubbleWidth`, `NOTHING_SAID`, `MIN_BUBBLE_COLS`, `MIN_EFFECT_COLS` |
 | [`src/width.ts`](../../plugins/buddy/src/width.ts) | `charWidth`, `cellWidth`, `padEndCells`, `sliceCells`, `wrapCells`, `ELLIPSIS` |
 
 ## How it's tested

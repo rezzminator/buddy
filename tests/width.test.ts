@@ -5,7 +5,7 @@ const wide = { ambiguousCharacterWidth: 'wide' } as const;
 
 describe('cellWidth', () => {
   test('ASCII: one cell a character, exactly .length', () => {
-    for (const s of ['', 'a', 'Quack!', '(o)>', ' /|\\ ', 'pets 2 | questions 1 | curious']) {
+    for (const s of ['', 'a', 'Quack!', '(o)>', ' /|\\ ', 'questions 1 | curious']) {
       expect(cellWidth(s)).toBe(s.length);
       expect(cellWidth(s, wide)).toBe(s.length);
     }

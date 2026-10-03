@@ -57,6 +57,18 @@ export function errorFields(error: unknown): { message: string; stack?: string }
   return { message: String(error) };
 }
 
+/**
+ * The rejection Claude Code gives every `$` call of a `ui.render` hook once a
+ * newer render of the same instance replaced it: harmless, the newer render
+ * draws, so it is never a failure.
+ */
+export const RENDER_SUPERSEDED = 'ui.render: superseded';
+
+/** Whether `error` is a render's call cut short by a newer render (RENDER_SUPERSEDED). */
+export function superseded(error: unknown): boolean {
+  return errorFields(error).message === RENDER_SUPERSEDED;
+}
+
 export class Logger {
   level: LogLevel;
   /** The log file; '' writes no file (errors still reach the fallback). */
@@ -107,6 +119,20 @@ export class Logger {
 
   error(event: string, error: unknown, fields: LogFields = {}): void {
     this.log('error', event, { ...fields, error: errorFields(error) });
+  }
+
+  /**
+   * A failure of `what`: an error record, and true, to be said. A render's
+   * call a newer render superseded is an info `render.superseded` instead,
+   * and false: nothing to say.
+   */
+  failed(what: string, error: unknown, fields: LogFields = {}): boolean {
+    if (superseded(error)) {
+      this.log('info', 'render.superseded', { what, ...fields });
+      return false;
+    }
+    this.error(what, error, fields);
+    return true;
   }
 
   /** A debug record at most once per THROTTLE_MS for its event. */

@@ -2,10 +2,10 @@
 // contract of schema/character.schema.json, checked field by field so an
 // author reads the first thing wrong, by its path.
 
-export const POSES = ['idle', 'walkRight', 'walkLeft', 'rest', 'oops', 'yay', 'thinking', 'petted', 'working', 'sleep'] as const;
+export const POSES = ['idle', 'walkRight', 'walkLeft', 'rest', 'oops', 'yay', 'thinking', 'working', 'sleep'] as const;
 export type Pose = (typeof POSES)[number];
 
-export const LINE_EVENTS = ['greeting', 'toolFail', 'testPass', 'testFail', 'petted', 'thinking', 'rest', 'working', 'wake', 'farewell'] as const;
+export const LINE_EVENTS = ['greeting', 'toolFail', 'testPass', 'testFail', 'thinking', 'rest', 'working', 'wake', 'farewell'] as const;
 export type LineEvent = (typeof LINE_EVENTS)[number];
 
 /** One frame: its rows, top to bottom. */
@@ -28,7 +28,7 @@ export type Character = {
   height: number;
   /** An original companion: the sprite color cycles through the rainbow each tick. */
   shiny?: boolean;
-  /** An original companion: the hover card's second line, and the rows below its stats line. */
+  /** An original companion: its species line and the rows below it, in the personality picker's preview. */
   card?: { subtitle: string; rows: readonly string[] };
 };
 
@@ -58,7 +58,6 @@ export const POSE_FALLBACK: Record<Pose, Pose | null> = {
   oops: 'idle',
   yay: 'idle',
   thinking: 'idle',
-  petted: 'yay',
   working: 'idle',
   sleep: 'rest',
 };

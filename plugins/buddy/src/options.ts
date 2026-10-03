@@ -31,6 +31,8 @@ export type Options = {
   suggestNextPrompt: boolean;
   /** The end-of-turn call may write a prompt the buddy sends the main chat itself (PROMPT_TO_MAIN_CHAT), at most one per prompt of the user's. */
   promptToMainChat: boolean;
+  /** After 30 idle minutes, one model call asks whether Claude needs a push; a push reaches Claude as the buddy's prompt. */
+  promptWhenIdle: boolean;
   /** The buddy's memory: how many of the main chat's latest answered turns it remembers, with what it and the user said around them, 1 to CHAT_TURNS_TO_READ_MAX; every question and end-of-turn call reads it. */
   chatTurnsToRead: number;
   /** The plugin log's level: error, info or debug. */
@@ -53,7 +55,8 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   effort: 'low',
   secondsBetweenComments: 0,
   suggestNextPrompt: true,
-  promptToMainChat: false,
+  promptToMainChat: true,
+  promptWhenIdle: false,
   chatTurnsToRead: CHAT_TURNS_TO_READ_DEFAULT,
   logLevel: 'info',
   logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
@@ -71,7 +74,7 @@ function bool(v: unknown): boolean | undefined {
 export function resolveOptions(raw: Record<string, unknown>): Options {
   const o: Options = { ...DEFAULTS, errors: [] };
   const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
-  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, promptToMainChat, chatTurnsToRead, logLevel, logFile, saveRounds, ambiguousCharacterWidth } = raw;
+  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, promptToMainChat, promptWhenIdle, chatTurnsToRead, logLevel, logFile, saveRounds, ambiguousCharacterWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -99,6 +102,11 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     const b = bool(promptToMainChat);
     if (b === undefined) bad('promptToMainChat', `${JSON.stringify(promptToMainChat)} is not true or false`);
     else o.promptToMainChat = b;
+  }
+  if (promptWhenIdle !== undefined) {
+    const b = bool(promptWhenIdle);
+    if (b === undefined) bad('promptWhenIdle', `${JSON.stringify(promptWhenIdle)} is not true or false`);
+    else o.promptWhenIdle = b;
   }
   if (saveRounds !== undefined) {
     const b = bool(saveRounds);

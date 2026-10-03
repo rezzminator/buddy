@@ -1,7 +1,7 @@
 {
   "name": "buddy",
-  "version": "1.1.0",
-  "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
+  "version": "2.0.0",
+  "description": "Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts",
   "license": "MIT",
   "author": {
     "name": "Reza · Professor",
@@ -9,19 +9,19 @@
   },
   "repository": "https://github.com/rezzminator/buddy",
   "homepage": "https://github.com/rezzminator/buddy",
-  "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "duck", "ascii-art", "terminal-pet", "virtual-pet", "tamagotchi", "function-hooks", "claude-mods", "professor"],
+  "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "coding-companion", "ascii-art", "terminal-pet", "virtual-pet", "duck", "prompt-suggestions", "function-hooks", "claude-code-hooks", "claude-mods", "professor"],
   "types": "./types/index.d.ts",
   "userConfig": {
     "character": {
       "type": "string",
-      "title": "Which character to show (see the personality tab in /buddy)",
-      "description": "The id of the character drawn above your prompt, such as duck or cat. A pick in the personality tab of /buddy overrides it on this machine; picking this same character there returns to it.",
+      "title": "Which character to show (see the personality picker in /buddy)",
+      "description": "The id of the character drawn above your prompt, such as duck or robot. A pick in the personality picker of /buddy overrides it on this machine; picking this same character there returns to it.",
       "default": "duck"
     },
     "customCharactersDir": {
       "type": "directory",
       "title": "customCharactersDir: the folder of your own characters (optional)",
-      "description": "A folder of character files, one {id}.json each, following the plugin's schema/character.schema.json. They join the built-in characters in the personality tab of /buddy; one with the same id as a built-in replaces it. Leave empty to use only the built-in characters.",
+      "description": "A folder of character files, one {id}.json each, following the plugin's schema/character.schema.json. They join the built-in characters in the personality picker of /buddy; one with the same id as a built-in replaces it. Leave empty to use only the built-in characters.",
       "default": ""
     },
     "walkOverPromptBar": {
@@ -64,6 +64,12 @@
       "type": "boolean",
       "title": "Prompt the main chat",
       "description": "The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours; Claude reads it as the buddy's, never yours.",
+      "default": true
+    },
+    "promptWhenIdle": {
+      "type": "boolean",
+      "title": "Prompt an idle chat",
+      "description": "After the chat sits idle 30 minutes, the buddy asks a model whether Claude left owed work and, if so, sends Claude one line to resume it; never a git push, a deletion, a publication or an account step.",
       "default": false
     },
     "chatTurnsToRead": {
@@ -81,7 +87,7 @@
     "logFile": {
       "type": "string",
       "title": "Where the plugin log goes (empty = no log file)",
-      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record, capped at 1 MB with one older copy (.1); /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to Claude Code's debug log.",
+      "description": "The default follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log when it is set, ~/.claude/buddy/buddy.log when it is not. A path you give is used as written, with ~ as your home folder and a leading $CLAUDE_CONFIG_DIR as the config folder. One JSON line per record; past 1 MB it is archived whole to the next free .1, .2, …, none ever overwritten or deleted; /buddy log shows its path and last 20 lines. Empty: no log file; failures still go to Claude Code's debug log.",
       "default": "$CLAUDE_CONFIG_DIR/buddy/buddy.log"
     },
     "saveRounds": {

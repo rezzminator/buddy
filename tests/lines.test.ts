@@ -9,7 +9,7 @@ const c = v.character;
 
 describe('lines', () => {
   test("a character's own pool wins; a missing one is the generic pool", () => {
-    expect(poolFor(c, 'petted')).toEqual(['Purr.', 'Again!']);
+    expect(poolFor(c, 'greeting')).toEqual(['Hi from Fixy.']);
     expect(poolFor(c, 'toolFail')).toBe(GENERIC_LINES.toolFail);
   });
   test('wake falls back to the greeting before the generic pool', () => {

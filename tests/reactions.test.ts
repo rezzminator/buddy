@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { REACTIONS, TEST_FAIL, TEST_PASS, bashCommand, classifyToolCall, toolOutput } from '../plugins/buddy/src/reactions.ts';
+import { COMMAND_CAP, REACTIONS, TEST_FAIL, TEST_PASS, bashCommand, classifyToolCall, toolOutput, toolText } from '../plugins/buddy/src/reactions.ts';
 
 const bash = (output: string, isError = false) => ({ tool: 'Bash', isError, denied: false, output, command: 'npm test' });
 
@@ -55,6 +55,13 @@ describe('classifyToolCall', () => {
   });
   test('a pass pattern in a failed call is a tool failure', () => {
     expect(classifyToolCall(bash('5 passed\nsegfault', true))).toBe('toolFail');
+    expect(classifyToolCall({ tool: 'Bash', isError: true, denied: false, output: '5 passed\ncoverage below 80%', command: 'npx vitest run --coverage | tee out.log' })).toBe('toolFail');
+  });
+  test('a test run that passed before a later command of its chain failed is a pass; a failing one still fails', () => {
+    const command = `./scripts/dev.sh iso run 'go -C tool test -count=1 -run "TestConfigShow" ./cmd/tool/' 2>&1 | tail -3; make -C tool build 2>&1 | tail -1; ls tool/tmp/bin/`;
+    const output = "Exit code 2\nok  \texample.com/tool/cmd/tool\t4.790s\n\nall steps passed.\nmake: Leaving directory 'tool'\nls: cannot access 'tool/tmp/bin/': No such file or directory";
+    expect(classifyToolCall({ tool: 'Bash', isError: true, denied: false, output, command })).toBe('testPass');
+    expect(classifyToolCall({ tool: 'Bash', isError: true, denied: false, output: output.replace('ok  ', 'FAIL'), command })).toBe('testFail');
   });
   test('only Bash is read for tests; plain success is nothing', () => {
     expect(classifyToolCall({ tool: 'Read', isError: false, denied: false, output: '12 passed' })).toBeNull();
@@ -76,6 +83,15 @@ describe('toolOutput and bashCommand', () => {
     expect(toolOutput({ text: 'x'.repeat(25000) + 'END' }).endsWith('END')).toBe(true);
     expect(toolOutput({ text: 'x'.repeat(25000) }).length).toBe(20000);
   });
+  test('toolText: the same text, whole, never capped', () => {
+    expect(toolText({ text: 'T', result: { stdout: 'S' } })).toBe('T');
+    expect(toolText({ result: { stdout: 'out', stderr: 'err', code: 1 } })).toBe('out\nerr');
+    expect(toolText({ result: 'plain' })).toBe('plain');
+    expect(toolText({})).toBe('');
+    const long = `START${'x'.repeat(30000)}END`;
+    expect(toolText({ text: long })).toBe(long);
+    expect(toolOutput({ text: long })).toBe(long.slice(-20000));
+  });
   test('e.command, or e.input.command', () => {
     expect(bashCommand({ command: 'ls' })).toBe('ls');
     expect(bashCommand({ input: { command: 'pwd' } })).toBe('pwd');
@@ -90,16 +106,21 @@ describe("a runner's summary lines, and nothing else, are its result", () => {
     'bun test', 'bun run test', 'npm run test', 'npm run test:unit', 'vitest run', 'npx jest', 'npx --yes vitest', 'mocha', 'npx mocha test/', 'ava', 'tap test/*.js',
     'rake test', 'bundle exec rake test', 'gradle test', './gradlew :app:test', 'deno test -A', 'phpunit', './vendor/bin/phpunit', 'ctest --output-on-failure',
     'CI=1 npm test', 'npm test 2>&1 | tail -20', 'pnpm --filter web test', 'uv run pytest', 'timeout 60 go test ./...', '(cd api && cargo test)', './mvnw -q test',
+    'claude plugin test plugins/x', "bash -c 'go test ./...'", 'sh -c "npm test"', "bash -lc 'cd api && cargo test'", "scripts/dev.sh run 'go test ./...'", "docker exec app sh -c 'pytest -q'", 'go -C sub test ./...',
   ])('a runner: %s', (cmd) => {
     expect(run(cmd, '12 passed')).toBe('testPass');
   });
-  test.each(['cat jest.config.js', 'grep -rn vitest src', 'echo "npm test"', 'git log --grep "go test"', 'ls pytest.ini', 'mvn -DskipTests package', 'mvn test-compile', 'npm run build', 'npm install'])(
+  test.each(['cat jest.config.js', 'grep -rn vitest src', 'echo "npm test"', 'git log --grep "go test"', 'grep -c "npm test" notes.md', 'echo "run go test"', 'ls pytest.ini', 'mvn -DskipTests package', 'mvn test-compile', 'npm run build', 'npm install'])(
     'not a runner: %s',
     (cmd) => {
       expect(run(cmd, '12 passed')).toBeNull();
     },
   );
 
+  test('a go test run quoted inside a container wrapper, piped to tail, is read as a test run', () => {
+    const command = `cd w; scripts/dev.sh run 'go -C app test -count=1 -run "TestA|TestB" ./cmd/app/ 2>&1 | tail -12' </dev/null 2>&1 | tail -14`;
+    expect(run(command, 'container: ready\n--- FAIL: TestA (0.00s)\nFAIL\nFAIL\tex.com/app/cmd/app\t0.8s\nFAIL\n\nall steps passed.')).toBe('testFail');
+  });
   test.each([
     ['git log', 'abc123 fix: retry when upload FAILED'],
     ['grep -rn FAILED src', 'src/a.ts:12: if (s === "FAILED")'],
@@ -199,11 +220,21 @@ describe("a runner's summary lines, and nothing else, are its result", () => {
 
 describe('the test-runner check stays fast on a long command', () => {
   const run = (command: string) => classifyToolCall({ tool: 'Bash', isError: false, denied: false, output: '3 passed', command });
-  test.each(['pnpm ', 'yarn exec ', 'mvn '])('80 KB of %j runs in under 50 ms', (token) => {
+  // The budget separates the capped read from an uncapped one, not a fast machine from a slow one:
+  // the regex is still quadratic within COMMAND_CAP (up to ~35 ms idle, up to 130 ms beside concurrent
+  // test runs), while reading the whole 80 KB takes 1.3-2.4 s here. A 50 ms budget failed 9 times in
+  // 36 loaded runs.
+  test.each(['pnpm ', 'yarn exec ', 'mvn '])('80 KB of %j runs in under 400 ms', (token) => {
     const command = token.repeat(Math.ceil(80_000 / token.length));
     const t0 = performance.now();
     run(command);
-    expect(performance.now() - t0).toBeLessThan(50);
+    expect(performance.now() - t0).toBeLessThan(400);
+  });
+  test('only the first COMMAND_CAP characters are read for a runner', () => {
+    const inside = `echo ${'x'.repeat(COMMAND_CAP - 'echo ; npm test'.length)}; npm test`;
+    expect(inside).toHaveLength(COMMAND_CAP);
+    expect(run(inside)).toBe('testPass');
+    expect(run(`echo x${inside.slice('echo '.length)}`)).toBe(null); // one character later, `npm test` ends past the cap
   });
   test('a runner at the start of a long command is still found', () => {
     expect(run(`npm test && echo ${'x'.repeat(80_000)}`)).toBe('testPass');

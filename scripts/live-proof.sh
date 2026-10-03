@@ -4,21 +4,20 @@
 # band from the pane and the /buddy replies from the transcript:
 #   (a) the default character, the duck, is drawn above the prompt
 #   (b) it walks: the band changes between samples while nothing is said
-#   (c) ctrl+x p in the drawer pets it and counts (`♥ N`); its personality
-#       tab marks it with *
+#   (c) its personality pane (ctrl+x t in the drawer) marks it with *
 #   (d) a /buddy question before the first reply is answered: `model`
 #       needs no turns to read
 #   (e) a Bash `npm test` run printing a test pass shows a testPass line
 #   (f) a /buddy question after a reply is answered
-#   (g) stepping onto another character in the personality tab (ctrl+x n or
-#       b) draws it, and the reopened tab marks it with *; stepping back to
-#       the duck returns
+#   (g) picking another character in the personality pane (Down onto it,
+#       Enter) draws it, and the reopened pane marks it with *; picking the
+#       duck again returns
 #   (h) /buddy off hides the band; /buddy on brings it back
-#   (i) /buddy opens the drawer and its personality tab, the duck marked;
-#       ctrl+x n lights the next entry and switches to it, the preview following;
-#       ctrl+x b steps back; ctrl+x q folds it, the duck drawn; stepping onto
-#       cat draws the cat, the tab open with cat marked, and the reopened tab
-#       marks it; stepping back to the duck returns. The run's config dir holds
+#   (i) /buddy opens the drawer, ctrl+x t its personality pane, the duck
+#       marked; Down lights the next entry, the preview following, nothing
+#       switched; Up goes back; Esc closes the pane; ctrl+x q folds the drawer,
+#       the duck drawn; Enter on dragon draws it, the pane open with dragon
+#       marked, and the reopened pane marks it; picking the duck again returns. The run's config dir holds
 #       no companion, so no row reads an original in "Yours": hook tests prove
 #       that path.
 #   (j) chatTurnsToRead: /buddy remember the word pineapple, then /buddy what word did I
@@ -82,9 +81,9 @@ trap '$T capture-pane -p -t proof -S -300 > "$RUN/pane.txt" 2>/dev/null; $T kill
 live_boot
 $T capture-pane -p -t proof > "$RUN/boot.txt"
 
-# The personality tab: Shipped lists characters/ sorted by id; * marks the
-# entry drawn now. ctrl+x n and b step to the next or previous entry and
-# switch to it at once, so the lit entry and the * move together.
+# The personality pane: Shipped lists characters/ sorted by id; * marks the
+# entry drawn now. Down and Up move the ring (the lit entry) and the preview
+# with it; Enter switches to the lit entry, moving the *.
 IDS=$(ls "$CHARS"/*.json | xargs -n1 basename | sed 's/\.json$//' | sort)
 # The start of a description as the preview's one line shows it (never the persona).
 about_of() { jq -r '.description | gsub("\\s+"; " ") | .[0:40]' "$CHARS/$1.json"; }
@@ -92,50 +91,52 @@ persona_of() { jq -r '.persona | gsub("\\s+"; " ") | .[0:40]' "$CHARS/$1.json"; 
 name_of() { jq -r '.name' "$CHARS/$1.json"; }
 DEF_NAME=$(name_of "$DEFAULT")
 in_pane() { pane | grep -q -F -- "$1"; }
+# The live drawer's framed guide, never a shortcut quoted in an old command reply.
+drawer_open() { pane | grep -q -E '^│.*ctrl\+x q close'; }
 index_of() { grep -n -x -- "$1" <<<"$IDS" | cut -d: -f1; }
 # The newest menu's Shipped group as drawn, or nothing when no menu is drawn.
 shipped() { pane | awk '/Shipped/ { buf = ""; on = 1 } on { buf = buf $0 "\n" } /Yours/ { on = 0 } END { printf "%s", buf }'; }
 # The shipped id the open menu marks with *, or nothing.
 marked() { local id g; g=$(shipped); for id in $IDS; do grep -q -F -- "* $(name_of "$id") ($id)" <<<"$g" && { echo "$id"; return 0; }; done; return 1; }
-# The chords are pressed from the prompt: /buddy opens the drawer on its talk
-# tab, ctrl+x t opens the personality tab.
-tab_open() {
+# The chords are pressed from the prompt: /buddy opens the drawer, ctrl+x t
+# the personality pane, which takes the keys while the prompt is empty.
+picker_open() {
   command_out "/buddy" >/dev/null || { echo "ERROR /buddy gave no reply" >&2; exit 2; }
   sleep 2
   $T send-keys -t proof C-x t; sleep 3
 }
-# ctrl+x q from the prompt folds it.
-tab_close() { $T send-keys -t proof C-x q; sleep 2; }
+# Esc closes the pane, handing the keys back to the prompt; ctrl+x q from the prompt folds the drawer.
+picker_close() { $T send-keys -t proof Escape; sleep 1; $T send-keys -t proof C-x q; sleep 2; }
 # The lines drawn in inverse video, the lit entry among them, escapes stripped.
 lit() { $T capture-pane -e -p -t proof | grep -a -E $'\e\\[(1;)?7m' | sed $'s/\e\\[[0-9;]*m//g'; }
-# Steps from the marked entry to the one of id $1, ctrl+x n forward or ctrl+x b
-# back through the shipped ids, until the * marks it; fails when it never does.
+# Moves the ring from the marked entry to the one of id $1, Down forward or Up
+# back through the shipped ids, then Enter picks it; fails when the * never marks it.
 step_to() {
-  local from k n key=n
+  local from k n key=Down
   from=$(marked) || return 1
   n=$(( $(index_of "$1") - $(index_of "$from") ))
-  [ "$n" -lt 0 ] && { n=$(( -n )); key=b; }
-  for ((k = 0; k < n; k++)); do $T send-keys -t proof C-x "$key"; sleep 1.5; done
-  sleep 1.5
+  [ "$n" -lt 0 ] && { n=$(( -n )); key=Up; }
+  for ((k = 0; k < n; k++)); do $T send-keys -t proof "$key"; sleep 1; done
+  $T send-keys -t proof Enter; sleep 3
   [ "$(marked)" = "$1" ]
 }
-# Opens the personality tab, says which shipped entry it marks, folds the drawer.
+# Opens the personality pane, says which shipped entry it marks, closes it and folds the drawer.
 menu_mark() {
   local m
-  tab_open
+  picker_open
   m=$(marked); pane > "$RUN/menu-$1.txt"
-  tab_close
+  picker_close
   echo "$m"
 }
-# Opens the personality tab, steps to $1 (which switches to it), folds the drawer.
-# Fails loudly when no shipped entry is marked or $1 is never reached: the steps are unknown.
+# Opens the personality pane, picks $1 (↓ or ↑ onto it, Enter), closes it and folds the drawer.
+# Fails loudly when no shipped entry is marked or $1 is never reached: the moves are unknown.
 menu_pick() {
   local from
-  tab_open
-  from=$(marked) || { pane > "$RUN/menu-unmarked.txt"; echo "ERROR the personality tab marks no shipped character; pane in $RUN/menu-unmarked.txt" >&2; exit 2; }
-  step_to "$1" || { pane > "$RUN/menu-to-$1.txt"; echo "ERROR stepping never reached $1; pane in $RUN/menu-to-$1.txt" >&2; exit 2; }
+  picker_open
+  from=$(marked) || { pane > "$RUN/menu-unmarked.txt"; echo "ERROR the personality pane marks no shipped character; pane in $RUN/menu-unmarked.txt" >&2; exit 2; }
+  step_to "$1" || { pane > "$RUN/menu-to-$1.txt"; echo "ERROR Down/Up and Enter never reached $1; pane in $RUN/menu-to-$1.txt" >&2; exit 2; }
   in_pane "$(about_of "$1")" || { pane > "$RUN/menu-to-$1.txt"; log "no $1 preview with it lit"; }
-  tab_close
+  picker_close
   log "picked $1 from $from"
 }
 
@@ -154,31 +155,34 @@ sleep 8
 s1=$(pane | grep -F -f "$RUN/default.rows"); sleep 2; s2=$(pane | grep -F -f "$RUN/default.rows"); sleep 2; s3=$(pane | grep -F -f "$RUN/default.rows")
 if [ -n "$s1" ] && { [ "$s1" != "$s2" ] || [ "$s2" != "$s3" ]; }; then add "(b) it walks" PASS "the band changed across samples"; else add "(b) it walks" FAIL "no change in 4 s"; fi
 
-# ctrl+x p pets: the left card's `♥ N` rises by one.
-command_out "/buddy" >/dev/null || exit 2; sleep 2
-pets() { pane | sed -n 's/.*♥ \([0-9][0-9]*\).*/\1/p' | head -1; }
-p0=$(pets)
-$T send-keys -t proof C-x p; sleep 2
-p1=$(pets); pane > "$RUN/c-pet.txt"
-tab_close
-if [ -n "$p0" ] && [ "${p1:-0}" -eq $((p0 + 1)) ]; then add "(c) ctrl+x p pets" PASS "♥ $p0 -> $p1"; else add "(c) ctrl+x p pets" FAIL "♥ ${p0:-none} -> ${p1:-none}; pane in $RUN/c-pet.txt"; fi
 m=$(menu_mark c) || exit 2
-if [ "$m" = "$DEFAULT" ]; then add "(c) the personality tab marks the current one" PASS "* $DEF_NAME ($DEFAULT)"; else add "(c) the personality tab marks the current one" FAIL "marked: ${m:-none}; pane in $RUN/menu-c.txt"; fi
+if [ "$m" = "$DEFAULT" ]; then add "(c) the personality pane marks the current one" PASS "* $DEF_NAME ($DEFAULT)"; else add "(c) the personality pane marks the current one" FAIL "marked: ${m:-none}; pane in $RUN/menu-c.txt"; fi
 
 out=$(command_out "/buddy what is your favourite tool") || exit 2
 got=$(answered); v=$?
 if [ $v -eq 0 ] && grep -q 'Asked' <<<"$out"; then add "(d) question before a reply" PASS "$got"; else add "(d) question before a reply" FAIL "$out / $got"; fi
 
-send "Run this Bash command: npm test. Then reply with exactly: T1"
+# A model answer holds the bubble for 15 s; tool words roll at one in three.
+# Let that answer expire, then require a real testPass line within 24 test turns.
+sleep 16
 seen=""
-for _ in $(seq 1 180); do
-  sleep 0.5
-  [ -z "$seen" ] && bubble_has_any "$RUN/testpass.pool" && { seen=$(bubble); pane > "$RUN/e.txt"; }
-  f=$(transcript)
-  [ -n "$f" ] && jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("T1"))' "$f" >/dev/null 2>&1 && [ -n "$seen" ] && break
+for attempt in $(seq 1 24); do
+  marker="T1-$attempt"
+  send "Run this Bash command: npm test. Then reply with exactly: $marker"
+  done_at=-1
+  for _ in $(seq 1 180); do
+    sleep 0.5
+    if [ -z "$seen" ]; then b=$(bubble); has_any "$b" "$RUN/testpass.pool" && { seen=$b; pane > "$RUN/e.txt"; }; fi
+    f=$(transcript)
+    if [ -n "$f" ] && jq -e --arg marker "$marker" 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains($marker))' "$f" >/dev/null 2>&1; then
+      [ "$done_at" -ge 0 ] || done_at=$SECONDS
+      { [ -n "$seen" ] || [ $((SECONDS - done_at)) -ge 3 ]; } && break
+    fi
+  done
+  [ "$done_at" -ge 0 ] || { echo "ERROR no reply holding $marker in 90 s; pane in $RUN/pane.txt" >&2; exit 2; }
+  [ -n "$seen" ] && break
 done
-[ -n "$(transcript)" ] || { echo "ERROR no transcript for $ID under $PROJECTS"; exit 2; }
-if [ -n "$seen" ]; then add "(e) a test pass shows a testPass line" PASS "$seen"; else add "(e) a test pass shows a testPass line" FAIL "no testPass line seen"; fi
+if [ -n "$seen" ]; then add "(e) a test pass shows a testPass line" PASS "$seen"; else add "(e) a test pass shows a testPass line" FAIL "no testPass line seen in 24 test turns"; fi
 sleep 7
 
 out=$(command_out "/buddy what did we just run") || exit 2
@@ -186,9 +190,9 @@ got=$(answered); v=$?
 [ $v -eq 0 ] && add "(f) question after a reply" PASS "$got" || add "(f) question after a reply" FAIL "$out / $got"
 
 menu_pick "$OTHER"
-if shows_any "$RUN/other.rows"; then add "(g) a personality tab pick of $OTHER draws it" PASS "$OTHER sprite row in the pane"; else add "(g) a personality tab pick of $OTHER draws it" FAIL "no $OTHER row"; fi
+if shows_any "$RUN/other.rows"; then add "(g) a personality pane pick of $OTHER draws it" PASS "$OTHER sprite row in the pane"; else add "(g) a personality pane pick of $OTHER draws it" FAIL "no $OTHER row"; fi
 m=$(menu_mark g)
-if [ "$m" = "$OTHER" ]; then add "(g) reopened, the tab marks $OTHER" PASS "* $(name_of "$OTHER") ($OTHER)"; else add "(g) reopened, the tab marks $OTHER" FAIL "marked: ${m:-none}; pane in $RUN/menu-g.txt"; fi
+if [ "$m" = "$OTHER" ]; then add "(g) reopened, the pane marks $OTHER" PASS "* $(name_of "$OTHER") ($OTHER)"; else add "(g) reopened, the pane marks $OTHER" FAIL "marked: ${m:-none}; pane in $RUN/menu-g.txt"; fi
 menu_pick "$DEFAULT"
 if shows_any "$RUN/default.rows"; then add "(g) picking the default returns" PASS "$DEFAULT sprite row in the pane"; else add "(g) picking the default returns" FAIL "no $DEFAULT row"; fi
 
@@ -197,38 +201,42 @@ if ! shows_any "$RUN/default.rows"; then add "(h) /buddy off hides" PASS "$out";
 out=$(command_out "/buddy on") || exit 2; sleep 3
 if shows_any "$RUN/default.rows"; then add "(h) /buddy on shows" PASS "$out"; else add "(h) /buddy on shows" FAIL "not drawn"; fi
 
-# The personality tab lists characters/ sorted by id; NEXT is the entry after the default.
-PICK=cat
+# The personality pane lists characters/ sorted by id; NEXT is the entry after the default.
+PICK=dragon
 grep -q -x "$PICK" <<<"$IDS" || { echo "ERROR no $PICK.json in $CHARS"; exit 2; }
 NEXT=$(grep -A1 -x "$DEFAULT" <<<"$IDS" | tail -1)
 rows_of "$PICK" | grep -v -x -F -f "$RUN/default.rows" > "$RUN/pick.rows"
-tab_open
+picker_open
 pane > "$RUN/i-open.txt"
 if in_pane "* $DEF_NAME ($DEFAULT)" && in_pane "Shipped" && in_pane "Yours" && in_pane "$(about_of "$DEFAULT")" && ! in_pane "$(persona_of "$DEFAULT")"; then
-  add "(i) /buddy opens the personality tab" PASS "* $DEF_NAME ($DEFAULT), the groups, its description"
-else add "(i) /buddy opens the personality tab" FAIL "pane in $RUN/i-open.txt"; fi
-$T send-keys -t proof C-x n; sleep 3
+  add "(i) ctrl+x t opens the personality pane" PASS "* $DEF_NAME ($DEFAULT), the groups, its description"
+else add "(i) ctrl+x t opens the personality pane" FAIL "pane in $RUN/i-open.txt"; fi
+$T send-keys -t proof Down; sleep 2
 pane > "$RUN/i-next.txt"
-if lit | grep -q -F "($NEXT)" && [ "$(marked)" = "$NEXT" ] && in_pane "$(about_of "$NEXT")" && ! in_pane "$(about_of "$DEFAULT")"; then add "(i) ctrl+x n lights $NEXT and switches to it" PASS "* $(name_of "$NEXT") ($NEXT), its description in the preview"
-else add "(i) ctrl+x n lights $NEXT and switches to it" FAIL "pane in $RUN/i-next.txt"; fi
-$T send-keys -t proof C-x b; sleep 3
+if lit | grep -q -F "($NEXT)" && [ "$(marked)" = "$DEFAULT" ] && in_pane "$(about_of "$NEXT")" && ! in_pane "$(about_of "$DEFAULT")"; then add "(i) Down lights $NEXT, the preview following" PASS "$(name_of "$NEXT") ($NEXT) lit, its description in the preview, $DEFAULT still marked"
+else add "(i) Down lights $NEXT, the preview following" FAIL "pane in $RUN/i-next.txt"; fi
+$T send-keys -t proof Up; sleep 2
 pane > "$RUN/i-back.txt"
-if [ "$(marked)" = "$DEFAULT" ] && in_pane "$(about_of "$DEFAULT")"; then add "(i) ctrl+x b steps back to $DEFAULT" PASS "* $DEF_NAME ($DEFAULT)"
-else add "(i) ctrl+x b steps back to $DEFAULT" FAIL "pane in $RUN/i-back.txt"; fi
-tab_close
+if lit | grep -q -F "($DEFAULT)" && in_pane "$(about_of "$DEFAULT")"; then add "(i) Up goes back to $DEFAULT" PASS "$DEF_NAME ($DEFAULT) lit"
+else add "(i) Up goes back to $DEFAULT" FAIL "pane in $RUN/i-back.txt"; fi
+$T send-keys -t proof Escape; sleep 2
+pane > "$RUN/i-esc.txt"
+if ! in_pane "Shipped" && drawer_open; then add "(i) Esc closes the pane, the drawer open" PASS "no list, the drawer's guide drawn"
+else add "(i) Esc closes the pane, the drawer open" FAIL "pane in $RUN/i-esc.txt"; fi
+$T send-keys -t proof C-x q; sleep 2
 pane > "$RUN/i-close.txt"
-if ! in_pane "ctrl+x b previous character" && shows_any "$RUN/default.rows"; then add "(i) ctrl+x q folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
+if ! drawer_open && shows_any "$RUN/default.rows"; then add "(i) ctrl+x q folds it, $DEFAULT drawn" PASS "drawer folded, $DEFAULT still drawn"
 else add "(i) ctrl+x q folds it, $DEFAULT drawn" FAIL "pane in $RUN/i-close.txt"; fi
-tab_open
+picker_open
 if step_to "$PICK" && in_pane "$(about_of "$PICK")"; then pre=ok; else pre="no $PICK preview"; fi
 pane > "$RUN/i-pick.txt"
 m=$(marked)
-tab_close
+picker_close
 pane > "$RUN/i-picked.txt"
-if [ "$pre" = ok ] && [ "$m" = "$PICK" ] && shows_any "$RUN/pick.rows"; then add "(i) stepping onto $PICK draws it, the tab marks it" PASS "* $(name_of "$PICK") ($PICK); its sprite in the band"
-else add "(i) stepping onto $PICK draws it, the tab marks it" FAIL "$pre / marked: ${m:-none} / panes in $RUN/i-pick.txt, i-picked.txt"; fi
+if [ "$pre" = ok ] && [ "$m" = "$PICK" ] && shows_any "$RUN/pick.rows"; then add "(i) Enter on $PICK draws it, the pane marks it" PASS "* $(name_of "$PICK") ($PICK); its sprite in the band"
+else add "(i) Enter on $PICK draws it, the pane marks it" FAIL "$pre / marked: ${m:-none} / panes in $RUN/i-pick.txt, i-picked.txt"; fi
 m=$(menu_mark i) || exit 2
-if [ "$m" = "$PICK" ]; then add "(i) reopened, the tab marks $PICK" PASS "* $(name_of "$PICK") ($PICK)"; else add "(i) reopened, the tab marks $PICK" FAIL "marked: ${m:-none}; pane in $RUN/menu-i.txt"; fi
+if [ "$m" = "$PICK" ]; then add "(i) reopened, the pane marks $PICK" PASS "* $(name_of "$PICK") ($PICK)"; else add "(i) reopened, the pane marks $PICK" FAIL "marked: ${m:-none}; pane in $RUN/menu-i.txt"; fi
 menu_pick "$DEFAULT"
 if shows_any "$RUN/default.rows"; then add "(i) picking the default returns" PASS "$DEFAULT sprite row in the pane"; else add "(i) picking the default returns" FAIL "no $DEFAULT row"; fi
 

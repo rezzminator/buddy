@@ -7,7 +7,8 @@
   the terminal and the desktop app.
 - **A question about using buddy or writing a character.**
   [Open an issue](https://github.com/rezzminator/buddy/issues/new/choose)
-  and ask; [CONTRIBUTING.md](./CONTRIBUTING.md) covers the character format.
+  with the Question template; [CONTRIBUTING.md](./CONTRIBUTING.md) covers
+  the character format.
 - **A bug.** Use the bug report template; include `claude --version`, the buddy
   version, what the bubble said, if anything, and the reply of `/buddy log`
   (it never holds your account id).

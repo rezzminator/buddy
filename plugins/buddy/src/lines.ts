@@ -8,7 +8,6 @@ export const GENERIC_LINES: Record<LineEvent, readonly string[]> = {
   toolFail: ['Hm, that did not work.', 'A small setback.', 'That one failed.'],
   testPass: ['Tests pass!', 'All green.', 'It passes. Nice.'],
   testFail: ['Some tests failed.', 'Red, for now.', 'The tests say no.'],
-  petted: ['Thanks!', 'That tickles.', 'Hehe.'],
   thinking: ['Let me think...', 'Hmm...', 'One moment...'],
   rest: ['Short break.', 'Just a breather.', 'Catching my breath.'],
   working: ['Working on it...', 'Busy, busy.', 'Reading along.'],

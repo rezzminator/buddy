@@ -70,18 +70,19 @@ export const REACTIONS: Record<Outcome, Reaction> = {
 // Where a shell command starts: a line start or after `;` `&` `|` `(`, past any
 // `VAR=value`, a launcher (`npx`, `pnpm exec`, `bundle exec`, `uv run`, `timeout 60`, ...)
 // with its flags, and a path (`./gradlew`, `vendor/bin/phpunit`). So `cat jest.config.js`
-// or `echo "npm test"` runs no test runner.
-const AT_COMMAND = String.raw`(?:^|[;&|(])[ \t]*(?:(?:[A-Za-z_]\w*=\S*|(?:npx|bunx|npm[ \t]+exec|pnpm(?:[ \t]+(?:exec|dlx))?|yarn(?:[ \t]+(?:exec|dlx))?|bundle[ \t]+exec|uv[ \t]+run|poetry[ \t]+run|pipenv[ \t]+run|time|env|timeout[ \t]+\S+)(?:[ \t]+-[\w=-]+)*)[ \t]+)*(?:[\w.~/-]*\/)?`;
+// or `echo "npm test"` runs no test runner. A quote opened after a shell's `-c`
+// (`bash -lc '...'`) or a wrapper's `run` or `exec` (`dev.sh run '...'`) starts one too.
+const AT_COMMAND = String.raw`(?:^|[;&|(]|(?:\b(?:ba|z|da|k)?sh(?:[ \t]+-\w+)*?[ \t]+-\w*c|[ \t](?:run|exec))[ \t]+['"])[ \t]*(?:(?:[A-Za-z_]\w*=\S*|(?:npx|bunx|npm[ \t]+exec|pnpm(?:[ \t]+(?:exec|dlx))?|yarn(?:[ \t]+(?:exec|dlx))?|bundle[ \t]+exec|uv[ \t]+run|poetry[ \t]+run|pipenv[ \t]+run|time|env|timeout[ \t]+\S+)(?:[ \t]+-[\w=-]+)*)[ \t]+)*(?:[\w.~/-]*\/)?`;
 const RUNNERS = [
   String.raw`(?:npm|pnpm|yarn|bun)(?:[ \t]+[^\s;&|]+)*?[ \t]+(?:run[ \t]+)?test(?:[:-][\w:.-]+)?`, // npm test, pnpm -r test, npm run test:unit
   String.raw`vitest|jest|mocha|ava|tap|pytest|rspec|phpunit|ctest`,
   String.raw`python(?:3(?:\.\d+)?)?[ \t]+-m[ \t]+(?:pytest|unittest)`,
-  String.raw`(?:go|cargo|mix|dotnet|deno|rake|rails)[ \t]+test|cargo[ \t]+nextest`,
+  String.raw`(?:go(?:[ \t]+-C[ \t]+\S+)?|cargo|mix|dotnet|deno|rake|rails)[ \t]+test|cargo[ \t]+nextest|claude[ \t]+plugin[ \t]+test`, // go -C dir test
   String.raw`(?:mvnw?|gradlew?)(?:[ \t]+[^\s;&|]+)*?[ \t]+(?:[^\s;&|]*:)?test`, // mvn -q test, ./gradlew :app:test
 ];
 
 /** A shell command that runs a test runner: only its output is read as a test result. */
-export const TEST_RUNNER = new RegExp(String.raw`${AT_COMMAND}(?:${RUNNERS.join('|')})(?=[ \t;&|)]|$)`, 'm');
+export const TEST_RUNNER = new RegExp(String.raw`${AT_COMMAND}(?:${RUNNERS.join('|')})(?=[ \t;&|)'"]|$)`, 'm');
 
 /**
  * How much of a command TEST_RUNNER reads: its launcher star and lazy token
@@ -97,36 +98,82 @@ const ANSI = /\u001b\[[0-9;?]*[A-Za-z]/g;
 /** `command`: the Bash command; its output is a test result only when it runs a test runner. */
 export type ToolCall = { tool: string; isError: boolean; denied: boolean; output: string; command?: string };
 
+/** A command's segments split at `&&`, `||`, `;`, `|` and newlines outside quotes, each with the separator before it. */
+export function segments(command: string): { sep: string; text: string }[] {
+  const out: { sep: string; text: string }[] = [];
+  let sep = '';
+  let text = '';
+  let quote = '';
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]!;
+    if (quote) {
+      if (c === quote) quote = '';
+      text += c;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+      text += c;
+    } else {
+      const two = command.slice(i, i + 2);
+      const s = two === '&&' || two === '||' ? two : c === ';' || c === '|' || c === '\n' ? c : '';
+      if (!s) text += c;
+      else {
+        out.push({ sep, text: text.trim() });
+        sep = s;
+        text = '';
+        i += s.length - 1;
+      }
+    }
+  }
+  out.push({ sep, text: text.trim() });
+  return out.filter((g) => g.text !== '');
+}
+
+/**
+ * Whether a failed Bash call's tests passed and a later command of its chain
+ * failed: its last test runner's segment (TEST_RUNNER, in the command's first
+ * COMMAND_CAP characters) is followed by a command it does not pipe into, and
+ * its output, color codes stripped, has a pass summary line and no fail one.
+ */
+export function passedThenLaterFailed(output: string, command: string): boolean {
+  const out = output.replace(ANSI, '');
+  if (!TEST_PASS.test(out) || TEST_FAIL.test(out)) return false;
+  const g = segments(command.slice(0, COMMAND_CAP));
+  const runner = g.findLastIndex((s) => TEST_RUNNER.test(s.text));
+  return runner >= 0 && g.slice(runner + 1).some((s) => s.sep !== '|');
+}
+
 /**
  * A denied or failed call is `toolFail`; the output of a Bash test runner
  * (TEST_RUNNER, on the command's first COMMAND_CAP characters), color codes
  * stripped, with a fail summary line is `testFail`, with a pass one and no fail
- * one `testPass`; any other command's output is no test result.
+ * one `testPass`, unless the call failed and no later command of its chain
+ * did (passedThenLaterFailed); any other command's output is no test result.
  */
 export function classifyToolCall(c: ToolCall): Outcome | null {
   if (c.denied) return 'toolFail';
   if (c.tool === 'Bash' && TEST_RUNNER.test((c.command ?? '').slice(0, COMMAND_CAP))) {
     const out = c.output.replace(ANSI, '');
     if (TEST_FAIL.test(out)) return 'testFail';
-    if (TEST_PASS.test(out)) return c.isError ? 'toolFail' : 'testPass';
+    if (TEST_PASS.test(out)) return c.isError && !passedThenLaterFailed(c.output, c.command ?? '') ? 'toolFail' : 'testPass';
   }
   return c.isError ? 'toolFail' : null;
 }
 
 const OUTPUT_CAP = 20000;
 
-/**
- * The text a tool call produced: core's `text` when it is a string, else the
- * string fields of `result` (stdout, stderr, ...). The tail is kept, where a
- * test runner prints its summary.
- */
-export function toolOutput(r: { text?: unknown; result?: unknown }): string {
-  let out = '';
-  if (typeof r.text === 'string') out = r.text;
-  else if (typeof r.result === 'string') out = r.result;
-  else if (typeof r.result === 'object' && r.result !== null) {
-    out = Object.values(r.result as Record<string, unknown>).filter((v): v is string => typeof v === 'string').join('\n');
+/** The whole text a tool call produced: core's `text` when it is a string, else the string fields of `result` (stdout, stderr, ...). */
+export function toolText(r: { text?: unknown; result?: unknown }): string {
+  if (typeof r.text === 'string') return r.text;
+  if (typeof r.result === 'string') return r.result;
+  if (typeof r.result === 'object' && r.result !== null) {
+    return Object.values(r.result as Record<string, unknown>).filter((v): v is string => typeof v === 'string').join('\n');
   }
+  return '';
+}
+
+/** The text a tool call produced (toolText), its tail kept to OUTPUT_CAP, where a test runner prints its summary. */
+export function toolOutput(r: { text?: unknown; result?: unknown }): string {
+  const out = toolText(r);
   return out.length > OUTPUT_CAP ? out.slice(-OUTPUT_CAP) : out;
 }
 

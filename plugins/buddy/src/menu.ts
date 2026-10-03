@@ -5,10 +5,10 @@ import { ORIGINAL_ID, originalLabel, type Soul } from './original.ts';
 import type { Entry, Roster } from './roster.ts';
 import { spriteColor } from './scene.ts';
 
-// The drawer's personality tab as plain data. Two titled groups of
-// entries, Shipped and Yours (your original companion's two rolls, then your
-// own character files), one row each, and the preview of the one lit.
-// The drawer draws it one to one; an error is a line in its group.
+// The personality pane (ctrl+x t in the drawer) as plain data. Two titled
+// groups of entries, Shipped and Yours (your original companion's two rolls,
+// then your own character files), one row each, and the preview of the one
+// lit. The pane draws it one to one; an error is a line in its group.
 
 export type Pick = { kind: 'use'; id: string } | { kind: 'original'; variant: Variant };
 /** `about`: the line the preview says of it, its description, or an original's personality. */
@@ -91,6 +91,52 @@ export function currentKeyOf(drawnId: string, originalVariant: Variant | undefin
 /** A row's text: `* ` on the one drawn now. */
 export function rowLabel(item: Item, current: string): string {
   return `${item.key === current ? '* ' : '  '}${item.label}`;
+}
+
+/** One row of the entry list: a group's gap, title or line, or an entry. */
+export type MenuRow = { key: string } & ({ kind: 'gap' } | { kind: 'title'; text: string } | { kind: 'line'; text: string } | { kind: 'item'; item: Item });
+
+/** The entry list's rows in order: each group after a gap (but the first), its title, its lines, then its entries. */
+export function menuRows(m: Menu): MenuRow[] {
+  return m.sections.flatMap((s, n): MenuRow[] => [
+    ...(n === 0 ? [] : [{ key: `gap:${n}`, kind: 'gap' as const }]),
+    { key: `group:${n}`, kind: 'title', text: s.title },
+    ...s.lines.map((text, i) => ({ key: `line:${n}:${i}`, kind: 'line' as const, text })),
+    ...s.items.map((item) => ({ key: item.key, kind: 'item' as const, item })),
+  ]);
+}
+
+/**
+ * The rows [from, to) of `rows` a list `size` rows tall shows round the lit
+ * entry `lit`: all of them when they fit; else a row kept above and below to
+ * count what is left out, the lit entry centred, and the window moved to hold
+ * the entries before and after it where they fit: the ring moves only onto a
+ * drawn row, so ↑ and ↓ always have one to reach.
+ */
+export function listWindow(rows: readonly MenuRow[], lit: string, size: number): { from: number; to: number } {
+  const count = rows.length;
+  if (count <= size) return { from: 0, to: count };
+  const room = Math.max(1, size - 2);
+  const entries = rows.flatMap((r, i) => (r.kind === 'item' ? [i] : []));
+  const at = Math.max(0, rows.findIndex((r) => r.key === lit));
+  const k = entries.indexOf(at);
+  const before = k > 0 ? entries[k - 1]! : at;
+  const after = k >= 0 && k < entries.length - 1 ? entries[k + 1]! : at;
+  let from = at - Math.floor(room / 2);
+  if (after - before < room) from = Math.min(Math.max(from, after - room + 1), before);
+  from = Math.min(Math.max(0, from), count - room);
+  return { from, to: from + room };
+}
+
+/** The most rows the personality pane asks for. */
+export const PANE_ROWS_MAX = 20;
+
+/** The rows the personality pane asks for: its whole list, or the lit entry's preview when that is taller; at most PANE_ROWS_MAX. */
+export function paneRows(m: Menu, lit: string): number {
+  const p = previewOf(findItem(m, lit), 0, 0);
+  // The sprite, then its name, one line about it, its greeting and its card.
+  const preview = p.kind === 'error' ? 2 : p.rows.length + 3 + p.card.length;
+  return Math.min(PANE_ROWS_MAX, Math.max(menuRows(m).length, preview));
 }
 
 /** The narrowest the entry list gets, so a notice under a short list still reads. */

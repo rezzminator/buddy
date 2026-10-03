@@ -8,6 +8,7 @@
 //   node mirror.mjs live [buddy-dir | session-id] [--last N]
 //   node mirror.mjs calls <round-file>...
 //   node mirror.mjs replay <round-file> [--call N] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--model M] [--effort E] [--jobs J] [--want W,...]
+//   node mirror.mjs suite [suite-file] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--rows id-or-kind,...] [--jobs J]
 //
 // --want asks for lines the captured call did not (promptToMainChat, suggestNextPrompt, commentAfterEachTurn), in
 // every arm but old: a round captured with an option off is replayed as if it had been on.
@@ -17,8 +18,9 @@ import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readd
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { priceCall, usageOfClaudeJson } from '../../../plugins/buddy/src/prices.ts';
 
-// This file lives at {repo}/.claude/skills/mirror/; a symlink to it resolves here too.
+// This file lives at {repo}/.claude/skills/mirror/.
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const TAGS = ['DESIRE', 'VERDICT', 'WHY', 'COMMENT_AFTER_EACH_TURN', 'PROMPT_TO_MAIN_CHAT', 'SUGGEST_NEXT_PROMPT', 'MEMORY'];
 // Where the captured system's persona ends: every version's character rule opens with it.
@@ -111,7 +113,13 @@ function blockAfter(lines, at) {
 function judgedTurn(prompt) {
   const heads = [...prompt.matchAll(/^Turn \d+\. (.*):\n(.*)$/gm)];
   if (!heads.length) return '(no turn in the prompt)';
-  const [, who, text] = heads[heads.length - 1];
+  const last = heads[heads.length - 1];
+  const [, who] = last;
+  let text = last[2];
+  if (text.startsWith('suggested: ')) {
+    const after = prompt.slice(last.index + last[0].length + 1).split('\n', 1)[0];
+    text = after.replace(/^sent: /, '');
+  }
   return who === 'The user asked Claude' ? text : `[${who}] ${text}`;
 }
 
@@ -197,10 +205,15 @@ function srcAt(rev, cache) {
   return src;
 }
 
+// An arm's plugin source: null for old; a folder holding prompts.ts is a snapshot of an earlier try; otherwise the working tree, or a git rev.
+function srcFor(arm, cache) {
+  if (arm === 'old') return null;
+  return existsSync(join(arm, 'prompts.ts')) ? resolve(arm) : arm === 'tree' ? join(REPO, 'plugins/buddy/src') : srcAt(arm, cache);
+}
+
 async function systemFor(arm, captured, cache, want = []) {
   if (arm === 'old') return captured;
-  // A folder holding prompts.ts is a snapshot of an earlier try; otherwise the working tree, or a git rev.
-  const src = existsSync(join(arm, 'prompts.ts')) ? resolve(arm) : arm === 'tree' ? join(REPO, 'plugins/buddy/src') : srcAt(arm, cache);
+  const src = srcFor(arm, cache);
   const { turnSystem } = await import(pathToFileURL(join(src, 'prompts.ts')).href);
   if (typeof turnSystem !== 'function') fail(`${src}/prompts.ts exports no turnSystem`);
   const cut = captured.indexOf(PERSONA_END);
@@ -230,7 +243,7 @@ function ask(system, prompt, model, effort) {
         }
         if (j.is_error) return done({ error: `claude -p answered an error: ${String(j.result).slice(0, 300)}`, ms });
         const u = j.usage ?? {};
-        done({ text: String(j.result ?? ''), ms: j.duration_ms ?? ms, inTok: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), outTok: u.output_tokens ?? 0, usd: j.total_cost_usd ?? 0 });
+        done({ text: String(j.result ?? ''), ms: j.duration_ms ?? ms, inTok: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), outTok: u.output_tokens ?? 0, usd: j.total_cost_usd ?? priceCall(model, usageOfClaudeJson(u)) ?? 0 });
       },
     );
     child.stdin.end(prompt);
@@ -301,10 +314,25 @@ async function replay(o) {
   if (errors) process.exitCode = 1;
 }
 
+// Every audited defect, replayed at once: the engine is scripts/mirror-suite.ts, handed this harness.
+async function suite(o) {
+  const { runSuite } = await import(pathToFileURL(join(REPO, 'scripts/mirror-suite.ts')).href);
+  const list = (v) => String(v).split(',').filter(Boolean);
+  const so = {
+    file: o._[0] ?? join(homedir(), '.config', 'buddy', 'suite.tsv'),
+    arms: list(o.arms ?? 'old,HEAD,tree'),
+    runs: Number(o.runs ?? 3),
+    out: o.out ?? join(tmpdir(), 'buddy-mirror-suite'),
+    rows: o.rows === undefined ? null : list(o.rows),
+    jobs: Number(o.jobs ?? 6),
+  };
+  process.exitCode = await runSuite(so, { parseRound, tagged, systemFor, srcFor, ask, pool, armTag, log: console.log });
+}
+
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [cmd, ...rest] = process.argv.slice(2);
   const o = opts(rest);
-  const run = { live, calls, replay }[cmd];
-  if (!run) fail('usage: mirror.mjs live [buddy-dir|session-id] [--last N] | calls <round-file>... | replay <round-file> [--call N] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--want W,...]');
+  const run = { live, calls, replay, suite }[cmd];
+  if (!run) fail('usage: mirror.mjs live [buddy-dir|session-id] [--last N] | calls <round-file>... | replay <round-file> [--call N] [--arms old,HEAD,tree] [--runs K] [--out DIR] [--want W,...] | suite [file] [--arms …] [--runs K] [--out DIR] [--rows …] [--jobs J]');
   Promise.resolve(run(o)).catch((error) => fail(`${cmd}: ${error.stack ?? error}`));
 }
