@@ -2,7 +2,10 @@
 
 Every release of buddy. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `buddy--v<version>`, with a GitHub release carrying the section below.
 
-## [Unreleased]
+## [2.1.0] — 2026-10-14
+
+### Added
+- Separate private append-only error, warning and actionable-info JSONL logs under `PLUGIN_LOG_DIR/buddy` or the home-state fallback, bounded rows and `.1` rotation after 20 MiB. This writer requires the engine's `process.run`; the current test runtime has no built-in process implementation, so buddy reports that capability gap once per outage rather than rewriting a purported append log. Existing buddy.log and transcript output stay intact.
 
 ## [2.0.0] — 2026-10-04
 

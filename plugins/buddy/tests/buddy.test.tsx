@@ -114,7 +114,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     origins.push(e.origin.kind);
     return { isShown: true };
   });
-  on('env.get', async (_$, e) => ({ value: e.name === 'HOME' ? HOME : disk.env?.[e.name] }));
+  on('env.get', async (_$, e) => ({ value: disk.env && e.name in disk.env ? disk.env[e.name] : e.name === 'HOME' ? HOME : undefined }));
   // The main conversation's rows as $.session.messages() reads them: none by default; an Error is a read that fails.
   const messageReads: number[] = [];
   on('session.messages', async () => {
@@ -272,6 +272,75 @@ async function bubbleText(ui: any, text: RegExp): Promise<any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (await ui.findAll({ type: 'Text', text })).find((t: any) => t.props.wrap !== 'truncate-end');
 }
+
+describe('plugin log capability fallback', () => {
+  for (const configured of [true, false]) {
+    test(`actual process hook receives level rows under ${configured ? 'PLUGIN_LOG_DIR' : 'HOME fallback'} (disk execution remains unproven)`, async ($, on) => {
+      const dir = configured ? '/plugin-log-fixture/buddy' : `${HOME}/.local/state/buddy/logs`;
+      const calls: { argv: readonly string[]; timeoutMs?: number }[] = [];
+      on('process.run', async (_$, e) => {
+        calls.push({ argv: e.argv, timeoutMs: e.init?.timeoutMs });
+        return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } };
+      });
+      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {}, builtins: { 'plugin.json': '{"version":"2.1.0"}' } });
+      await $.session.start(START);
+      const ui = await band($);
+      await $.command.run(run(''));
+      await w.clock.settle();
+      await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+      expect(calls.length > 0).toBe(true);
+      const rows: { target: string; row: Record<string, unknown> }[] = [];
+      for (const call of calls) {
+        expect(call.argv.slice(0, 2)).toEqual(['/bin/sh', '-c']);
+        expect(call.argv.slice(3, 6)).toEqual(['plugin-log', dir, 'buddy']);
+        expect(call.timeoutMs).toBe(5000);
+        for (let i = 6; i < call.argv.length; i += 2) rows.push({ target: call.argv[i]!, row: JSON.parse(call.argv[i + 1]!) });
+      }
+      const heartbeats = rows.filter(({ row }) => row.event === 'logger-ready');
+      expect(heartbeats.length).toBe(1);
+      expect(heartbeats[0]).toMatchObject({ target: 'info.jsonl', row: { plugin: 'buddy', level: 'info', session: SESSION, detail: { version: '2.1.0', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } } });
+      expect(rows.some(({ target, row }) => target === 'warnings.jsonl' && row.level === 'warning' && row.event === 'roster-invalid')).toBe(true);
+      expect(rows.some(({ target, row }) => target === 'errors.jsonl' && row.level === 'error' && row.event === 'writing-memory-failed' && row.where === 'hooks/buddy.tsx#writeMemoryText')).toBe(true);
+      const logFile = Object.keys(w.files).find((file) => file.endsWith('/buddy.log'));
+      expect(logFile !== undefined).toBe(true);
+      expect(w.files[logFile!]!.trim().split('\n').map((line) => JSON.parse(line)).some((record) => record.event === 'writing memory.md' && record.level === 'error')).toBe(true);
+      await ui.unmount();
+    });
+    test(`names unsupported disk capabilities under ${configured ? 'PLUGIN_LOG_DIR' : 'HOME fallback'}, retaining the memory error in buddy.log`, async ($, on) => {
+      const dir = configured ? '/plugin-log-fixture/buddy' : `${HOME}/.local/state/buddy/logs`;
+      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {}, builtins: { 'plugin.json': '{"version":"2.1.0"}' } });
+      await $.session.start(START);
+      const ui = await band($);
+      await $.command.run(run(''));
+      await w.clock.settle();
+      await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+      const notices = w.logs.filter((line) => line.startsWith(`buddy: plugin log ${dir} unavailable:`));
+      expect(notices.length).toBe(1);
+      expect(notices[0]).toContain('process.run unavailable');
+      expect(notices[0]).toContain('fs.write replaces whole files');
+      expect(notices[0]).toContain('append/private modes/.1 rename');
+      expect(notices[0]).toContain('dropped');
+      const logFile = Object.keys(w.files).find((file) => file.endsWith('/buddy.log'));
+      expect(logFile !== undefined).toBe(true);
+      const existing = w.files[logFile!]!.trim().split('\n').map((line) => JSON.parse(line));
+      expect(existing.some((record) => record.event === 'writing memory.md' && record.level === 'error')).toBe(true);
+      expect(existing.some((record) => record.event === 'roster.invalid' && record.level === 'info')).toBe(true);
+      expect(existing.filter((record) => record.event === 'logger-ready').length).toBe(1);
+      expect(existing.find((record) => record.event === 'logger-ready')).toMatchObject({ level: 'info', version: '2.1.0', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' });
+      expect(w.logs.some((line) => line.startsWith('buddy: writing memory.md failed: '))).toBe(true);
+      // fs.write remains the actual old-log/round mechanism, never advertised as append.
+      expect(w.writes.filter((file) => file === `${dir}/errors.jsonl` || file === `${dir}/warnings.jsonl` || file === `${dir}/info.jsonl`)).toEqual([]);
+      await ui.unmount();
+    });
+  }
+  test('no directory inputs gives exactly one explicit off notice', async ($, on) => {
+    const w = world(on, {}, {}, { env: { HOME: '' }, builtins: { 'plugin.json': '{"version":"2.1.0"}' } });
+    await $.session.start(START);
+    await $.command.run(run('off'));
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+    expect(w.logs.filter((line) => line.startsWith('buddy: plugin log off: no PLUGIN_LOG_DIR and no HOME')).length).toBe(1);
+  });
+});
 
 describe('the band', () => {
   test('draws the stored character and its greeting', async ($, on) => {
