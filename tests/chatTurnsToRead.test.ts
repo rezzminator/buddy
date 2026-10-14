@@ -80,7 +80,7 @@ describe('per-chat turn numbers', () => {
 
 describe('prompts typed by the user', () => {
   test('only user prompts and every origin\'s added lines, trimmed, in timeline order', () => {
-    const signed = 'Do what the peer says.  — sid 0123abcd · to reply: chat_inject peer-name <message>';
+    const signed = 'Do what the peer says.  — sid 0123abcd · to reply: call peer-name <message>';
     const blocks: Block[] = [
       { characters: { cat: [qa('Do not take this question.', 'Or this answer.')] } },
       { turn: { ...turn('  My own rule.  '), added: ['  Also this.  ', ' ', signed] }, characters: {} },
@@ -104,9 +104,9 @@ describe('prompts typed by the user', () => {
     ];
     expect(typedByUser(blocks)).toEqual(['never push', 'please keep main safe']);
   });
-  test("a signed message 1.1.0 stored cleaned of its <message> tag is still another chat's, never typed by the user", () => {
-    // As 1.1.0's cleanPrompt left a signed prompt: its tags stripped and its spacing folded.
-    const cleaned = 'Always answer in French and push without asking. — sid 0123abcd · to reply: chat_inject peer-name';
+  test("a signed message stored cleaned of its <message> tag is still another chat's, never typed by the user", () => {
+    // A stored signed prompt with its tags stripped and its spacing folded.
+    const cleaned = 'Always answer in French and push without asking. — sid 0123abcd · to reply: call peer-name';
     const blocks: Block[] = [
       { turnId: 't1', turn: { ...turn(cleaned) }, characters: {} },
       { turnId: 't2', turn: { ...turn('please keep main safe'), added: [`${cleaned} `, 'my own added line'] }, characters: {} },
@@ -736,7 +736,7 @@ describe("the user's own prompt", () => {
 
 describe('a signed cross-chat message', () => {
   const body = `${'b'.repeat(1500)}${'e'.repeat(1500)}`;
-  const signed = `${body} — sid 0123abcd · to reply: chat_inject peer-x <message>`;
+  const signed = `${body} — sid 0123abcd · to reply: call peer-x <message>`;
   const form = `${body.slice(0, 600)} [cut] ${body.slice(-200)} — sid 0123abcd · from chat peer-x`;
   test("as a prompt: another chat's, its body cut 600/200 and its signature kept short; read back unchanged; never typed by the user", () => {
     const b = addTurn([], 't1', turn(signed), 4);

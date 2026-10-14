@@ -69,9 +69,9 @@ describe('the tally', () => {
     countToolCall(t, call('Bash', { command: 'echo "git commit" is how' }));
     countToolCall(t, call('Bash', { command: 'git log --oneline' }));
     countToolCall(t, call('WebFetch', { url: 'https://example.com' }));
-    countToolCall(t, call('mcp__professor__harvester_read'));
+    countToolCall(t, call('mcp__harvester-professor__read'));
     countToolCall(t, call('mcp__playwright__browser_click', {}));
-    countToolCall(t, call('mcp__professor__chat_ls'));
+    countToolCall(t, call('mcp__chat-professor__ls'));
     const s = closeTally(t, { ms: 0 }, null, null);
     expect(s.tests).toEqual({ passed: 1, failed: 1, seq: 'pf' });
     // A commit in a quoted string, and a log, are no commits.
@@ -159,7 +159,7 @@ describe('the line the model reads', () => {
   test('one push past zero commits; an MCP tool by its own name', () => {
     expect(renderStats({ ms: 0, tools: { Read: 1 }, git: { commits: 0, pushes: 2 } })).toBe('Numbers: 0s · 1 tool call (Read 1) · 2 pushes');
     // An MCP tool by its own name, its server dropped.
-    expect(renderStats({ ms: 0, tools: { mcp__professor__chat_new: 2, mcp__x: 1 } })).toBe('Numbers: 0s · 3 tool calls (chat_new 2, mcp__x 1)');
+    expect(renderStats({ ms: 0, tools: { 'mcp__chat-professor__new': 2, 'mcp__chat-professor__call': 1, 'mcp__harvester-professor__read': 1, mcp__x: 1 } })).toBe('Numbers: 0s · 5 tool calls (new 2, call 1, read 1, mcp__x 1)');
   });
 
   test('the drawer\'s brief: its time, its tool calls, its cost, else its tokens', () => {

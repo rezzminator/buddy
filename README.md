@@ -359,7 +359,7 @@ flowchart LR
     when not `completed`, its agent's tokens, tool uses and time, and its
     report with its size, cut to its first 600 and last 200 characters, or
     2,400 and 800 for a report over 10,000. A signed message from another
-    chat (one ending `— sid … · to reply: chat_inject …`), as the prompt or
+    chat (one ending `— sid … · to reply: call …`), as the prompt or
     added while Claude worked, is labelled as another chat's, never yours,
     its body cut to its first 600 and last 200;
   - what you added while Claude worked, cut like your prompt, and what
