@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { DEFAULTS, configFilePath, expandHome, logPath, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, staleOptionsWarning } from '../plugins/buddy/src/options.ts';
+import { DEFAULTS, configFilePath, expandHome, leftoverOptionKeys, logPath, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, staleOptionsWarning } from '../plugins/buddy/src/options.ts';
 
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
@@ -227,10 +227,17 @@ describe('configFilePath', () => {
     expect(configFilePath({ HOME: '/opt/me' , XDG_CONFIG_HOME: '' })).toEqual({ path: '/opt/me/.config/buddy/config.json' });
     expect(configFilePath({ XDG_CONFIG_HOME: '/opt/xdg' })).toEqual({ path: '/opt/xdg/buddy/config.json' });
   });
-  test('a relative XDG_CONFIG_HOME is ignored; with no usable base the error says so', () => {
+  test('the root is an absolute base like any other', () => {
+    expect(configFilePath({ HOME: '/opt/me', XDG_CONFIG_HOME: '/' })).toEqual({ path: '/buddy/config.json' });
+    expect(configFilePath({ HOME: '/' })).toEqual({ path: '/.config/buddy/config.json' });
+  });
+  test('a relative XDG_CONFIG_HOME or HOME is ignored, never read under the working directory; with no absolute base the error says so', () => {
+    const none = { error: 'no config file: neither XDG_CONFIG_HOME nor HOME is an absolute path to place buddy/config.json under' };
     expect(configFilePath({ HOME: '/opt/me', XDG_CONFIG_HOME: 'rel/dir' })).toEqual({ path: '/opt/me/.config/buddy/config.json' });
-    expect(configFilePath({ XDG_CONFIG_HOME: 'rel/dir' })).toEqual({ error: 'no config file: neither an absolute XDG_CONFIG_HOME nor HOME is set to place buddy/config.json' });
-    expect(configFilePath({})).toEqual({ error: 'no config file: neither an absolute XDG_CONFIG_HOME nor HOME is set to place buddy/config.json' });
+    expect(configFilePath({ XDG_CONFIG_HOME: 'rel/dir' })).toEqual(none);
+    expect(configFilePath({ HOME: 'proj' })).toEqual(none);
+    expect(configFilePath({ HOME: 'proj', XDG_CONFIG_HOME: 'rel/dir' })).toEqual(none);
+    expect(configFilePath({})).toEqual(none);
   });
 });
 
@@ -287,29 +294,39 @@ describe('resolveOptions from the config file', () => {
   });
 });
 
+describe('leftoverOptionKeys', () => {
+  test('the option keys of every buddy@ entry across the sources, each once; other plugins, empty and malformed entries add none', () => {
+    const user = { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false, effort: 'high' } }, 'other@x': { options: { colour: 'red' } }, 'buddyx@y': { options: { model: 'haiku' } } } };
+    const local = { pluginConfigs: { 'buddy@inline': { options: { effort: 'low', saveRounds: false } }, 'buddy@buddy-dev': { options: {} } } };
+    const odd = { pluginConfigs: { 'buddy@a': null, 'buddy@b': { options: ['x'] }, 'buddy@c': 'text' } };
+    expect(leftoverOptionKeys([user, {}, local, odd, { pluginConfigs: [] }])).toEqual(['promptToMainChat', 'effort', 'saveRounds']);
+  });
+  test('no pluginConfigs anywhere: none', () => {
+    expect(leftoverOptionKeys([{}, { env: { A: '1' } }])).toEqual([]);
+  });
+});
+
 describe('staleOptionsWarning', () => {
   const path = '/opt/me/.config/buddy/config.json';
   test('no options: no warning', () => {
-    expect(staleOptionsWarning({}, path)).toBeUndefined();
+    expect(staleOptionsWarning([], path)).toBeUndefined();
   });
-  test('options from an old pluginConfigs entry: one warning naming their keys and the file; nothing applied', () => {
-    const stale = { promptToMainChat: false, effort: 'high' };
-    const w = staleOptionsWarning(stale, path);
+  test('options from an old pluginConfigs entry: one warning naming their keys and the file', () => {
+    const w = staleOptionsWarning(['promptToMainChat', 'effort'], path);
     expect(w).toBe(`pluginConfigs options (promptToMainChat, effort) are no longer read and not applied: buddy reads ${path} instead; move them there and remove the pluginConfigs entry`);
-    expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
   });
 });
 
 describe('sessionOptions', () => {
   const path = '/opt/me/.config/buddy/config.json';
-  test('the file decides; options handed to register by an old pluginConfigs entry are never applied, and are said once after the file errors', () => {
+  test('the file decides; the keys of an old pluginConfigs entry are never applied, and are said once after the file errors', () => {
     const file = { raw: { saveRounds: false }, errors: ['config file x is broken'], path };
-    const handed = { promptToMainChat: false, effort: 'high' };
-    const o = sessionOptions(file, handed);
+    const leftover = ['promptToMainChat', 'effort'];
+    const o = sessionOptions(file, leftover);
     expect(o).toMatchObject({ saveRounds: false, promptToMainChat: true, effort: 'low' });
-    expect(o.errors).toEqual(['config file x is broken', staleOptionsWarning(handed, path)]);
+    expect(o.errors).toEqual(['config file x is broken', staleOptionsWarning(leftover, path)]);
   });
-  test('nothing handed: only the file speaks', () => {
-    expect(sessionOptions({ raw: {}, errors: [], path }, {})).toEqual({ ...DEFAULTS, errors: [] });
+  test('no leftover entry: only the file speaks', () => {
+    expect(sessionOptions({ raw: {}, errors: [], path }, [])).toEqual({ ...DEFAULTS, errors: [] });
   });
 });

@@ -77,13 +77,18 @@ type Problem = { key: string; why: string; kept?: string };
 export type ConfigFileEnv = { HOME?: string; XDG_CONFIG_HOME?: string };
 export const CONFIG_FILE_SUFFIX = 'buddy/config.json';
 
-/** Where the config file lives: `$XDG_CONFIG_HOME/buddy/config.json` when XDG_CONFIG_HOME is set and absolute, else `$HOME/.config/buddy/config.json`. */
+/** A base directory as the path's head: absolute, trailing slashes dropped (the root `/` heads as ''); undefined when unset or relative. */
+function baseDir(dir: string | undefined): string | undefined {
+  return dir?.startsWith('/') ? dir.replace(/\/+$/, '') : undefined;
+}
+
+/** Where the config file lives: `$XDG_CONFIG_HOME/buddy/config.json` when XDG_CONFIG_HOME is set and absolute, else `$HOME/.config/buddy/config.json` when HOME is absolute. */
 export function configFilePath(env: ConfigFileEnv): { path: string } | { error: string } {
-  const xdg = env.XDG_CONFIG_HOME?.replace(/\/+$/, '');
-  if (xdg && env.XDG_CONFIG_HOME?.startsWith('/')) return { path: `${xdg}/${CONFIG_FILE_SUFFIX}` };
-  const home = env.HOME?.replace(/\/+$/, '');
-  if (home) return { path: `${home}/.config/${CONFIG_FILE_SUFFIX}` };
-  return { error: `no config file: neither an absolute XDG_CONFIG_HOME nor HOME is set to place ${CONFIG_FILE_SUFFIX}` };
+  const xdg = baseDir(env.XDG_CONFIG_HOME);
+  if (xdg !== undefined) return { path: `${xdg}/${CONFIG_FILE_SUFFIX}` };
+  const home = baseDir(env.HOME);
+  if (home !== undefined) return { path: `${home}/.config/${CONFIG_FILE_SUFFIX}` };
+  return { error: `no config file: neither XDG_CONFIG_HOME nor HOME is an absolute path to place ${CONFIG_FILE_SUFFIX} under` };
 }
 
 function kindOf(v: unknown): string {
@@ -104,9 +109,31 @@ export function parseConfigFile(text: string, path: string): { raw: Record<strin
   return { raw: parsed as Record<string, unknown>, errors: [] };
 }
 
-/** The warning for options Claude Code still hands the plugin from an old `pluginConfigs` entry: they are never applied. undefined when there are none. */
-export function staleOptionsWarning(options: Record<string, unknown>, path: string): string | undefined {
-  const keys = Object.keys(options);
+/** The settings sources an old `pluginConfigs` entry can sit in, as `$.settings.read({ source })` names them. */
+export const SETTINGS_SOURCES = ['user', 'project', 'local', 'flag', 'policy'] as const;
+
+/**
+ * The option keys of every `pluginConfigs` entry for buddy (`buddy@{marketplace}`)
+ * in these settings, in first-seen order: what an install before 3.0.0 left
+ * behind. Claude Code hands `register` only the options a manifest declares, and
+ * buddy declares none, so the settings are where a leftover entry shows.
+ */
+export function leftoverOptionKeys(settings: readonly Readonly<Record<string, unknown>>[]): string[] {
+  const keys = new Set<string>();
+  for (const source of settings) {
+    const configs = source.pluginConfigs;
+    if (typeof configs !== 'object' || configs === null || Array.isArray(configs)) continue;
+    for (const [id, entry] of Object.entries(configs)) {
+      if (id.split('@')[0] !== 'buddy' || typeof entry !== 'object' || entry === null) continue;
+      const options = (entry as { options?: unknown }).options;
+      if (typeof options === 'object' && options !== null && !Array.isArray(options)) for (const key of Object.keys(options)) keys.add(key);
+    }
+  }
+  return [...keys];
+}
+
+/** The warning for the option keys of an old `pluginConfigs` entry: they are never applied. undefined when there are none. */
+export function staleOptionsWarning(keys: readonly string[], path: string): string | undefined {
   if (keys.length === 0) return undefined;
   return `pluginConfigs options (${keys.join(', ')}) are no longer read and not applied: buddy reads ${path} instead; move them there and remove the pluginConfigs entry`;
 }
@@ -126,11 +153,11 @@ export function resolveOptions(raw: Record<string, unknown>, fileErrors: readonl
 
 /**
  * The session's options: the config file's (`file`, as the adapter read it) and
- * nothing else. `handed` is what Claude Code gave `register`, non-empty only
- * from an old `pluginConfigs` entry: said once, after the file's errors, never applied.
+ * nothing else. `leftover` is the option keys of an old `pluginConfigs` entry:
+ * said once, after the file's errors, never applied.
  */
-export function sessionOptions(file: { raw: Record<string, unknown>; errors: readonly string[]; path: string }, handed: Record<string, unknown>): Options {
-  const stale = staleOptionsWarning(handed, file.path);
+export function sessionOptions(file: { raw: Record<string, unknown>; errors: readonly string[]; path: string }, leftover: readonly string[]): Options {
+  const stale = staleOptionsWarning(leftover, file.path);
   return resolveOptions(file.raw, stale === undefined ? file.errors : [...file.errors, stale]);
 }
 

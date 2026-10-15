@@ -27,7 +27,7 @@ import { PluginLogQueue, eventId, failureEvent, infoEvent, levelRow, pluginLogDe
 import { priceCall } from '../src/prices.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
-import { CONFIG_FILE_SUFFIX, INHERIT, configFilePath, expandHome, logPath, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
+import { CONFIG_FILE_SUFFIX, INHERIT, SETTINGS_SOURCES, configFilePath, expandHome, leftoverOptionKeys, logPath, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
   ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, EXTENDED_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostTurnOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   sayInTurn, skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Said, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
@@ -1102,11 +1102,24 @@ async function readConfigFile($: EngineInterface): Promise<{ raw: Record<string,
   }
 }
 
-/** `handed`: the options Claude Code handed `register`, which only an old `pluginConfigs` entry makes non-empty: never applied, said once. */
+/** The option keys of an old `pluginConfigs` entry for buddy in any settings source; a source that cannot be read is said and skipped. */
+async function readLeftoverKeys($: EngineInterface): Promise<string[]> {
+  const sources = await Promise.all(SETTINGS_SOURCES.map(async (source) => {
+    try {
+      return await $.settings.read({ source });
+    } catch (error) {
+      log($, `reading the ${source} settings for an old pluginConfigs entry`, error);
+      return {};
+    }
+  }));
+  return leftoverOptionKeys(sources);
+}
+
+/** `handed`: the options Claude Code handed `register`; with them, an old `pluginConfigs` entry in the settings: never applied, said once. */
 async function startSession(st: State, $: EngineInterface, handed: Record<string, unknown>): Promise<void> {
   try {
     const file = await readConfigFile($);
-    st.options = sessionOptions(file, handed);
+    st.options = sessionOptions(file, [...new Set([...Object.keys(handed), ...(await readLeftoverKeys($))])]);
   } catch (error) {
     log($, 'reading the config file', error);
   }

@@ -540,7 +540,8 @@ buddy reads its options from one JSON file of its own, not from Claude Code's
 settings:
 
 - **Location:** `$XDG_CONFIG_HOME/buddy/config.json` when `XDG_CONFIG_HOME` is
-  set to an absolute path, else `~/.config/buddy/config.json`. buddy never
+  set to an absolute path, else `$HOME/.config/buddy/config.json` (`HOME`
+  absolute too: a relative one places no file). buddy never
   creates it; copy [`config.example.json`](config.example.json) there (the
   folder too) and keep the keys you want to change.
 - **Shape:** one flat JSON object keyed by the option names below, with JSON's

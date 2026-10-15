@@ -18,7 +18,8 @@ import { BUDDY_PROMPT_CONTEXT, CHARACTER_RULE, EXTENDED_SUGGESTION_CONTEXT, JUST
  * A test's `config` is the content of buddy's config file as world() puts it on
  * the test's disk: an object (written as JSON) or the raw text of a bad file.
  * The kit hands register only the options a manifest lists, and this one lists
- * none, so the stale-options path is table-tested in tests/options.test.ts.
+ * none: an old pluginConfigs entry reaches buddy through the settings, which a
+ * test's disk `settings` holds per source.
  */
 let fileConfig: Record<string, unknown> | string | undefined;
 type Config = TestOptions & { config?: Record<string, unknown> | string };
@@ -77,7 +78,7 @@ const FILES: Record<string, string> = {
 /** `delayMs`: this answer alone comes that long later; `error`: the completion rejects with it instead. */
 type Answer = { isAnswered: boolean; text?: string; reason?: string; status?: number | null; usage?: object; delayMs?: number; error?: string };
 /** Files by absolute path (with their mtimes), whether listing the home folder is refused, whether writes of memory.json are refused (the first that many only), whether writes of memory.md are, character files shipped beside FILES. */
-type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseMemory?: boolean; refuseMemoryTimes?: number; refuseMemoryText?: boolean; env?: Record<string, string>; builtins?: Record<string, string>; messages?: unknown[] | Error; refuseConfig?: boolean };
+type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseMemory?: boolean; refuseMemoryTimes?: number; refuseMemoryText?: boolean; env?: Record<string, string>; builtins?: Record<string, string>; messages?: unknown[] | Error; refuseConfig?: boolean; settings?: Record<string, Record<string, unknown>>; refuseSettings?: string[] };
 
 const HOME = '/test-home';
 const SESSION = 'test-session';
@@ -143,6 +144,12 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     return { isShown: true };
   });
   on('env.get', async (_$, e) => ({ value: disk.env && e.name in disk.env ? disk.env[e.name] : e.name === 'HOME' ? HOME : undefined }));
+  // Each settings source as the test's disk holds it, none by default; a refused source rejects.
+  on('settings.read', async (_$, e) => {
+    const source = e.source ?? 'merged';
+    if (disk.refuseSettings?.includes(source)) throw new Error(`EACCES: the ${source} settings are unreadable`);
+    return { value: disk.settings?.[source] ?? {} };
+  });
   // The main conversation's rows as $.session.messages() reads them: none by default; an Error is a read that fails.
   const messageReads: number[] = [];
   on('session.messages', async () => {
@@ -3931,20 +3938,25 @@ describe('the config file', () => {
     expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
   });
 
-  test('an unreadable file: one warning naming the file and the cause, the defaults used', { config: {} }, async ($, on) => {
-    const w = world(on, { character: 'fixy' }, {}, { refuseConfig: true });
-    await $.session.start(START);
-    expect(warnings(w)).toEqual([expect.stringMatching(new RegExp(`^config file ${FILE} unreadable: .+; using the defaults$`))]);
-  });
-
-  test('an unknown key and a wrong-typed value: one warning each, the valid keys still apply', { config: { colour: 'red', saveRounds: 'no', promptToMainChat: false } }, async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
+  test('an old pluginConfigs entry in the settings: one warning naming its keys and the file, its values never applied; a source that cannot be read is said', async ($, on) => {
+    const settings = {
+      user: { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false } }, 'other@x': { options: { colour: 'red' } } } },
+      local: { pluginConfigs: { 'buddy@buddy-dev': { options: { commentAfterEachTurn: false, promptToMainChat: false } } } },
+    };
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } }, { settings, refuseSettings: ['policy'] });
     await $.session.start(START);
     await prompt($, 'fix the login bug', 't1');
     await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(warnings(w)).toEqual(['option saveRounds ignored: "no" is not true or false', 'option colour ignored: not a buddy option']);
-    expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
+    expect(warnings(w)).toEqual([`pluginConfigs options (promptToMainChat, commentAfterEachTurn) are no longer read and not applied: buddy reads ${FILE} instead; move them there and remove the pluginConfigs entry`]);
+    expect(w.logs.filter((line) => /^buddy: reading the policy settings for an old pluginConfigs entry failed: .+/.test(line))).toHaveLength(1);
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
+  });
+
+  test('an unreadable file: one warning naming the file and the cause, the defaults used', { config: {} }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { refuseConfig: true });
+    await $.session.start(START);
+    expect(warnings(w)).toEqual([expect.stringMatching(new RegExp(`^config file ${FILE} unreadable: .+; using the defaults$`))]);
   });
 
   test('an absolute XDG_CONFIG_HOME is where it reads, not HOME/.config', async ($, on) => {
@@ -3955,14 +3967,5 @@ describe('the config file', () => {
     await w.clock.settle();
     expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
     expect(warnings(w)).toEqual([]);
-  });
-
-  test('a relative XDG_CONFIG_HOME is ignored: HOME/.config is read', { config: { promptToMainChat: false } }, async ($, on) => {
-    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } }, { env: { XDG_CONFIG_HOME: 'rel/dir' } });
-    await $.session.start(START);
-    await prompt($, 'fix the login bug', 't1');
-    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
-    await w.clock.settle();
-    expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
   });
 });
