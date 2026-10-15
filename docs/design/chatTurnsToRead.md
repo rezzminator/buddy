@@ -253,7 +253,7 @@ A stored record that is malformed keeps what still reads and says how many entri
 | [`src/prices.ts`](../../plugins/buddy/src/prices.ts) | `PRICES`: buddy's one list-price table, USD per million tokens (in, out, 5-minute write, 1-hour write, cache read), with the aliases as Claude Code resolves them; `CallUsage`; `priceCall(model, usage)`: the USD of one call, undefined for an unknown model |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `chatFolderFor`, `chatTurnsToReadFor`, `loadMemory`, `chainChatTurnsToRead`, `changeChatTurnsToRead`, `onToolCall`, `turnPosition`, `onTurnStep`, `rememberTurn`, `rememberCompaction`, `rememberExchange`, `rememberItems`, `completeRecorded`, `readChatTurnsToRead`, `heard`, `chatTurnsToReadFailed`, `ask`, `turnCall`, `onTurnComplete`, `onTurnStart`, `onTurnStepped`, `onTurnEnd`, `readUsage`, `turnStats` |
 | [`scripts/audit.mjs`](../../scripts/audit.mjs) | `npm run audit`: the `call.cost` records totalled, an older one with no `usd` priced by `priceCall` from `src/prices.ts` |
-| [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `chatTurnsToRead` |
+| [`config.example.json`](../../config.example.json) | the config file's keys: `chatTurnsToRead` |
 
 ## How it's tested
 

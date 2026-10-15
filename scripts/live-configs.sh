@@ -172,19 +172,18 @@ run_session() {
     for n in $(seq 1 150); do f=$ROUNDS/$(printf 'round-%03d.txt' "$n"); echo "seeded $n" > "$f"; touch -t 202601020000 "$f"; done
   fi
   if [ "$S" = S5 ]; then mkdir -p "$RUN/chars"; printf '%s\n' '{ "name": "Broken", "poses": 3 }' > "$RUN/chars/broken.json"; fi
-  jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" \
-    '{ pluginConfigs: { "buddy@inline": { options: ({ model: "opus", effort: "low", logLevel: "debug", logFile: $log } + $o) } } }' > "$RUN/settings.json"
+  live_buddy_config "$(jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" '{ model: "opus", effort: "low", logLevel: "debug", logFile: $log } + $o')"
   pool_of duck thinking > "$RUN/thinking.pool"
   [ -s "$RUN/thinking.pool" ] || printf '%s\n' 'Let me think...' 'Hmm...' 'One moment...' > "$RUN/thinking.pool"
   rows_of duck > "$RUN/duck.rows"
 
   if [ "$S" = S4 ]; then
     local f1 f2 from=0 end
-    (cd "$WORK" && "$LIVE_CLAUDE" -p --model haiku --setting-sources project --settings "$RUN/settings.json" \
+    (cd "$WORK" && "$LIVE_CLAUDE" -p --model haiku --setting-sources project \
       --plugin-dir "$PLUGIN" --session-id "$ID" "Reply with exactly: S4T1" < /dev/null > "$RUN/p1.txt" 2>&1) || { echo "ERROR claude -p exited $?: $(head -c 200 "$RUN/p1.txt")" >&2; exit 2; }
     end=$(reply_ts S4T1); metrics S4T1 0 "$end" "" "" ""
     from=$(lines)
-    (cd "$WORK" && "$LIVE_CLAUDE" -p --model haiku --setting-sources project --settings "$RUN/settings.json" \
+    (cd "$WORK" && "$LIVE_CLAUDE" -p --model haiku --setting-sources project \
       --plugin-dir "$PLUGIN" --resume "$ID" "Reply with exactly: S4T2" < /dev/null > "$RUN/p2.txt" 2>&1) || { echo "ERROR claude -p --resume exited $?: $(head -c 200 "$RUN/p2.txt")" >&2; exit 2; }
     end=$(reply_ts S4T2); metrics S4T2 "$from" "$end" "" "" ""
     grep -q S4T1 "$RUN/p1.txt" && grep -q S4T2 "$RUN/p2.txt" || { echo "ERROR a -p reply lacks its marker: $(head -c 80 "$RUN/p1.txt") / $(head -c 80 "$RUN/p2.txt")" >&2; exit 2; }
@@ -198,7 +197,7 @@ run_session() {
   T="tmux -L buddy-cfg-$S"; TGT=$S
   $T kill-server 2>/dev/null
   $T new-session -d -s "$S" -x 160 -y 50 -c "$WORK" \
-    "'$LIVE_CLAUDE' --model haiku --setting-sources project --settings '$RUN/settings.json' \
+    "'$LIVE_CLAUDE' --model haiku --setting-sources project \
      --allowedTools Bash --plugin-dir '$PLUGIN' --session-id $ID"
   trap '$T capture-pane -p -t "$TGT" -S -300 > "$RUN/pane.txt" 2>/dev/null; f=$(transcript); [ -n "$f" ] && cp "$f" "$RUN/main.jsonl"; $T kill-server 2>/dev/null' EXIT
   live_boot

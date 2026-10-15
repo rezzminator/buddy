@@ -1,8 +1,8 @@
-// The plugin's userConfig, resolved to typed values with the manifest's
-// defaults; a bad value is ignored by name and listed, never silently. Each
-// option also reads the environment variable BUDDY_{OPTION}: the variable beats
-// the option, which beats the default; a blank variable is absent, a bad one is
-// listed by its name and the default is used.
+// The plugin's options, read from its own config file (configFilePath), parsed
+// (parseConfigFile) and resolved to typed values with the defaults. Values are
+// JSON's own types: a boolean is true or false, a number a number. A bad value,
+// an unknown key or a bad file is listed by name, never silently, and the
+// default is used for it; the valid keys still apply.
 
 import { isMainLoop } from './brain.ts';
 import { configDir, type ConfigEnv } from './config-source.ts';
@@ -68,77 +68,70 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
 };
 
 function bool(v: unknown): boolean | undefined {
-  if (typeof v === 'boolean') return v;
-  if (v === 'true') return true;
-  if (v === 'false') return false;
-  return undefined;
+  return typeof v === 'boolean' ? v : undefined;
 }
-
-/** Each option's environment variable: BUDDY_ and the option's name in upper snake case. */
-export const ENV_NAMES = {
-  character: 'BUDDY_CHARACTER',
-  customCharactersDir: 'BUDDY_CUSTOM_CHARACTERS_DIR',
-  walkOverPromptBar: 'BUDDY_WALK_OVER_PROMPT_BAR',
-  commentAfterEachTurn: 'BUDDY_COMMENT_AFTER_EACH_TURN',
-  model: 'BUDDY_MODEL',
-  effort: 'BUDDY_EFFORT',
-  secondsBetweenComments: 'BUDDY_SECONDS_BETWEEN_COMMENTS',
-  suggestNextPrompt: 'BUDDY_SUGGEST_NEXT_PROMPT',
-  promptToMainChat: 'BUDDY_PROMPT_TO_MAIN_CHAT',
-  promptWhenIdle: 'BUDDY_PROMPT_WHEN_IDLE',
-  chatTurnsToRead: 'BUDDY_CHAT_TURNS_TO_READ',
-  logLevel: 'BUDDY_LOG_LEVEL',
-  logFile: 'BUDDY_LOG_FILE',
-  saveRounds: 'BUDDY_SAVE_ROUNDS',
-  ambiguousCharacterWidth: 'BUDDY_AMBIGUOUS_CHARACTER_WIDTH',
-} as const satisfies Readonly<Record<keyof typeof DEFAULTS, string>>;
-
-/** One BUDDY_* variable's name. */
-export type EnvName = (typeof ENV_NAMES)[keyof typeof ENV_NAMES];
-
-const FLAGS: ReadonlyMap<string, boolean> = new Map([['1', true], ['0', false], ['true', true], ['false', false]]);
 
 type Problem = { key: string; why: string; kept?: string };
 
-/** The environment's values by option: `1|0|true|false` of a boolean option read as the boolean, anything else as the string; a blank variable is absent. */
-function fromEnv(env: Record<string, string | undefined>): { values: Record<string, unknown>; problems: Problem[] } {
-  const values: Record<string, unknown> = {};
-  const problems: Problem[] = [];
-  for (const key of Object.keys(ENV_NAMES) as (keyof typeof DEFAULTS)[]) {
-    const text = env[ENV_NAMES[key]]?.trim();
-    if (text === undefined || text === '') continue;
-    let value: unknown = text;
-    if (typeof DEFAULTS[key] === 'boolean') {
-      const flag = FLAGS.get(text.toLowerCase());
-      if (flag === undefined) {
-        problems.push({ key, why: `${JSON.stringify(text)} is not 1, 0, true or false` });
-        continue;
-      }
-      value = flag;
-    }
-    const [first] = resolve({ [key]: value }).problems;
-    if (first) problems.push({ key, why: first.why });
-    else values[key] = value;
+/** What locates the config file. */
+export type ConfigFileEnv = { HOME?: string; XDG_CONFIG_HOME?: string };
+export const CONFIG_FILE_SUFFIX = 'buddy/config.json';
+
+/** Where the config file lives: `$XDG_CONFIG_HOME/buddy/config.json` when XDG_CONFIG_HOME is set and absolute, else `$HOME/.config/buddy/config.json`. */
+export function configFilePath(env: ConfigFileEnv): { path: string } | { error: string } {
+  const xdg = env.XDG_CONFIG_HOME?.replace(/\/+$/, '');
+  if (xdg && env.XDG_CONFIG_HOME?.startsWith('/')) return { path: `${xdg}/${CONFIG_FILE_SUFFIX}` };
+  const home = env.HOME?.replace(/\/+$/, '');
+  if (home) return { path: `${home}/.config/${CONFIG_FILE_SUFFIX}` };
+  return { error: `no config file: neither an absolute XDG_CONFIG_HOME nor HOME is set to place ${CONFIG_FILE_SUFFIX}` };
+}
+
+function kindOf(v: unknown): string {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'an array';
+  return typeof v === 'object' ? 'an object' : `a ${typeof v}`;
+}
+
+/** The config file's text as the raw options: a JSON object, else none and one error naming the file; its keys are checked by resolveOptions. */
+export function parseConfigFile(text: string, path: string): { raw: Record<string, unknown>; errors: string[] } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (error) {
+    return { raw: {}, errors: [`config file ${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}; using the defaults`] };
   }
-  return { values, problems };
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { raw: {}, errors: [`config file ${path} must hold a JSON object, not ${kindOf(parsed)}; using the defaults`] };
+  return { raw: parsed as Record<string, unknown>, errors: [] };
+}
+
+/** The warning for options Claude Code still hands the plugin from an old `pluginConfigs` entry: they are never applied. undefined when there are none. */
+export function staleOptionsWarning(options: Record<string, unknown>, path: string): string | undefined {
+  const keys = Object.keys(options);
+  if (keys.length === 0) return undefined;
+  return `pluginConfigs options (${keys.join(', ')}) are no longer read and not applied: buddy reads ${path} instead; move them there and remove the pluginConfigs entry`;
 }
 
 /**
- * The options: `raw` is the plugin's configured options, `env` the BUDDY_*
- * variables (a missing variable is absent). A bad variable is listed by its
- * name and its option takes the default, not the configured value.
+ * The options: `raw` is the config file's parsed object, `fileErrors` what
+ * reading it already reported. A bad or unknown key is listed by name and its
+ * option takes the default.
  */
-export function resolveOptions(raw: Record<string, unknown>, env: Record<string, string | undefined> = {}): Options {
-  const fromVars = fromEnv(env);
-  const merged: Record<string, unknown> = { ...raw, ...fromVars.values };
-  for (const p of fromVars.problems) delete merged[p.key];
-  const { o, problems } = resolve(merged);
+export function resolveOptions(raw: Record<string, unknown>, fileErrors: readonly string[] = []): Options {
+  const { o, problems } = resolve(raw);
   const shown = (p: Problem) => `option ${p.key} ignored: ${p.why}${p.kept ? `; ${p.kept}` : ''}`;
-  o.errors = [
-    ...problems.map(shown),
-    ...fromVars.problems.map((p) => `env ${ENV_NAMES[p.key as keyof typeof DEFAULTS]} ignored: ${p.why}; using the default ${JSON.stringify(DEFAULTS[p.key as keyof typeof DEFAULTS])}`),
-  ];
+  const unknown = Object.keys(raw).filter((k) => !Object.hasOwn(DEFAULTS, k)).map((key) => ({ key, why: 'not a buddy option' }));
+  o.errors = [...fileErrors, ...[...problems, ...unknown].map(shown)];
   return o;
+}
+
+/**
+ * The session's options: the config file's (`file`, as the adapter read it) and
+ * nothing else. `handed` is what Claude Code gave `register`, non-empty only
+ * from an old `pluginConfigs` entry: said once, after the file's errors, never applied.
+ */
+export function sessionOptions(file: { raw: Record<string, unknown>; errors: readonly string[]; path: string }, handed: Record<string, unknown>): Options {
+  const stale = staleOptionsWarning(handed, file.path);
+  return resolveOptions(file.raw, stale === undefined ? file.errors : [...file.errors, stale]);
 }
 
 function resolve(raw: Record<string, unknown>): { o: Options; problems: Problem[] } {
@@ -194,14 +187,14 @@ function resolve(raw: Record<string, unknown>): { o: Options; problems: Problem[
     else if ((EFFORTS as readonly string[]).includes(e)) o.effort = e as Effort;
     else bad('effort', `${JSON.stringify(effort)} is not low, medium, high, xhigh, max or inherit`);
   }
-  if (secondsBetweenComments !== undefined && secondsBetweenComments !== '') {
-    const n = typeof secondsBetweenComments === 'number' ? secondsBetweenComments : Number(secondsBetweenComments);
-    if (Number.isFinite(n) && n >= 0) o.secondsBetweenComments = n;
+  if (secondsBetweenComments !== undefined) {
+    const n = secondsBetweenComments;
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0) o.secondsBetweenComments = n;
     else bad('secondsBetweenComments', `${JSON.stringify(secondsBetweenComments)} is not a number of seconds`);
   }
-  if (chatTurnsToRead !== undefined && chatTurnsToRead !== '') {
-    const n = typeof chatTurnsToRead === 'number' ? chatTurnsToRead : typeof chatTurnsToRead === 'string' ? Number(chatTurnsToRead) : NaN;
-    if (Number.isInteger(n) && n >= 1 && n <= CHAT_TURNS_TO_READ_MAX) o.chatTurnsToRead = n;
+  if (chatTurnsToRead !== undefined) {
+    const n = chatTurnsToRead;
+    if (typeof n === 'number' && Number.isInteger(n) && n >= 1 && n <= CHAT_TURNS_TO_READ_MAX) o.chatTurnsToRead = n;
     else bad('chatTurnsToRead', `${JSON.stringify(chatTurnsToRead)} is not a whole number from 1 to ${CHAT_TURNS_TO_READ_MAX}`, `reading ${CHAT_TURNS_TO_READ_DEFAULT}`);
   }
   if (logLevel !== undefined && logLevel !== '') {

@@ -24,10 +24,7 @@ RUN=/tmp/buddy/drawer-$(date +%Y%m%dT%H%M%S)
 WORK=$RUN/work
 mkdir -p "$WORK"
 printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
-cat > "$RUN/settings.json" <<'EOF'
-{ "pluginConfigs": { "buddy@inline": { "options": { "commentAfterEachTurn": true, "suggestNextPrompt": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
-EOF
-sed -i.bak "s|RUNDIR|$RUN|" "$RUN/settings.json" && rm -f "$RUN/settings.json.bak"
+live_buddy_config "{ \"commentAfterEachTurn\": true, \"suggestNextPrompt\": true, \"logLevel\": \"debug\", \"logFile\": \"$RUN/buddy.log\" }"
 ID=$(uuidgen | tr 'A-Z' 'a-z')
 live_isolate
 T="tmux -L buddy-drawer"
@@ -38,7 +35,7 @@ pool_of duck thinking > "$RUN/thinking.pool"
 
 $T kill-session -t drawer 2>/dev/null
 $T new-session -d -s drawer -x "$COLS" -y "$ROWS" -c "$WORK" \
-  "'$LIVE_CLAUDE' --model haiku --setting-sources project --settings '$RUN/settings.json' \
+  "'$LIVE_CLAUDE' --model haiku --setting-sources project \
    --allowedTools Bash --plugin-dir '$PLUGIN' --session-id $ID"
 trap '$T capture-pane -p -t drawer -S -300 > "$RUN/pane.txt" 2>/dev/null; $T kill-server 2>/dev/null' EXIT
 live_boot

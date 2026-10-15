@@ -9,7 +9,8 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - adapter: the only file that touches `$`, its wiring grouped by event · `plugins/buddy/hooks/buddy.tsx`
 - engine: every decision, as pure modules · `plugins/buddy/src/`
 - character: one JSON file per id · `plugins/buddy/characters/{id}.json` · contract `plugins/buddy/schema/character.schema.json`, guide `CONTRIBUTING.md`
-- manifest: `plugin.json` with the `userConfig` options, and `icon.svg` · `plugins/buddy/.claude-plugin/`
+- manifest: `plugin.json`, which declares no `userConfig`, and `icon.svg` · `plugins/buddy/.claude-plugin/`
+- config file: every option, one flat JSON object · `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json` · parsed by `configFilePath`, `parseConfigFile` and `resolveOptions` in `plugins/buddy/src/options.ts`, example `config.example.json`
 - marketplace: installs the plugin directory from `main` (`git-subdir`) · `.claude-plugin/marketplace.json`
 - unit tests: one vitest file per engine concern · `tests/`
 - hook tests: function-hook tests on the testing kit of the `claude-code` module; `claude plugin test` requires them inside the plugin directory · `plugins/buddy/tests/`
@@ -26,8 +27,8 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 
 - Function hooks run only with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`: the hook tests, `npm run validate:plugin` and a real session all need it.
 - The `AbovePrompt` site is raised in the terminal and the desktop app only; VS Code and mobile never raise it, which the README states and the adapter does not work around.
-- Loaded with `--plugin-dir plugins/buddy`, the plugin reads its options under `pluginConfigs["buddy@inline"]`; installed, under `buddy@buddy`.
-- Every option also reads `BUDDY_{OPTION}`, upper snake (`BUDDY_CHAT_TURNS_TO_READ`): variable > option > default; blank is absent; booleans `1|0|true|false`; a bad value is named by its variable and the default applies. The names live in `ENV_NAMES` (`plugins/buddy/src/options.ts`), each read by its own literal `$.env.get('NAME')` in the adapter's `readOptionEnv`; the README option table lists them.
+- Options come from the config file alone: `XDG_CONFIG_HOME` when set and absolute, else `$HOME/.config`, then `buddy/config.json`; read once at session start by the adapter's `readConfigFile`, never again. A missing file gives the defaults silently; an unreadable or invalid file, an unknown key or a wrong-typed or out-of-range value is one named warning each, that key's default applies and the valid keys still apply. No environment variable and no `pluginConfigs` entry sets an option: a non-empty `options` object handed to `register` (an old entry) is one warning naming the file, its values never applied. Live scripts write `$RUN/xdg/buddy/config.json` and launch with that `XDG_CONFIG_HOME` (`live_buddy_config` in `scripts/live-lib.sh`).
+- Migrating from `pluginConfigs["buddy@..."]` (before 3.0.0): remove the entry from `settings.json` and put the same keys, flat, in the config file.
 
 ### Local
 
@@ -52,7 +53,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 ### Engine
 
 - A new behaviour lands in the engine as a pure function with a test watched failing first; the adapter only wires it.
-- `$` is passed only to functions declared at the top level of the adapter and always spelled `$.noun.event(...)`, and `$.env` names are string literals: otherwise Claude Code loads the module with zero hooks, and `npm run validate:plugin` reports it.
+- `$` is passed only to functions declared at the top level of the adapter and always spelled `$.noun.event(...)`, and `$.env` names are string literals (the adapter reads only `HOME`, `XDG_CONFIG_HOME` and `CLAUDE_CONFIG_DIR`): otherwise Claude Code loads the module with zero hooks, and `npm run validate:plugin` reports it.
 - Every hook catches, logs `{what} failed: {err}` through `say` (Claude Code names the plugin on a command's reply, never on a `$.ui.log` transcript line, so `notice()` adds `buddy:`; the debug log's copy then reads `buddy: buddy:`, accepted, as `$.ui.log` has no transcript-only sink), and returns `next(e)` or the original result.
 - A failure shows on screen: a missing or invalid character draws the duck with a bubble naming the error and pointing at the personality picker (ctrl+x t in `/buddy`), which lists it as `(invalid)`.
 - Only a `/buddy` question, or `commentAfterEachTurn`, `suggestNextPrompt` or `promptWhenIdle` when on, calls a model; walking, reactions and every other command stay local.
@@ -62,12 +63,12 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 
 - A built-in character carries `"$schema": "../schema/character.schema.json"`, validates against it, and its art and persona are original.
 - A missing line pool falls back to the engine's neutral pool, in no character's voice.
-- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit; an option's also moves `config.example.json` and adds its `ENV_NAMES` row, its literal `$.env.get` in `readOptionEnv` and its README variable entry.
+- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit; an option's also moves `config.example.json`, its `DEFAULTS` row and its README option row.
 
 ### Branches and releases
 
 - `develop` is the default branch: every change lands there, by a commit or a pull request.
 - A version bump moves `plugins/buddy/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `package.json` and the README badge together, and turns `## [Unreleased]` in `CHANGELOG.md` into `## [X.Y.Z] — {date}`; installed copies update only on a new version.
-- Semantic versioning: a fix is a patch; a new option, behaviour or built-in character is a minor; a renamed or removed option, command or character field is a major, and its CHANGELOG entry says how to migrate.
+- Semantic versioning: a fix is a patch; a new option, behaviour or built-in character is a minor; a renamed or removed option, command or character field, or a moved option home, is a major, and its CHANGELOG entry says how to migrate.
 - A release is `gitter`'s RELEASE phase: the `develop → main` pull request, merged once CI is green, then `claude plugin tag --push plugins/buddy` on `main` creates `buddy--v{X.Y.Z}`.
 - Git writes go through `gitter`, `.claude/agents/gitter.md`.

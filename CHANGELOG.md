@@ -4,8 +4,18 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
-### Added
-- Every option can be set by an environment variable, `BUDDY_` and the option's name in upper snake case (`BUDDY_CHAT_TURNS_TO_READ`): the variable beats the option, which beats the default; a blank variable is absent, and a bad value is named by its variable and the default used. The README option table lists each variable.
+## [3.0.0] — 2026-10-15
+
+### Changed
+- Every option now lives in one JSON file of buddy's own, `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json` (`XDG_CONFIG_HOME` is used only when set to an absolute path): a flat object keyed by the same option names, with JSON's own types (a boolean is `true` or `false`, a number a number; the text forms `"true"` and `"10"` are no longer read). buddy reads it once, at session start. A missing file gives the defaults silently; a file that cannot be read, is not valid JSON or not an object, an unknown key, and a wrong-typed or out-of-range value are each named once, with that key's default applied and the valid keys still applied. `config.example.json` is now an example of that file.
+- `register` receiving options from an old `pluginConfigs` entry now says so once, naming the config file, and applies none of the values.
+
+### Removed
+- The `userConfig` options of `plugin.json`: Claude Code no longer asks for them, `/plugin configure` and `pluginConfigs["buddy@..."].options` no longer set anything.
+- The `BUDDY_{OPTION}` environment variables (the fifteen added after 2.1.1 and never released), with `ENV_NAMES` and the README variable column.
+
+### Migration
+- Remove `pluginConfigs["buddy@buddy"]` (`buddy@inline` with `--plugin-dir`) from `settings.json`, and put the same keys, flat, into `~/.config/buddy/config.json`. For example, `"options": { "promptWhenIdle": true }` becomes `{ "promptWhenIdle": true }`. Write booleans and numbers unquoted. Until the entry is removed, buddy ignores its values and warns.
 
 ## [2.1.1] — 2026-10-15
 

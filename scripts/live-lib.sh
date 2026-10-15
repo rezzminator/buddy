@@ -66,11 +66,13 @@ live_isolate() {
   cat > "$LIVE_CLAUDE" <<LAUNCH
 #!/bin/sh
 exec env -i HOME="\$HOME" PATH="$LIVE_PATH" TERM="\${TERM:-xterm-256color}" COLORTERM="\${COLORTERM:-truecolor}" LANG="\${LANG:-en_US.UTF-8}" TMPDIR="\${TMPDIR:-/tmp}" \\
-  CLAUDE_CONFIG_DIR="$LIVE_CONFIG" CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 $token_arg \\
+  CLAUDE_CONFIG_DIR="$LIVE_CONFIG" XDG_CONFIG_HOME="$RUN/xdg" CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 $token_arg \\
   '$CLAUDE_BIN' "\$@"
 LAUNCH
   chmod 700 "$LIVE_CLAUDE"
 }
+# The buddy's options for the run: $1, a JSON object, as the config file the launcher's XDG_CONFIG_HOME points at ($RUN/xdg/buddy/config.json).
+live_buddy_config() { mkdir -p "$RUN/xdg/buddy" && printf '%s\n' "$1" > "$RUN/xdg/buddy/config.json"; }
 # The buddy's folder in session $ID's own chat folder, beside its transcript, as the plugin names it from the working directory $WORK.
 buddy_dir() { echo "$PROJECTS/$(cd "$WORK" && pwd -P | sed 's/[^a-zA-Z0-9]/-/g')/$ID/buddy"; }
 # Session $ID's memory file in whichever project folder holds its transcript, or nothing.

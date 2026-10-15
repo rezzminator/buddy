@@ -192,7 +192,7 @@ Like every option, it is resolved once at load by `resolveOptions`: a value of t
 | [`src/command.ts`](../../plugins/buddy/src/command.ts) | `parseCommand`, `USAGE` |
 | [`src/options.ts`](../../plugins/buddy/src/options.ts) | `resolveOptions`, `DEFAULTS`, `resolveModel`, `resolveEffort`, `observeEffort`, `INHERIT` |
 | [`hooks/buddy.tsx`](../../plugins/buddy/hooks/buddy.tsx) | `ask`, `callSettings`, `onTurnStep`, `onTurnEnd`, `onTurnComplete`, `turnCall`, `sayVerdict`, `VERDICT_BUBBLE`, `sayCommentAfterEachTurn`, `showSuggestNextPrompt`, `giveUpSuggestNextPrompt`, `runCommand`, `forgetConversation`, `takeSuggestion`, `onPromptSubmit`, `onTurnStart`, `userRulesContext`, `climbRuleLadder`, `warnOfRule`, `promptOvertaken`, `sendPromptToMainChat`, `armAway`, `disarmAway`, `awaySkip`, `awayCall`, the `prompt.submit`, `turn.start` and `prompt.suggest` hooks |
-| [`plugin.json`](../../plugins/buddy/.claude-plugin/plugin.json) | `userConfig`: `chatTurnsToRead`, `commentAfterEachTurn`, `model`, `effort`, `secondsBetweenComments`, `suggestNextPrompt`, `promptToMainChat`, `promptWhenIdle` |
+| [`config.example.json`](../../config.example.json) | the config file's keys: `chatTurnsToRead`, `commentAfterEachTurn`, `model`, `effort`, `secondsBetweenComments`, `suggestNextPrompt`, `promptToMainChat`, `promptWhenIdle` |
 
 ## How it's tested
 

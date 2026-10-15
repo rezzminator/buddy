@@ -5,7 +5,7 @@
 **Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-2.1.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/ci.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -74,10 +74,9 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 - Instead of `settings.json`, you can export the variable in your shell,
   `export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; an export vanishes in the
   next terminal.
-- After installing, Claude Code may print `N userConfig options not yet set —
-  run /plugin configure`. You can ignore it: every buddy option has a
-  default, so nothing needs setting and buddy works as installed. Use
-  `/plugin configure` only to change a default.
+- Every buddy option has a default, so nothing needs setting and buddy works
+  as installed. To change one, write it into buddy's config file
+  (see Configuration below); `/plugin configure` has no buddy options.
 - If function hooks are off, buddy says so when a session starts or resumes:
   `buddy is off: … Add "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } to
   ~/.claude/settings.json, then start a new session.` (with
@@ -537,54 +536,58 @@ flowchart LR
 
 ## ⚙️ Configuration
 
-Set these through `/plugin configure`, or under `pluginConfigs["buddy@buddy"].options`
-in `settings.json`. The key must be the full plugin id: Claude Code silently
-ignores options under any other key. A value buddy cannot use is ignored by
-name and its default kept: the first
-greeting's bubble says so once, and `/buddy help` and the log list it.
+buddy reads its options from one JSON file of its own, not from Claude Code's
+settings:
 
-Every option can also be set by its environment variable, `BUDDY_` and the
-option's name in upper snake case (`secondsBetweenComments` is
-`BUDDY_SECONDS_BETWEEN_COMMENTS`), for example in the `env` of `settings.json`
-or the shell Claude Code starts from. A variable beats the option, which beats
-the default. An unset or blank variable is absent. A boolean variable is `1`,
-`0`, `true` or `false`, in any case; every other variable holds the value its
-option holds. A variable buddy cannot use is ignored by its name, and the
-option's default is used (not the configured value), listed the same way as a
-bad option. An empty `BUDDY_LOG_FILE` is absent, so `logFile` set to the empty
-string (no log file) is set only through the option. buddy reads the variables
-when a session starts.
+- **Location:** `$XDG_CONFIG_HOME/buddy/config.json` when `XDG_CONFIG_HOME` is
+  set to an absolute path, else `~/.config/buddy/config.json`. buddy never
+  creates it; copy [`config.example.json`](config.example.json) there (the
+  folder too) and keep the keys you want to change.
+- **Shape:** one flat JSON object keyed by the option names below, with JSON's
+  own types: `true` or `false` for a boolean, a number for a number, a string
+  for the rest. Keys left out use their defaults.
+- **Read once, at session start:** an edit applies from the next session;
+  `/buddy reload` does not re-read it. The file is shared by every
+  Claude Code account of the machine that has the same `XDG_CONFIG_HOME` and
+  `HOME`; there is no other place to set an option: no environment variable,
+  no `/plugin configure` field, no `pluginConfigs` entry in `settings.json`.
+- **Missing file:** the defaults, silently. **Anything wrong with the file:**
+  the defaults for what is wrong, the valid keys still apply, and each problem
+  is named once: the first greeting's bubble says so, and `/buddy help` and the
+  log list it. That covers a file buddy cannot read, one that is not valid JSON
+  or not an object, an unknown key, and a value of the wrong type or out of
+  range.
+- **Migrating from a `pluginConfigs` entry (buddy before 3.0.0):** remove
+  `pluginConfigs["buddy@buddy"]` from `settings.json` and put the same keys, as
+  they were under `options`, into the config file. While the entry is there,
+  buddy ignores its values and says so, naming the file.
 
-| Option | Environment variable | Type | Default | Meaning |
-| --- | --- | --- | --- | --- |
-| `character` | `BUDDY_CHARACTER` | string | `"duck"` | Character id (see the personality picker, ctrl+x t in /buddy) |
-| `customCharactersDir` | `BUDDY_CUSTOM_CHARACTERS_DIR` | directory | `""` | `customCharactersDir`: the folder of your own character JSON files |
-| `walkOverPromptBar` | `BUDDY_WALK_OVER_PROMPT_BAR` | boolean | `true` | Walk back and forth over the prompt bar |
-| `commentAfterEachTurn` | `BUDDY_COMMENT_AFTER_EACH_TURN` | boolean | `true` | The buddy says `commentAfterEachTurn` at the end of every answered turn, from one short `model` call that also writes `suggestNextPrompt` (spends tokens); `false` keeps it quiet |
-| `model` | `BUDDY_MODEL` | string | `"opus"` | Model for `commentAfterEachTurn`, `suggestNextPrompt` and every /buddy question: the end-of-turn call and every /buddy question. `inherit` follows the main chat's model, read at every call (`opus` when it cannot be read) |
-| `effort` | `BUDDY_EFFORT` | string | `"low"` | How hard `model` thinks on each of those calls: low, medium, high, xhigh, max or `inherit`. `inherit` uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies |
-| `secondsBetweenComments` | `BUDDY_SECONDS_BETWEEN_COMMENTS` | number | `0` | Minimum seconds between two `commentAfterEachTurn`; 0 = every answered turn |
-| `suggestNextPrompt` | `BUDDY_SUGGEST_NEXT_PROMPT` | boolean | `true` | The buddy's second brain, in the same end-of-turn call: it names what you most deeply want, judges Claude's last move `RIGHT`, `SHORTCUT` (warned in yellow) or `WRONG` (screamed in red), and writes your next prompt to match (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
-| `promptToMainChat` | `BUDDY_PROMPT_TO_MAIN_CHAT` | boolean | `true` | The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, from the same end-of-turn call: only on evidence inside the turn that your own ask is unmet or unproven (a failed step or test run the answer passes over, a conclusion that rests on less than it names, an instruction in your ask not followed, a part of the ask never addressed); the buddy's own doubts, and a gap Claude named, stay a suggestion. Claude reads it as the buddy's, never yours, with a note saying so; the turn it starts never sends another, and with `suggestNextPrompt` on the suggestion after one is none. While on, your live rules from the buddy's memory ride every prompt as context for Claude, and a rule not followed climbs a ladder: the prompt, then the prompt again starting `Again:`, then from the third time a warning to you in the bubble instead. A prompt the chat moved past is never sent, remembered unsent. Logs `promptToMainChat.sent` and `rule.strike`. |
-| `promptWhenIdle` | `BUDDY_PROMPT_WHEN_IDLE` | boolean | `false` | After an answered turn, once the chat sits idle 30 minutes with no turn running, one call on opus at low effort reads Claude's last answer and replies `PAUSE` or a one-line push, sent to Claude as the buddy's prompt; never a git push, a deletion, a publication, a credential or an account step; at most 3 pushes before you prompt again. One model call per idle stretch (spends tokens); a reload or restart keeps the wait; logs `away.decision` |
-| `chatTurnsToRead` | `BUDDY_CHAT_TURNS_TO_READ` | number | `4` | The buddy's memory: how many of the chat's latest turns it remembers, 1 to 10, after the chat's memory items (at most 10 rules, 6 open items, 6 facts, 4 lessons and 3 doubts, edited by the buddy at every turn's end and checked in code). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; the last turn with its numbers (time, requests, tool calls, files, lines, tests in their order, commits, tokens, cost, context), each older one told shorter, its numbers only its failed tool calls; anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`, and beside it `memory.md`, for you to read: the memory items, the newest ended ones, and the turns as the character drawn now reads them), so reopening a chat brings it back; the exchanges are kept per character, the memory items per chat; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
-| `logLevel` | `BUDDY_LOG_LEVEL` | string | `"info"` | Log level: error, info or debug |
-| `logFile` | `BUDDY_LOG_FILE` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, archived whole to the next free `{logFile}.N` past 1 MB and never deleted; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
-| `saveRounds` | `BUDDY_SAVE_ROUNDS` | boolean | `true` | One text file per main-chat turn in the chat's own folder, beside its transcript and next to `memory.json`, the buddy's memory of that chat (`{config}/projects/{project}/{session id}/buddy/`), every turn kept (`round-001.txt` on, each new round numbered after the highest, none ever overwritten; `ls -t` lists them newest first), holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim (they hold what the transcript beside them holds: your prompts, Claude's answers and tool output); `false` = no files |
-| `ambiguousCharacterWidth` | `BUDDY_AMBIGUOUS_CHARACTER_WIDTH` | string | `"narrow"` | Ambiguous-width characters: narrow or wide; `wide` for a terminal that draws them two columns wide, as a CJK locale often does |
+| Option | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `character` | string | `"duck"` | Character id (see the personality picker, ctrl+x t in /buddy) |
+| `customCharactersDir` | directory | `""` | `customCharactersDir`: the folder of your own character JSON files |
+| `walkOverPromptBar` | boolean | `true` | Walk back and forth over the prompt bar |
+| `commentAfterEachTurn` | boolean | `true` | The buddy says `commentAfterEachTurn` at the end of every answered turn, from one short `model` call that also writes `suggestNextPrompt` (spends tokens); `false` keeps it quiet |
+| `model` | string | `"opus"` | Model for `commentAfterEachTurn`, `suggestNextPrompt` and every /buddy question: the end-of-turn call and every /buddy question. `inherit` follows the main chat's model, read at every call (`opus` when it cannot be read) |
+| `effort` | string | `"low"` | How hard `model` thinks on each of those calls: low, medium, high, xhigh, max or `inherit`. `inherit` uses the effort of the main chat's latest request, and sends none before its first (or when that request carries none, or a number), so the model's default applies |
+| `secondsBetweenComments` | number | `0` | Minimum seconds between two `commentAfterEachTurn`; 0 = every answered turn |
+| `suggestNextPrompt` | boolean | `true` | The buddy's second brain, in the same end-of-turn call: it names what you most deeply want, judges Claude's last move `RIGHT`, `SHORTCUT` (warned in yellow) or `WRONG` (screamed in red), and writes your next prompt to match (spends tokens); Claude Code's own is held back and shown only when the buddy has none; `false` keeps Claude Code's own |
+| `promptToMainChat` | boolean | `true` | The buddy may send Claude a prompt of its own after a turn, at most one per prompt of yours, from the same end-of-turn call: only on evidence inside the turn that your own ask is unmet or unproven (a failed step or test run the answer passes over, a conclusion that rests on less than it names, an instruction in your ask not followed, a part of the ask never addressed); the buddy's own doubts, and a gap Claude named, stay a suggestion. Claude reads it as the buddy's, never yours, with a note saying so; the turn it starts never sends another, and with `suggestNextPrompt` on the suggestion after one is none. While on, your live rules from the buddy's memory ride every prompt as context for Claude, and a rule not followed climbs a ladder: the prompt, then the prompt again starting `Again:`, then from the third time a warning to you in the bubble instead. A prompt the chat moved past is never sent, remembered unsent. Logs `promptToMainChat.sent` and `rule.strike`. |
+| `promptWhenIdle` | boolean | `false` | After an answered turn, once the chat sits idle 30 minutes with no turn running, one call on opus at low effort reads Claude's last answer and replies `PAUSE` or a one-line push, sent to Claude as the buddy's prompt; never a git push, a deletion, a publication, a credential or an account step; at most 3 pushes before you prompt again. One model call per idle stretch (spends tokens); a reload or restart keeps the wait; logs `away.decision` |
+| `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest turns it remembers, 1 to 10, after the chat's memory items (at most 10 rules, 6 open items, 6 facts, 4 lessons and 3 doubts, edited by the buddy at every turn's end and checked in code). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; the last turn with its numbers (time, requests, tool calls, files, lines, tests in their order, commits, tokens, cost, context), each older one told shorter, its numbers only its failed tool calls; anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`, and beside it `memory.md`, for you to read: the memory items, the newest ended ones, and the turns as the character drawn now reads them), so reopening a chat brings it back; the exchanges are kept per character, the memory items per chat; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
+| `logLevel` | string | `"info"` | Log level: error, info or debug |
+| `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, archived whole to the next free `{logFile}.N` past 1 MB and never deleted; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
+| `saveRounds` | boolean | `true` | One text file per main-chat turn in the chat's own folder, beside its transcript and next to `memory.json`, the buddy's memory of that chat (`{config}/projects/{project}/{session id}/buddy/`), every turn kept (`round-001.txt` on, each new round numbered after the highest, none ever overwritten; `ls -t` lists them newest first), holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim (they hold what the transcript beside them holds: your prompts, Claude's answers and tool output); `false` = no files |
+| `ambiguousCharacterWidth` | string | `"narrow"` | Ambiguous-width characters: narrow or wide; `wide` for a terminal that draws them two columns wide, as a CJK locale often does |
 
 ```json
 {
-  "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
-  "pluginConfigs": {
-    "buddy@buddy": {
-      "options": { "customCharactersDir": "/path/to/my-characters", "commentAfterEachTurn": true }
-    }
-  }
+  "customCharactersDir": "/path/to/my-characters",
+  "commentAfterEachTurn": true
 }
 ```
 
-[`config.example.json`](config.example.json) lists every option at its default, ready to merge into your `settings.json`.
+[`config.example.json`](config.example.json) lists every option at its default: it is the config file itself, ready to copy.
 
 ### Speed and context
 
