@@ -20,7 +20,7 @@ export function pluginLogDetail(fields: Record<string, unknown>): Record<string,
   const detail: Record<string, unknown> = {};
   for (const key of ['id', 'session', 'character', 'asker', 'drawn', 'count', 'characters', 'invalid',
     'length', 'ms', 'try', 'turn', 'turnId', 'file', 'path', 'area', 'source', 'via', 'kind',
-    'outcome', 'reason', 'error', 'hidden', 'saved', 'filled', 'version', 'dir_source']) {
+    'outcome', 'reason', 'error', 'hidden', 'saved', 'filled']) {
     const value = fields[key];
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') detail[key] = value;
   }
@@ -29,7 +29,7 @@ export function pluginLogDetail(fields: Record<string, unknown>): Record<string,
 
 /** Only actionable outcomes and visible state changes, never routine hook traffic. */
 export function infoEvent(event: string, fields: Record<string, unknown> = {}): boolean {
-  return ['logger-ready', 'character.switch', 'hidden.shared', 'session.forget', 'personality.pick',
+  return ['character.switch', 'hidden.shared', 'session.forget', 'personality.pick',
     'drawer.open', 'drawer.close', 'drawer.use', 'rule.strike', 'ask.outcome',
     'promptToMainChat.sent', 'promptToMainChat.dropped', 'promptToMainChat.stale', 'promptToMainChat.movedOn'].includes(event)
     || typeof fields.deny === 'string';
@@ -90,25 +90,7 @@ plugin=$2
 shift 2
 refuse() { printf 'plugin log %s: %s\\n' "$1" "$2" >&2; exit 1; }
 case "$plugin" in *[!a-z0-9-]*|'') refuse "$dir" 'invalid plugin';; esac
-[ ! -L "$dir" ] || refuse "$dir" 'symlink refused'
 mkdir -p "$dir"
-if [ ! -w "$dir" ] || [ ! -x "$dir" ]; then refuse "$dir" 'directory is not writable/searchable'; fi
-# Validate the complete owned set before changing any file's mode.
-for owned in errors.jsonl warnings.jsonl info.jsonl; do
-  for path in "$dir/$owned" "$dir/$owned.1"; do
-    [ ! -L "$path" ] || refuse "$path" 'symlink refused'
-    if [ -e "$path" ]; then
-      [ -f "$path" ] || refuse "$path" 'not a regular level file'
-      [ -w "$path" ] || refuse "$path" 'not writable; permissions kept'
-    fi
-  done
-done
-chmod 700 "$dir"
-for owned in errors.jsonl warnings.jsonl info.jsonl; do
-  for path in "$dir/$owned" "$dir/$owned.1"; do
-    if [ -f "$path" ]; then chmod 600 "$path"; fi
-  done
-done
 cap_file() {
   cap_path=$dir/$1
   [ -f "$cap_path" ] || return 1

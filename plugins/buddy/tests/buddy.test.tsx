@@ -282,7 +282,7 @@ describe('plugin log capability fallback', () => {
         calls.push({ argv: e.argv, timeoutMs: e.init?.timeoutMs });
         return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } };
       });
-      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {}, builtins: { 'plugin.json': '{"version":"2.1.0"}' } });
+      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {} });
       await $.session.start(START);
       const ui = await band($);
       await $.command.run(run(''));
@@ -296,9 +296,6 @@ describe('plugin log capability fallback', () => {
         expect(call.timeoutMs).toBe(5000);
         for (let i = 6; i < call.argv.length; i += 2) rows.push({ target: call.argv[i]!, row: JSON.parse(call.argv[i + 1]!) });
       }
-      const heartbeats = rows.filter(({ row }) => row.event === 'logger-ready');
-      expect(heartbeats.length).toBe(1);
-      expect(heartbeats[0]).toMatchObject({ target: 'info.jsonl', row: { plugin: 'buddy', level: 'info', session: SESSION, detail: { version: '2.1.0', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' } } });
       expect(rows.some(({ target, row }) => target === 'warnings.jsonl' && row.level === 'warning' && row.event === 'roster-invalid')).toBe(true);
       expect(rows.some(({ target, row }) => target === 'errors.jsonl' && row.level === 'error' && row.event === 'writing-memory-failed' && row.where === 'hooks/buddy.tsx#writeMemoryText')).toBe(true);
       const logFile = Object.keys(w.files).find((file) => file.endsWith('/buddy.log'));
@@ -308,7 +305,7 @@ describe('plugin log capability fallback', () => {
     });
     test(`names unsupported disk capabilities under ${configured ? 'PLUGIN_LOG_DIR' : 'HOME fallback'}, retaining the memory error in buddy.log`, async ($, on) => {
       const dir = configured ? '/plugin-log-fixture/buddy' : `${HOME}/.local/state/buddy/logs`;
-      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {}, builtins: { 'plugin.json': '{"version":"2.1.0"}' } });
+      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {} });
       await $.session.start(START);
       const ui = await band($);
       await $.command.run(run(''));
@@ -325,8 +322,6 @@ describe('plugin log capability fallback', () => {
       const existing = w.files[logFile!]!.trim().split('\n').map((line) => JSON.parse(line));
       expect(existing.some((record) => record.event === 'writing memory.md' && record.level === 'error')).toBe(true);
       expect(existing.some((record) => record.event === 'roster.invalid' && record.level === 'info')).toBe(true);
-      expect(existing.filter((record) => record.event === 'logger-ready').length).toBe(1);
-      expect(existing.find((record) => record.event === 'logger-ready')).toMatchObject({ level: 'info', version: '2.1.0', dir_source: configured ? 'PLUGIN_LOG_DIR' : 'fallback' });
       expect(w.logs.some((line) => line.startsWith('buddy: writing memory.md failed: '))).toBe(true);
       // fs.write remains the actual old-log/round mechanism, never advertised as append.
       expect(w.writes.filter((file) => file === `${dir}/errors.jsonl` || file === `${dir}/warnings.jsonl` || file === `${dir}/info.jsonl`)).toEqual([]);
@@ -334,7 +329,7 @@ describe('plugin log capability fallback', () => {
     });
   }
   test('no directory inputs gives exactly one explicit off notice', async ($, on) => {
-    const w = world(on, {}, {}, { env: { HOME: '' }, builtins: { 'plugin.json': '{"version":"2.1.0"}' } });
+    const w = world(on, {}, {}, { env: { HOME: '' } });
     await $.session.start(START);
     await $.command.run(run('off'));
     await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);

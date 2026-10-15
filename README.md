@@ -5,7 +5,7 @@
 **Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-2.1.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.1.1-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/ci.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -425,10 +425,10 @@ flowchart LR
   appends `errors.jsonl`, `warnings.jsonl` and `info.jsonl` beneath
   `$PLUGIN_LOG_DIR/buddy`, or `$HOME/.local/state/buddy/logs` when unset.
   These are independent of `logLevel` and `logFile`: errors, warnings and
-  actionable state changes only, with a startup `logger-ready` record;
+  actionable state changes only;
   no debug records or prompt/tool bodies. Rows are at most 4096 UTF-8 bytes,
-  explicitly marked when truncated. The directory is private (0700), files
-  are 0600, and a file over 20 MiB moves to `.1` before the next append,
+  explicitly marked when truncated. New directories and files use a private
+  umask. A file over 20 MiB moves to `.1` before the next append,
   replacing its previous `.1` and recording `log-capped`.
   The current function-hook test runtime has no built-in implementation of
   `process.run`; its filesystem writes replace whole files and cannot meet this append,

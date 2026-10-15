@@ -1116,11 +1116,9 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   await flushPluginLog($);
   pluginLog = new PluginLogQueue(undefined, 'buddy');
   L.context.session = undefined;
-  let dirSource: 'PLUGIN_LOG_DIR' | 'fallback' = 'fallback';
   try {
     const dir = await $.env.get('PLUGIN_LOG_DIR');
     const home = await $.env.get('HOME');
-    dirSource = dir ? 'PLUGIN_LOG_DIR' : 'fallback';
     pluginLog = new PluginLogQueue(pluginLogDir(dir, home, 'buddy'), 'buddy');
   } catch (error) {
     log($, 'reading the plugin log directory', error);
@@ -1147,7 +1145,6 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   } catch (error) {
     lg($, 'debug', 'session.build-unread', { error: message(error) });
   }
-  lg($, 'info', 'logger-ready', { version: build, dir_source: dirSource });
   lg($, 'info', 'session.start', { build, rounds: st.options.saveRounds, model: st.options.model, effort: st.options.effort, level: L.level, commentAfterEachTurn: st.options.commentAfterEachTurn, suggestNextPrompt: st.options.suggestNextPrompt, chatTurnsToRead: st.options.chatTurnsToRead });
 }
 

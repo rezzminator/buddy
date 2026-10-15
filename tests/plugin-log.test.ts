@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -61,7 +61,7 @@ describe('plugin log row contract', () => {
     expect(pluginLogDetail({ id: 'duck', count: 2, file: '/f', error: 'denied', outcome: 'refused', prompt: 'private prompt', text: 'private answer', toolInput: { body: 'private' }, env: { SECRET: 'private' }, reason: { body: 'private' }, length: 10 })).toEqual({ id: 'duck', count: 2, file: '/f', error: 'denied', outcome: 'refused', length: 10 });
   });
   test.each([
-    ['logger-ready', {}, true], ['character.switch', {}, true], ['promptToMainChat.dropped', {}, true], ['drawer.open', {}, true],
+    ['character.switch', {}, true], ['promptToMainChat.dropped', {}, true], ['drawer.open', {}, true],
     ['ask.outcome', { outcome: 'refused' }, true], ['roster.load', {}, false], ['turn.numbers', {}, false],
     ['memory.op', {}, false], ['call.cost', {}, false], ['session.start', {}, false],
   ] as const)('info policy for %s', (event, detail, expected) => expect(infoEvent(event, detail)).toBe(expected));
@@ -153,25 +153,6 @@ describe('real append script', () => {
     const input = levelRow({ ...fields, session: undefined, msg: ',"session":"message-fake"', detail: { count: 1, session: 'detail-fake' } }, now);
     expect((await run(appendArgv(dir, 'buddy', [input])[0]!)).exitCode).toBe(0);
     expect((await lines(join(dir, 'warnings.jsonl')))[0]!.session).toBeUndefined();
-  });
-  test('tightens every existing exact-owned active and archive file before an unrelated append', async () => {
-    const dir = await temp();
-    const files = ['errors.jsonl', 'warnings.jsonl', 'info.jsonl'].flatMap((file) => [file, `${file}.1`]);
-    for (const file of files) { await writeFile(join(dir, file), 'old'); await chmod(join(dir, file), 0o644); }
-    await writeFile(join(dir, 'unowned.txt'), 'other'); await chmod(join(dir, 'unowned.txt'), 0o644);
-    for (const argv of appendArgv(dir, 'buddy', [row()])) expect((await run(argv)).exitCode).toBe(0);
-    for (const file of files) expect((await stat(join(dir, file))).mode & 0o777).toBe(0o600);
-    expect((await stat(join(dir, 'unowned.txt'))).mode & 0o777).toBe(0o644);
-  });
-  test.each(['info.jsonl', 'info.jsonl.1'])('rejects untargeted owned symlink %s without changing its destination', async (file) => {
-    const dir = await temp(); const outside = join(await temp(), 'outside');
-    await writeFile(outside, 'untouched'); await chmod(outside, 0o644);
-    await symlink(outside, join(dir, file));
-    const result = await run(appendArgv(dir, 'buddy', [row()])[0]!);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toContain('symlink refused');
-    expect(await readFile(outside, 'utf8')).toBe('untouched');
-    expect((await stat(outside)).mode & 0o777).toBe(0o644);
   });
   test('recaps warnings before each cap notice append', async () => {
     const dir = await temp();
