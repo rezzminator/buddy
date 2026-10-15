@@ -1,5 +1,8 @@
 // The plugin's userConfig, resolved to typed values with the manifest's
-// defaults; a bad value is ignored by name and listed, never silently.
+// defaults; a bad value is ignored by name and listed, never silently. Each
+// option also reads the environment variable BUDDY_{OPTION}: the variable beats
+// the option, which beats the default; a blank variable is absent, a bad one is
+// listed by its name and the default is used.
 
 import { isMainLoop } from './brain.ts';
 import { configDir, type ConfigEnv } from './config-source.ts';
@@ -71,9 +74,77 @@ function bool(v: unknown): boolean | undefined {
   return undefined;
 }
 
-export function resolveOptions(raw: Record<string, unknown>): Options {
+/** Each option's environment variable: BUDDY_ and the option's name in upper snake case. */
+export const ENV_NAMES = {
+  character: 'BUDDY_CHARACTER',
+  customCharactersDir: 'BUDDY_CUSTOM_CHARACTERS_DIR',
+  walkOverPromptBar: 'BUDDY_WALK_OVER_PROMPT_BAR',
+  commentAfterEachTurn: 'BUDDY_COMMENT_AFTER_EACH_TURN',
+  model: 'BUDDY_MODEL',
+  effort: 'BUDDY_EFFORT',
+  secondsBetweenComments: 'BUDDY_SECONDS_BETWEEN_COMMENTS',
+  suggestNextPrompt: 'BUDDY_SUGGEST_NEXT_PROMPT',
+  promptToMainChat: 'BUDDY_PROMPT_TO_MAIN_CHAT',
+  promptWhenIdle: 'BUDDY_PROMPT_WHEN_IDLE',
+  chatTurnsToRead: 'BUDDY_CHAT_TURNS_TO_READ',
+  logLevel: 'BUDDY_LOG_LEVEL',
+  logFile: 'BUDDY_LOG_FILE',
+  saveRounds: 'BUDDY_SAVE_ROUNDS',
+  ambiguousCharacterWidth: 'BUDDY_AMBIGUOUS_CHARACTER_WIDTH',
+} as const satisfies Readonly<Record<keyof typeof DEFAULTS, string>>;
+
+/** One BUDDY_* variable's name. */
+export type EnvName = (typeof ENV_NAMES)[keyof typeof ENV_NAMES];
+
+const FLAGS: ReadonlyMap<string, boolean> = new Map([['1', true], ['0', false], ['true', true], ['false', false]]);
+
+type Problem = { key: string; why: string; kept?: string };
+
+/** The environment's values by option: `1|0|true|false` of a boolean option read as the boolean, anything else as the string; a blank variable is absent. */
+function fromEnv(env: Record<string, string | undefined>): { values: Record<string, unknown>; problems: Problem[] } {
+  const values: Record<string, unknown> = {};
+  const problems: Problem[] = [];
+  for (const key of Object.keys(ENV_NAMES) as (keyof typeof DEFAULTS)[]) {
+    const text = env[ENV_NAMES[key]]?.trim();
+    if (text === undefined || text === '') continue;
+    let value: unknown = text;
+    if (typeof DEFAULTS[key] === 'boolean') {
+      const flag = FLAGS.get(text.toLowerCase());
+      if (flag === undefined) {
+        problems.push({ key, why: `${JSON.stringify(text)} is not 1, 0, true or false` });
+        continue;
+      }
+      value = flag;
+    }
+    const [first] = resolve({ [key]: value }).problems;
+    if (first) problems.push({ key, why: first.why });
+    else values[key] = value;
+  }
+  return { values, problems };
+}
+
+/**
+ * The options: `raw` is the plugin's configured options, `env` the BUDDY_*
+ * variables (a missing variable is absent). A bad variable is listed by its
+ * name and its option takes the default, not the configured value.
+ */
+export function resolveOptions(raw: Record<string, unknown>, env: Record<string, string | undefined> = {}): Options {
+  const fromVars = fromEnv(env);
+  const merged: Record<string, unknown> = { ...raw, ...fromVars.values };
+  for (const p of fromVars.problems) delete merged[p.key];
+  const { o, problems } = resolve(merged);
+  const shown = (p: Problem) => `option ${p.key} ignored: ${p.why}${p.kept ? `; ${p.kept}` : ''}`;
+  o.errors = [
+    ...problems.map(shown),
+    ...fromVars.problems.map((p) => `env ${ENV_NAMES[p.key as keyof typeof DEFAULTS]} ignored: ${p.why}; using the default ${JSON.stringify(DEFAULTS[p.key as keyof typeof DEFAULTS])}`),
+  ];
+  return o;
+}
+
+function resolve(raw: Record<string, unknown>): { o: Options; problems: Problem[] } {
   const o: Options = { ...DEFAULTS, errors: [] };
-  const bad = (key: string, why: string) => o.errors.push(`option ${key} ignored: ${why}`);
+  const problems: Problem[] = [];
+  const bad = (key: string, why: string, kept?: string) => problems.push({ key, why, kept });
   const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, promptToMainChat, promptWhenIdle, chatTurnsToRead, logLevel, logFile, saveRounds, ambiguousCharacterWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
@@ -131,7 +202,7 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
   if (chatTurnsToRead !== undefined && chatTurnsToRead !== '') {
     const n = typeof chatTurnsToRead === 'number' ? chatTurnsToRead : typeof chatTurnsToRead === 'string' ? Number(chatTurnsToRead) : NaN;
     if (Number.isInteger(n) && n >= 1 && n <= CHAT_TURNS_TO_READ_MAX) o.chatTurnsToRead = n;
-    else bad('chatTurnsToRead', `${JSON.stringify(chatTurnsToRead)} is not a whole number from 1 to ${CHAT_TURNS_TO_READ_MAX}; reading ${CHAT_TURNS_TO_READ_DEFAULT}`);
+    else bad('chatTurnsToRead', `${JSON.stringify(chatTurnsToRead)} is not a whole number from 1 to ${CHAT_TURNS_TO_READ_MAX}`, `reading ${CHAT_TURNS_TO_READ_DEFAULT}`);
   }
   if (logLevel !== undefined && logLevel !== '') {
     const l = typeof logLevel === 'string' ? logLevel.trim().toLowerCase() : '';
@@ -148,7 +219,7 @@ export function resolveOptions(raw: Record<string, unknown>): Options {
     if (typeof logFile === 'string') o.logFile = logFile.trim();
     else bad('logFile', 'not a string');
   }
-  return o;
+  return { o, problems };
 }
 
 /** The model a call runs on: the option, or for 'inherit' the main chat's, INHERIT_FALLBACK_MODEL when that is unknown. */

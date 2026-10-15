@@ -27,6 +27,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - Function hooks run only with `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`: the hook tests, `npm run validate:plugin` and a real session all need it.
 - The `AbovePrompt` site is raised in the terminal and the desktop app only; VS Code and mobile never raise it, which the README states and the adapter does not work around.
 - Loaded with `--plugin-dir plugins/buddy`, the plugin reads its options under `pluginConfigs["buddy@inline"]`; installed, under `buddy@buddy`.
+- Every option also reads `BUDDY_{OPTION}`, upper snake (`BUDDY_CHAT_TURNS_TO_READ`): variable > option > default; blank is absent; booleans `1|0|true|false`; a bad value is named by its variable and the default applies. The names live in `ENV_NAMES` (`plugins/buddy/src/options.ts`), each read by its own literal `$.env.get('NAME')` in the adapter's `readOptionEnv`; the README option table lists them.
 
 ### Local
 
@@ -61,7 +62,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 
 - A built-in character carries `"$schema": "../schema/character.schema.json"`, validates against it, and its art and persona are original.
 - A missing line pool falls back to the engine's neutral pool, in no character's voice.
-- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit; an option's also moves `config.example.json`.
+- A change to a command, an option or a character field moves `README.md`, `CONTRIBUTING.md` and the schema in the same commit; an option's also moves `config.example.json` and adds its `ENV_NAMES` row, its literal `$.env.get` in `readOptionEnv` and its README variable entry.
 
 ### Branches and releases
 

@@ -27,7 +27,7 @@ import { PluginLogQueue, eventId, failureEvent, infoEvent, levelRow, pluginLogDe
 import { priceCall } from '../src/prices.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
-import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
+import { INHERIT, expandHome, logPath, observeEffort, resolveEffort, resolveModel, resolveOptions, type Effort, type EnvName, type ObservedEffort, type Options } from '../src/options.ts';
 import {
   ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, EXTENDED_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostTurnOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   sayInTurn, skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Said, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
@@ -1088,7 +1088,33 @@ async function readStore(st: State, $: EngineInterface): Promise<void> {
   }
 }
 
-async function startSession(st: State, $: EngineInterface): Promise<void> {
+/** The BUDDY_* variables, each read under its own literal name, as the engine refuses a computed one; the return type holds the list equal to ENV_NAMES in src/options.ts. */
+async function readOptionEnv($: EngineInterface): Promise<Record<EnvName, string | undefined>> {
+  return {
+    BUDDY_CHARACTER: await $.env.get('BUDDY_CHARACTER'),
+    BUDDY_CUSTOM_CHARACTERS_DIR: await $.env.get('BUDDY_CUSTOM_CHARACTERS_DIR'),
+    BUDDY_WALK_OVER_PROMPT_BAR: await $.env.get('BUDDY_WALK_OVER_PROMPT_BAR'),
+    BUDDY_COMMENT_AFTER_EACH_TURN: await $.env.get('BUDDY_COMMENT_AFTER_EACH_TURN'),
+    BUDDY_MODEL: await $.env.get('BUDDY_MODEL'),
+    BUDDY_EFFORT: await $.env.get('BUDDY_EFFORT'),
+    BUDDY_SECONDS_BETWEEN_COMMENTS: await $.env.get('BUDDY_SECONDS_BETWEEN_COMMENTS'),
+    BUDDY_SUGGEST_NEXT_PROMPT: await $.env.get('BUDDY_SUGGEST_NEXT_PROMPT'),
+    BUDDY_PROMPT_TO_MAIN_CHAT: await $.env.get('BUDDY_PROMPT_TO_MAIN_CHAT'),
+    BUDDY_PROMPT_WHEN_IDLE: await $.env.get('BUDDY_PROMPT_WHEN_IDLE'),
+    BUDDY_CHAT_TURNS_TO_READ: await $.env.get('BUDDY_CHAT_TURNS_TO_READ'),
+    BUDDY_LOG_LEVEL: await $.env.get('BUDDY_LOG_LEVEL'),
+    BUDDY_LOG_FILE: await $.env.get('BUDDY_LOG_FILE'),
+    BUDDY_SAVE_ROUNDS: await $.env.get('BUDDY_SAVE_ROUNDS'),
+    BUDDY_AMBIGUOUS_CHARACTER_WIDTH: await $.env.get('BUDDY_AMBIGUOUS_CHARACTER_WIDTH'),
+  };
+}
+
+async function startSession(st: State, $: EngineInterface, configured: Record<string, unknown>): Promise<void> {
+  try {
+    st.options = resolveOptions(configured, await readOptionEnv($));
+  } catch (error) {
+    log($, 'reading the BUDDY_* variables', error);
+  }
   await startLog(st, $);
   for (const e of st.options.errors) warn($, 'option.warning', e);
   await readStore(st, $);
@@ -2890,8 +2916,9 @@ async function runCommand(st: State, $: EngineInterface, args: string, asQuestio
 // ---- wiring, grouped by event -------------------------------------------
 
 export const register: Register = (on: On, options: PluginOptions) => {
+  const configured = options as Record<string, unknown>;
   const st: State = {
-    options: resolveOptions(options as Record<string, unknown>),
+    options: resolveOptions(configured),
     roster: mergeRoster([], []),
     b: null,
     storeChoice: undefined,
@@ -2970,7 +2997,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     const result = await next(e);
     try {
       st.interactive = e.isInteractive !== false;
-      await startSession(st, $);
+      await startSession(st, $, configured);
     } catch (error) {
       log($, 'starting', error);
     }

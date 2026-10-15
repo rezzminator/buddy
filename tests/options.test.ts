@@ -219,3 +219,68 @@ describe('the promptWhenIdle option', () => {
     expect(resolveOptions({ promptWhenIdle: 'yes' })).toMatchObject({ promptWhenIdle: false, errors: ['option promptWhenIdle ignored: "yes" is not true or false'] });
   });
 });
+
+describe('the environment layer: BUDDY_{OPTION} beats the option, which beats the default', () => {
+  // option, variable, env value, the option's value the variable gives, a different option value the variable must beat
+  const rows: [keyof typeof DEFAULTS, string, string, unknown, unknown][] = [
+    ['character', 'BUDDY_CHARACTER', ' Robot ', 'robot', 'cat'],
+    ['customCharactersDir', 'BUDDY_CUSTOM_CHARACTERS_DIR', ' ~/envchars ', '~/envchars', '~/chars'],
+    ['walkOverPromptBar', 'BUDDY_WALK_OVER_PROMPT_BAR', ' FALSE ', false, true],
+    ['commentAfterEachTurn', 'BUDDY_COMMENT_AFTER_EACH_TURN', '0', false, true],
+    ['model', 'BUDDY_MODEL', ' Inherit ', 'inherit', 'haiku'],
+    ['effort', 'BUDDY_EFFORT', ' MAX ', 'max', 'high'],
+    ['secondsBetweenComments', 'BUDDY_SECONDS_BETWEEN_COMMENTS', ' 30 ', 30, 10],
+    ['suggestNextPrompt', 'BUDDY_SUGGEST_NEXT_PROMPT', 'false', false, true],
+    ['promptToMainChat', 'BUDDY_PROMPT_TO_MAIN_CHAT', 'False', false, true],
+    ['promptWhenIdle', 'BUDDY_PROMPT_WHEN_IDLE', '1', true, false],
+    ['chatTurnsToRead', 'BUDDY_CHAT_TURNS_TO_READ', '7', 7, 2],
+    ['logLevel', 'BUDDY_LOG_LEVEL', ' DEBUG ', 'debug', 'error'],
+    ['logFile', 'BUDDY_LOG_FILE', ' ~/env.log ', '~/env.log', '/tmp/opt.log'],
+    ['saveRounds', 'BUDDY_SAVE_ROUNDS', 'TRUE', true, false],
+    ['ambiguousCharacterWidth', 'BUDDY_AMBIGUOUS_CHARACTER_WIDTH', ' Wide ', 'wide', 'narrow'],
+  ];
+  // a value no option of that type can hold
+  const bad: Record<string, string> = {
+    character: '', customCharactersDir: '', logFile: '',
+    walkOverPromptBar: 'maybe', commentAfterEachTurn: '2', suggestNextPrompt: 'yes', promptToMainChat: 'on', promptWhenIdle: 'no', saveRounds: '{}',
+    effort: 'turbo', secondsBetweenComments: '-1', chatTurnsToRead: '11', logLevel: 'loud', ambiguousCharacterWidth: 'huge', model: '',
+  };
+
+  test('every option has its variable, which overrides the option; blank is absent', () => {
+    expect(rows.map((r) => r[0]).sort()).toEqual(Object.keys(DEFAULTS).sort());
+    for (const [key, name, value, want, other] of rows) {
+      const o = resolveOptions({ [key]: other }, { [name]: value });
+      expect(o[key], name).toEqual(want);
+      expect(o.errors, name).toEqual([]);
+      expect(resolveOptions({}, { [name]: value })[key], name).toEqual(want);
+      // unset, empty or blank is absent: the option decides, else the default
+      for (const blank of [undefined, '', '   ']) {
+        expect(resolveOptions({ [key]: other }, { [name]: blank }), name).toEqual(resolveOptions({ [key]: other }));
+        expect(resolveOptions({}, { [name]: blank }), name).toEqual(resolveOptions({}));
+      }
+    }
+  });
+
+  test('a bad value is reported by its variable and the default is used, never the option', () => {
+    const typed = rows.flatMap((r) => (bad[r[0]] ? [[r[0], r[1], bad[r[0]]] as const] : []));
+    expect(typed.map((t) => t[0]).sort()).toEqual(['ambiguousCharacterWidth', 'chatTurnsToRead', 'commentAfterEachTurn', 'effort', 'logLevel', 'promptToMainChat', 'promptWhenIdle', 'saveRounds', 'secondsBetweenComments', 'suggestNextPrompt', 'walkOverPromptBar']);
+    for (const [key, name, value] of typed) {
+      const other = rows.find((r) => r[0] === key)?.[4];
+      const o = resolveOptions({ [key]: other }, { [name]: value });
+      expect(o[key], name).toEqual(DEFAULTS[key]);
+      expect(o.errors, name).toHaveLength(1);
+      expect(o.errors[0], name).toMatch(new RegExp(`^env ${name} ignored: .*; using the default ${JSON.stringify(DEFAULTS[key]).replace(/[$]/g, '\\$')}$`));
+    }
+    // other options are untouched by one bad variable
+    expect(resolveOptions({ character: 'cat' }, { BUDDY_EFFORT: 'turbo' })).toMatchObject({ character: 'cat', effort: 'low', errors: ['env BUDDY_EFFORT ignored: "turbo" is not low, medium, high, xhigh, max or inherit; using the default "low"'] });
+  });
+
+  test('a boolean variable is 1, 0, true or false only', () => {
+    expect(resolveOptions({}, { BUDDY_PROMPT_WHEN_IDLE: '1' }).promptWhenIdle).toBe(true);
+    expect(resolveOptions({ walkOverPromptBar: false }, { BUDDY_WALK_OVER_PROMPT_BAR: '1' }).walkOverPromptBar).toBe(true);
+    expect(resolveOptions({}, { BUDDY_WALK_OVER_PROMPT_BAR: '0' }).walkOverPromptBar).toBe(false);
+    for (const text of ['constructor', '__proto__', 'toString']) {
+      expect(resolveOptions({}, { BUDDY_WALK_OVER_PROMPT_BAR: text }).errors, text).toEqual([`env BUDDY_WALK_OVER_PROMPT_BAR ignored: "${text}" is not 1, 0, true or false; using the default true`]);
+    }
+  });
+});

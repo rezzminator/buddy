@@ -137,6 +137,7 @@ Every pose it leaves out falls back as the table above says: `oops`,
    `my-characters/blob.json`.
 2. Point the `customCharactersDir` option at that folder: through `/plugin configure`, or in
    `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersDir`.
+   The environment variable `BUDDY_CUSTOM_CHARACTERS_DIR` wins over the option when it is set and not blank.
    Start a new session.
 3. `/buddy` opens the drawer; ctrl+x t there opens the personality picker, which lists it under Yours, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.

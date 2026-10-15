@@ -3332,6 +3332,19 @@ describe('promptToMainChat', () => {
     expect(records(w).filter((r) => r.event === 'promptToMainChat.sent')).toHaveLength(0);
   });
 
+  test('the BUDDY_PROMPT_TO_MAIN_CHAT variable beats the option; a bad BUDDY_EFFORT is warned of by name and its default used', { options: { promptToMainChat: true, effort: 'high' } }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } }, { env: { BUDDY_PROMPT_TO_MAIN_CHAT: ' 0 ', BUDDY_EFFORT: 'turbo' } });
+    await $.session.start(START);
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(1);
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
+    expect(w.completes[0]!.effort).toBe('low');
+    expect(w.submitted).toEqual([{ text: 'fix the login bug' }]);
+    expect(records(w).filter((r) => r.event === 'option.warning').map((r) => JSON.stringify(r))).toEqual([expect.stringContaining('env BUDDY_EFFORT ignored')]);
+  });
+
   /** memory.json holding the user's rule `rule.main-safe` and a fact, and `strikes` when given. */
   const ruled = (extra: object = {}, items: object = { 'rule.main-safe': RULE, 'fact.kept': { text: 'Kept.', from: 'shown', turn: 0, at: 0 } }) => ({
     files: { [`${chatDir()}/memory.json`]: JSON.stringify({ version: 2, at: 0, turnNo: 0, blocks: [], items, ended: {}, ...extra }) },

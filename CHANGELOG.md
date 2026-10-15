@@ -2,6 +2,11 @@
 
 Every release of buddy. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `buddy--v<version>`, with a GitHub release carrying the section below.
 
+## [Unreleased]
+
+### Added
+- Every option can be set by an environment variable, `BUDDY_` and the option's name in upper snake case (`BUDDY_CHAT_TURNS_TO_READ`): the variable beats the option, which beats the default; a blank variable is absent, and a bad value is named by its variable and the default used. The README option table lists each variable.
+
 ## [2.1.1] — 2026-10-15
 
 ### Changed
