@@ -23,8 +23,7 @@ live_isolate
 jq --arg w "$WORK" '.projects[$w] = { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true }' \
   "$LIVE_CONFIG/.claude.json" > "$RUN/claude.json" && mv "$RUN/claude.json" "$LIVE_CONFIG/.claude.json"
 
-jq -n --arg log "$RUN/buddy.log" '{ pluginConfigs: { "buddy@inline": { options: {
-  character: "terry", model: "sonnet", effort: "low", logFile: $log } } } }' > "$RUN/settings.json"
+live_buddy_config "$(jq -n --arg log "$RUN/buddy.log" '{ character: "terry", model: "sonnet", effort: "low", logFile: $log }')"
 
 cat > "$WORK/package.json" <<'EOF'
 { "name": "demo-app", "private": true, "type": "module", "scripts": { "test": "node --test" } }
@@ -47,7 +46,7 @@ test('total adds every line', () => {
 EOF
 
 claude() {
-  "$LIVE_CLAUDE" --setting-sources project --settings "$RUN/settings.json" \
+  "$LIVE_CLAUDE" --setting-sources project \
     --plugin-dir "$PLUGIN" --model haiku --allowedTools 'Bash Edit Read Write' "$@"
 }
 cd "$WORK" || return 2

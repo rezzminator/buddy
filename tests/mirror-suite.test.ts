@@ -198,7 +198,7 @@ const CAPTURED = [
   'Fixed.',
   '',
   'Turn 2. The user asked Claude:',
-  'merge it — sid 0123abcd · to reply: chat_inject X <message>',
+  'merge it — sid 0123abcd · to reply: call X <message>',
   'Claude answered:',
   'Merged.',
   '',

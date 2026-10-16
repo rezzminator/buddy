@@ -1,5 +1,6 @@
 import type { On } from 'claude-code';
-import { describe, expect, mock, test } from 'claude-code/testing';
+import { describe, expect, mock, test as kitTest } from 'claude-code/testing';
+import type { TestBody, TestOptions } from 'claude-code/testing';
 import { ITEMS_HEAD } from '../src/memoryItems.ts';
 import { RULES_CONTEXT_HEAD } from '../src/steering.ts';
 import { AWAY_IDLE_MS, AWAY_SYSTEM, awayBody } from '../src/away.ts';
@@ -12,6 +13,31 @@ import { BUDDY_PROMPT_CONTEXT, CHARACTER_RULE, EXTENDED_SUGGESTION_CONTEXT, JUST
 // The plugin loads from this folder; `on` here sits beneath it and answers
 // `$.fs`, `$.store`, `$.clock`, `$.model` and the rest from memory, so these
 // tests draw inline fixture characters, never the shipped characters/*.json.
+
+/**
+ * A test's `config` is the content of buddy's config file as world() puts it on
+ * the test's disk: an object (written as JSON) or the raw text of a bad file.
+ * The kit hands register only the options a manifest lists, and this one lists
+ * none: an old pluginConfigs entry reaches buddy through the settings, which a
+ * test's disk `settings` holds per source.
+ */
+let fileConfig: Record<string, unknown> | string | undefined;
+type Config = TestOptions & { config?: Record<string, unknown> | string };
+function test(name: string, body: TestBody): void;
+function test(name: string, config: Config, body: TestBody): void;
+function test(name: string, ...rest: [TestBody] | [Config, TestBody]): void {
+  const body = rest.length === 1 ? rest[0] : rest[1];
+  const { config, ...kit } = rest.length === 1 ? ({} as Config) : rest[0];
+  const run: TestBody = async ($, on) => {
+    fileConfig = config;
+    try {
+      return await body($, on);
+    } finally {
+      fileConfig = undefined;
+    }
+  };
+  kitTest(name, kit, run);
+}
 
 const START = { cwd: '.', surface: null, isInteractive: true } as const;
 const BAND = { hasSurvey: false, isWorking: false, maxRows: 40, bodyColumns: 100 };
@@ -52,12 +78,14 @@ const FILES: Record<string, string> = {
 /** `delayMs`: this answer alone comes that long later; `error`: the completion rejects with it instead. */
 type Answer = { isAnswered: boolean; text?: string; reason?: string; status?: number | null; usage?: object; delayMs?: number; error?: string };
 /** Files by absolute path (with their mtimes), whether listing the home folder is refused, whether writes of memory.json are refused (the first that many only), whether writes of memory.md are, character files shipped beside FILES. */
-type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseMemory?: boolean; refuseMemoryTimes?: number; refuseMemoryText?: boolean; env?: Record<string, string>; builtins?: Record<string, string>; messages?: unknown[] | Error };
+type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; refuseHome?: boolean; refuseMemory?: boolean; refuseMemoryTimes?: number; refuseMemoryText?: boolean; env?: Record<string, string>; builtins?: Record<string, string>; messages?: unknown[] | Error; refuseConfig?: boolean; settings?: Record<string, Record<string, unknown>>; refuseSettings?: string[] };
 
 const HOME = '/test-home';
 const SESSION = 'test-session';
 /** The session's project root, and the buddy's folder in each session's own chat folder beside its transcript. */
 const ROOT = '/work/app';
+/** Where buddy's config file is: under an absolute XDG_CONFIG_HOME when the test sets one, else in HOME's .config. */
+const configFile = (env: Record<string, string> | undefined = {}) => `${env.XDG_CONFIG_HOME?.startsWith('/') ? env.XDG_CONFIG_HOME : `${HOME}/.config`}/buddy/config.json`;
 const chatDir = (session = SESSION) => `${HOME}/.claude/projects/-work-app/${session}/buddy`;
 
 function world(on: On, store: Record<string, unknown> = {}, answers: { complete?: Answer; queue?: Answer[]; completeDelayMs?: number } = {}, disk: Disk = {}) {
@@ -69,6 +97,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
   const queue = [...(answers.queue ?? [])];
   const saved = new Map(Object.entries(store));
   const files = disk.files ?? {};
+  if (fileConfig !== undefined) files[configFile(disk.env)] = typeof fileConfig === 'string' ? fileConfig : JSON.stringify(fileConfig);
   const shipped: Record<string, string> = { ...FILES, ...disk.builtins };
   const opens: object[] = [];
   const closes: string[] = [];
@@ -114,7 +143,13 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     origins.push(e.origin.kind);
     return { isShown: true };
   });
-  on('env.get', async (_$, e) => ({ value: e.name === 'HOME' ? HOME : disk.env?.[e.name] }));
+  on('env.get', async (_$, e) => ({ value: disk.env && e.name in disk.env ? disk.env[e.name] : e.name === 'HOME' ? HOME : undefined }));
+  // Each settings source as the test's disk holds it, none by default; a refused source rejects.
+  on('settings.read', async (_$, e) => {
+    const source = e.source ?? 'merged';
+    if (disk.refuseSettings?.includes(source)) throw new Error(`EACCES: the ${source} settings are unreadable`);
+    return { value: disk.settings?.[source] ?? {} };
+  });
   // The main conversation's rows as $.session.messages() reads them: none by default; an Error is a read that fails.
   const messageReads: number[] = [];
   on('session.messages', async () => {
@@ -198,6 +233,7 @@ function world(on: On, store: Record<string, unknown> = {}, answers: { complete?
     return { value: Object.entries(shipped).map(([name, text]) => ({ name, kind: 'file' as const, size: text.length, mtimeMs: 0, isLink: false })) };
   });
   on('fs.read', async (_$, e) => {
+    if (disk.refuseConfig && e.path === configFile(disk.env)) throw new Error(`EACCES: permission denied, open '${e.path}'`);
     // A chatTurnsToRead read in flight answers what the file held when asked.
     const held = files[e.path];
     if (e.path.endsWith('/memory.json') && slow.chatTurnsToReadGetMs > 0) await clock.sleep(slow.chatTurnsToReadGetMs);
@@ -272,6 +308,70 @@ async function bubbleText(ui: any, text: RegExp): Promise<any> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (await ui.findAll({ type: 'Text', text })).find((t: any) => t.props.wrap !== 'truncate-end');
 }
+
+describe('plugin log capability fallback', () => {
+  for (const configured of [true, false]) {
+    test(`actual process hook receives level rows under ${configured ? 'PLUGIN_LOG_DIR' : 'HOME fallback'} (disk execution remains unproven)`, async ($, on) => {
+      const dir = configured ? '/plugin-log-fixture/buddy' : `${HOME}/.local/state/buddy/logs`;
+      const calls: { argv: readonly string[]; timeoutMs?: number }[] = [];
+      on('process.run', async (_$, e) => {
+        calls.push({ argv: e.argv, timeoutMs: e.init?.timeoutMs });
+        return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } };
+      });
+      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {} });
+      await $.session.start(START);
+      const ui = await band($);
+      await $.command.run(run(''));
+      await w.clock.settle();
+      await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+      expect(calls.length > 0).toBe(true);
+      const rows: { target: string; row: Record<string, unknown> }[] = [];
+      for (const call of calls) {
+        expect(call.argv.slice(0, 2)).toEqual(['/bin/sh', '-c']);
+        expect(call.argv.slice(3, 6)).toEqual(['plugin-log', dir, 'buddy']);
+        expect(call.timeoutMs).toBe(5000);
+        for (let i = 6; i < call.argv.length; i += 2) rows.push({ target: call.argv[i]!, row: JSON.parse(call.argv[i + 1]!) });
+      }
+      expect(rows.some(({ target, row }) => target === 'warnings.jsonl' && row.level === 'warning' && row.event === 'roster-invalid')).toBe(true);
+      expect(rows.some(({ target, row }) => target === 'errors.jsonl' && row.level === 'error' && row.event === 'writing-memory-failed' && row.where === 'hooks/buddy.tsx#writeMemoryText')).toBe(true);
+      const logFile = Object.keys(w.files).find((file) => file.endsWith('/buddy.log'));
+      expect(logFile !== undefined).toBe(true);
+      expect(w.files[logFile!]!.trim().split('\n').map((line) => JSON.parse(line)).some((record) => record.event === 'writing memory.md' && record.level === 'error')).toBe(true);
+      await ui.unmount();
+    });
+    test(`names unsupported disk capabilities under ${configured ? 'PLUGIN_LOG_DIR' : 'HOME fallback'}, retaining the memory error in buddy.log`, async ($, on) => {
+      const dir = configured ? '/plugin-log-fixture/buddy' : `${HOME}/.local/state/buddy/logs`;
+      const w = world(on, { character: 'fixy' }, {}, { refuseMemoryText: true, env: configured ? { PLUGIN_LOG_DIR: '/plugin-log-fixture' } : {} });
+      await $.session.start(START);
+      const ui = await band($);
+      await $.command.run(run(''));
+      await w.clock.settle();
+      await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+      const notices = w.logs.filter((line) => line.startsWith(`buddy: plugin log ${dir} unavailable:`));
+      expect(notices.length).toBe(1);
+      expect(notices[0]).toContain('process.run unavailable');
+      expect(notices[0]).toContain('fs.write replaces whole files');
+      expect(notices[0]).toContain('append/private modes/.1 rename');
+      expect(notices[0]).toContain('dropped');
+      const logFile = Object.keys(w.files).find((file) => file.endsWith('/buddy.log'));
+      expect(logFile !== undefined).toBe(true);
+      const existing = w.files[logFile!]!.trim().split('\n').map((line) => JSON.parse(line));
+      expect(existing.some((record) => record.event === 'writing memory.md' && record.level === 'error')).toBe(true);
+      expect(existing.some((record) => record.event === 'roster.invalid' && record.level === 'info')).toBe(true);
+      expect(w.logs.some((line) => line.startsWith('buddy: writing memory.md failed: '))).toBe(true);
+      // fs.write remains the actual old-log/round mechanism, never advertised as append.
+      expect(w.writes.filter((file) => file === `${dir}/errors.jsonl` || file === `${dir}/warnings.jsonl` || file === `${dir}/info.jsonl`)).toEqual([]);
+      await ui.unmount();
+    });
+  }
+  test('no directory inputs gives exactly one explicit off notice', async ($, on) => {
+    const w = world(on, {}, {}, { env: { HOME: '' } });
+    await $.session.start(START);
+    await $.command.run(run('off'));
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+    expect(w.logs.filter((line) => line.startsWith('buddy: plugin log off: no PLUGIN_LOG_DIR and no HOME')).length).toBe(1);
+  });
+});
 
 describe('the band', () => {
   test('draws the stored character and its greeting', async ($, on) => {
@@ -2091,7 +2191,7 @@ describe('the chat memory items', () => {
     expect(await shows(ui, /Nice\./)).toBe(true);
     await ui.unmount();
   });
-  test('a reply that changes nothing rewrites neither memory.json nor memory.md', { options: { commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: true } }, async ($, on) => {
+  test('a reply that changes nothing rewrites neither memory.json nor memory.md', { config: { commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'PROMPT_TO_MAIN_CHAT: NONE\nMEMORY: {}', delayMs: 5_000 } });
     await $.session.start(START);
     const ui = await band($);
@@ -3015,7 +3115,7 @@ describe('memory: whole messages, compactions, retries, and the drawer spanning 
     expect(cost[0]).toMatchObject({ kind: 'endOfTurn', outcome: 'answered', inTok: 1, outTok: 1, usd: (4 + 20) / 1e6, memTurns: 1, memFull: 20_005, memKept: 4800 + 2400 + 7 + 5 });
   });
 
-  test('a call on a model with no price logs call.cost with no usd at all: never 0, never null', { options: { model: 'gpt-x' } }, async ($, on) => {
+  test('a call on a model with no price logs call.cost with no usd at all: never 0, never null', { config: { model: 'gpt-x' } }, async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     await $.turn.start({ text: 'hello', turnId: 't1' } as never);
@@ -3236,7 +3336,7 @@ describe('promptToMainChat', () => {
     await w.clock.settle();
     expect(w.completes.at(-1)!.prompt).toContain(`From the buddy (you), sent to Claude:\n${TO_CLAUDE}\n`);
   });
-  test('on: the prompt the buddy sent Claude shows in the bubble in yellow, addressed to Claude, once the turn\'s own bubble has had its 10 s', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('on: the prompt the buddy sent Claude shows in the bubble in yellow, addressed to Claude, once the turn\'s own bubble has had its 10 s', { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
     await $.session.start(START);
     const ui = await band($);
@@ -3256,7 +3356,7 @@ describe('promptToMainChat', () => {
     expect((await ui.find({ type: 'Box', key: 'bubble' }))?.props.borderColor).toBeUndefined();
     await ui.unmount();
   });
-  test('off: no PROMPT_TO_MAIN_CHAT line is asked for and nothing is sent, though the reply writes one', { options: { promptToMainChat: false } }, async ($, on) => {
+  test('off: no PROMPT_TO_MAIN_CHAT line is asked for and nothing is sent, though the reply writes one', { config: { promptToMainChat: false } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
     await $.session.start(START);
     await prompt($, 'fix the login bug', 't1');
@@ -3266,6 +3366,19 @@ describe('promptToMainChat', () => {
     expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
     expect(w.submitted).toEqual([{ text: 'fix the login bug' }]);
     expect(records(w).filter((r) => r.event === 'promptToMainChat.sent')).toHaveLength(0);
+  });
+
+  test('the config file sets promptToMainChat; a bad effort in it is warned of by name and its default used', { config: { promptToMainChat: false, effort: 'turbo' } }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
+    await $.session.start(START);
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes).toHaveLength(1);
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
+    expect(w.completes[0]!.effort).toBe('low');
+    expect(w.submitted).toEqual([{ text: 'fix the login bug' }]);
+    expect(records(w).filter((r) => r.event === 'option.warning').map((r) => JSON.stringify(r))).toEqual([expect.stringContaining('option effort ignored')]);
   });
 
   /** memory.json holding the user's rule `rule.main-safe` and a fact, and `strikes` when given. */
@@ -3281,7 +3394,7 @@ describe('promptToMainChat', () => {
   /** What the buddy submitted itself: every submission but the user's and a peer's. */
   const steers = (w: { submitted: { text: string }[] }, mine: readonly string[]) => w.submitted.map((x) => x.text).filter((t) => !mine.includes(t));
 
-  test("on: the user's live rules ride every prompt, the user's, a peer's and the buddy's own after its context; none before the memory is loaded", { options: { promptToMainChat: true } }, async ($, on) => {
+  test("on: the user's live rules ride every prompt, the user's, a peer's and the buddy's own after its context; none before the memory is loaded", { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, ruled());
     w.slow.chatTurnsToReadGetMs = 1_000;
     await $.session.start(START);
@@ -3296,7 +3409,7 @@ describe('promptToMainChat', () => {
     await $.prompt.submit({ text: TO_CLAUDE, origin: { kind: 'plugin', name: 'buddy' } } as never);
     expect(w.submitted.at(-1)).toEqual({ text: TO_CLAUDE, context: [BUDDY_PROMPT_CONTEXT, RULES] });
   });
-  test('off: a live rule rides no prompt', { options: { promptToMainChat: false } }, async ($, on) => {
+  test('off: a live rule rides no prompt', { config: { promptToMainChat: false } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, ruled());
     await $.session.start(START);
     await w.clock.settle();
@@ -3304,7 +3417,7 @@ describe('promptToMainChat', () => {
     await $.prompt.submit({ text: 'from another plugin', origin: PEER } as never);
     expect(w.submitted).toEqual([{ text: 'fix the login bug' }, { text: 'from another plugin' }]);
   });
-  test('on with no live rule: the context is as before', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('on with no live rule: the context is as before', { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, ruled({}, { 'fact.kept': { text: 'Kept.', from: 'shown', turn: 0, at: 0 } }));
     await $.session.start(START);
     await w.clock.settle();
@@ -3312,7 +3425,7 @@ describe('promptToMainChat', () => {
     await $.prompt.submit({ text: TO_CLAUDE, origin: { kind: 'plugin', name: 'buddy' } } as never);
     expect(w.submitted).toEqual([{ text: 'fix the login bug' }, { text: TO_CLAUDE, context: [BUDDY_PROMPT_CONTEXT] }]);
   });
-  test('the ladder: a rule broken again is sent, then sent again, then warned of in the bubble instead; each strike logged and kept', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('the ladder: a rule broken again is sent, then sent again, then warned of in the bubble instead; each strike logged and kept', { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: BROKE } }, ruled());
     await $.session.start(START);
     const ui = await band($);
@@ -3336,7 +3449,7 @@ describe('promptToMainChat', () => {
     expect(ring(w, 'fixy').at(-1)).toMatchObject({ kind: 'endOfTurn', warned: 'Claude broke your rule again: "keep main safe"' });
     await ui.unmount();
   });
-  test("the ladder's first strike with no prompt of the buddy's: the rule's own is sent", { options: { promptToMainChat: true } }, async ($, on) => {
+  test("the ladder's first strike with no prompt of the buddy's: the rule's own is sent", { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'PROMPT_TO_MAIN_CHAT: NONE\nRULE_BROKEN: rule.main-safe' } }, ruled());
     await $.session.start(START);
     await w.clock.settle();
@@ -3345,7 +3458,7 @@ describe('promptToMainChat', () => {
     await w.clock.settle();
     expect(steers(w, ['push it'])).toEqual(['The user\'s rule, in their words: "keep main safe" (the buddy\'s reading: covers the repo). This turn did not follow it.']);
   });
-  test('a rule ended by a MEMORY op takes its strikes with it, and naming it later strikes nothing', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('a rule ended by a MEMORY op takes its strikes with it, and naming it later strikes nothing', { config: { promptToMainChat: true } }, async ($, on) => {
     const ended = 'COMMENT_AFTER_EACH_TURN: Hm.\nPROMPT_TO_MAIN_CHAT: NONE\nMEMORY: {"rule.main-safe": {"end": "lifted: the user lifted it"}}';
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: ended }, { isAnswered: true, text: BROKE }] }, ruled({ strikes: { 'rule.main-safe': 2 } }));
     await $.session.start(START);
@@ -3361,7 +3474,7 @@ describe('promptToMainChat', () => {
     expect(steers(w, ['you may push now', 'push it'])).toEqual([STEER]);
     expect((memory(w) as { strikes: object }).strikes).toEqual({});
   });
-  test('a stale reply naming a broken rule still counts its strike, though its prompt is never sent', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('a stale reply naming a broken rule still counts its strike, though its prompt is never sent', { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: BROKE, delayMs: 5_000 }, { isAnswered: true, text: QUIET }] }, ruled());
     await $.session.start(START);
     await w.clock.settle();
@@ -3377,7 +3490,7 @@ describe('promptToMainChat', () => {
     expect(records(w).filter((r) => r.event === 'rule.strike').map((r) => [r.key, r.count, r.step])).toEqual([['rule.main-safe', 1, 'prompt']]);
     expect((memory(w) as { strikes: object }).strikes).toEqual({ 'rule.main-safe': 1 });
   });
-  test("moved on: a peer's turn started and ended while the call ran, so its prompt is never sent, and remembered unsent", { options: { promptToMainChat: true } }, async ($, on) => {
+  test("moved on: a peer's turn started and ended while the call ran, so its prompt is never sent, and remembered unsent", { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: PROMPTS_CLAUDE, delayMs: 5_000 }, { isAnswered: true, text: QUIET }] });
     await $.session.start(START);
     await w.clock.settle();
@@ -3392,7 +3505,7 @@ describe('promptToMainChat', () => {
     expect(records(w).filter((r) => r.event === 'promptToMainChat.movedOn')).toHaveLength(1);
     expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', unsentPrompt: TO_CLAUDE });
   });
-  test('a main turn running when the reply comes: as moved on', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('a main turn running when the reply comes: as moved on', { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: `PROMPT_TO_MAIN_CHAT: ${TO_CLAUDE}`, delayMs: 5_000 }] });
     await $.session.start(START);
     await w.clock.settle();
@@ -3406,7 +3519,7 @@ describe('promptToMainChat', () => {
     expect(records(w).filter((r) => r.event === 'promptToMainChat.movedOn')).toHaveLength(1);
     expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', unsentPrompt: TO_CLAUDE });
   });
-  test('the user prompted while the call ran: nothing sent, logged stale, and remembered unsent', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('the user prompted while the call ran: nothing sent, logged stale, and remembered unsent', { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [{ isAnswered: true, text: `PROMPT_TO_MAIN_CHAT: ${TO_CLAUDE}`, delayMs: 5_000 }] });
     await $.session.start(START);
     await w.clock.settle();
@@ -3420,7 +3533,7 @@ describe('promptToMainChat', () => {
     expect(records(w).filter((r) => r.event === 'promptToMainChat.movedOn')).toHaveLength(0);
     expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', unsentPrompt: TO_CLAUDE });
   });
-  test('a strike that cannot be saved is said, and the comment still shows', { options: { promptToMainChat: true } }, async ($, on) => {
+  test('a strike that cannot be saved is said, and the comment still shows', { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: BROKE } }, { ...ruled(), refuseMemory: true });
     await $.session.start(START);
     const ui = await band($);
@@ -3499,7 +3612,7 @@ describe('promptWhenIdle', () => {
   /** Half an hour of the band's clock is thousands of ticks: each test has time for its stretches. */
   const SLOW = { timeoutMs: 60_000 };
   /** On, with no end-of-turn call: every completion is the away call's. */
-  const ON = { ...SLOW, options: { promptWhenIdle: true, commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: false } };
+  const ON = { ...SLOW, config: { promptWhenIdle: true, commentAfterEachTurn: false, suggestNextPrompt: false, promptToMainChat: false } };
   /** A character whose clock ticks as seldom as a character may (stepMs 1000), so 30 minutes pass in 1800 ticks. */
   const SLOW_FIXTURE = { builtins: { 'idler.json': JSON.stringify({ ...JSON.parse(fixture('idler', 'Idler', 'i_i')), motion: { restChance: 0, stepMs: 1000 } }) } };
   const PUSHED = 'Run the remaining replay and report.';
@@ -3525,7 +3638,7 @@ describe('promptWhenIdle', () => {
     expect(records(w).filter((r) => String(r.event).startsWith('away.'))).toEqual([]);
   });
 
-  test('pause: 30 idle minutes after an answered turn, one call on opus low with its own system and the answer verbatim; the end-of-turn call stays its own; nothing sent', { ...SLOW, options: { promptWhenIdle: true } }, async ($, on) => {
+  test('pause: 30 idle minutes after an answered turn, one call on opus low with its own system and the answer verbatim; the end-of-turn call stays its own; nothing sent', { ...SLOW, config: { promptWhenIdle: true } }, async ($, on) => {
     const w = world(on, { character: 'idler' }, { queue: [{ isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Hm.\nSUGGEST_NEXT_PROMPT: NONE' }, { isAnswered: true, text: 'PAUSE' }] }, SLOW_FIXTURE);
     await $.session.start(START);
     await answered($, 'fix it', 't1');
@@ -3787,5 +3900,72 @@ describe('a call a reload abandoned', () => {
     await $.session.start(START);
     await w.clock.settle();
     expect(outcomes(w)).toEqual([]);
+  });
+});
+
+describe('the config file', () => {
+  const warnings = (w: { files: Record<string, string> }) => records(w).filter((r) => r.event === 'option.warning').map((r) => String(r.text));
+  const FILE = `${HOME}/.config/buddy/config.json`;
+
+  test('missing: the defaults and no warning at all', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
+    await $.session.start(START);
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
+    expect(warnings(w)).toEqual([]);
+  });
+
+  test('read once, at session start: a later edit of the file changes nothing until the next session', { config: { promptToMainChat: false } }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
+    await $.session.start(START);
+    w.files[FILE] = JSON.stringify({ promptToMainChat: true });
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
+    expect(warnings(w)).toEqual([]);
+  });
+
+  test('invalid JSON: one warning naming the file, the defaults used', { config: '{"promptToMainChat": ' }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
+    await $.session.start(START);
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(warnings(w)).toEqual([expect.stringContaining(`config file ${FILE} is not valid JSON`)]);
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
+  });
+
+  test('an old pluginConfigs entry in the settings: one warning naming its keys and the file, its values never applied; a source that cannot be read is said', async ($, on) => {
+    const settings = {
+      user: { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false } }, 'other@x': { options: { colour: 'red' } } } },
+      local: { pluginConfigs: { 'buddy@buddy-dev': { options: { commentAfterEachTurn: false, promptToMainChat: false } } } },
+    };
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } }, { settings, refuseSettings: ['policy'] });
+    await $.session.start(START);
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(warnings(w)).toEqual([`pluginConfigs options (promptToMainChat, commentAfterEachTurn) are no longer read and not applied: buddy reads ${FILE} instead; move them there and remove the pluginConfigs entry`]);
+    expect(w.logs.filter((line) => /^buddy: reading the policy settings for an old pluginConfigs entry failed: .+/.test(line))).toHaveLength(1);
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
+  });
+
+  test('an unreadable file: one warning naming the file and the cause, the defaults used', { config: {} }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { refuseConfig: true });
+    await $.session.start(START);
+    expect(warnings(w)).toEqual([expect.stringMatching(new RegExp(`^config file ${FILE} unreadable: .+; using the defaults$`))]);
+  });
+
+  test('an absolute XDG_CONFIG_HOME is where it reads, not HOME/.config', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } }, { env: { XDG_CONFIG_HOME: '/test-xdg' }, files: { [FILE]: '{"promptToMainChat": false}', '/test-xdg/buddy/config.json': '{"promptToMainChat": true}' } });
+    await $.session.start(START);
+    await prompt($, 'fix the login bug', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
+    expect(warnings(w)).toEqual([]);
   });
 });

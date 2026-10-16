@@ -5,7 +5,7 @@
 **Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/ci.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -74,10 +74,9 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 - Instead of `settings.json`, you can export the variable in your shell,
   `export CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`; an export vanishes in the
   next terminal.
-- After installing, Claude Code may print `N userConfig options not yet set —
-  run /plugin configure`. You can ignore it: every buddy option has a
-  default, so nothing needs setting and buddy works as installed. Use
-  `/plugin configure` only to change a default.
+- Every buddy option has a default, so nothing needs setting and buddy works
+  as installed. To change one, write it into buddy's config file
+  (see Configuration below); `/plugin configure` has no buddy options.
 - If function hooks are off, buddy says so when a session starts or resumes:
   `buddy is off: … Add "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" } to
   ~/.claude/settings.json, then start a new session.` (with
@@ -359,7 +358,7 @@ flowchart LR
     when not `completed`, its agent's tokens, tool uses and time, and its
     report with its size, cut to its first 600 and last 200 characters, or
     2,400 and 800 for a report over 10,000. A signed message from another
-    chat (one ending `— sid … · to reply: chat_inject …`), as the prompt or
+    chat (one ending `— sid … · to reply: call …`), as the prompt or
     added while Claude worked, is labelled as another chat's, never yours,
     its body cut to its first 600 and last 200;
   - what you added while Claude worked, cut like your prompt, and what
@@ -421,6 +420,21 @@ flowchart LR
   model's result shapes. It never holds your account id or anything from
   `~/.claude.json`. `/buddy log` shows the path and the last 20 lines, to
   paste into an issue; an empty `logFile` writes no file.
+- **Separate level logs.** When the engine exposes `process.run`, buddy also
+  appends `errors.jsonl`, `warnings.jsonl` and `info.jsonl` beneath
+  `$PLUGIN_LOG_DIR/buddy`, or `$HOME/.local/state/buddy/logs` when unset.
+  These are independent of `logLevel` and `logFile`: errors, warnings and
+  actionable state changes only;
+  no debug records or prompt/tool bodies. Rows are at most 4096 UTF-8 bytes,
+  explicitly marked when truncated. New directories and files use a private
+  umask. A file over 20 MiB moves to `.1` before the next append,
+  replacing its previous `.1` and recording `log-capped`.
+  The current function-hook test runtime has no built-in implementation of
+  `process.run`; its filesystem writes replace whole files and cannot meet this append,
+  rotation and permission contract. In that runtime no level files are
+  written: one transcript notice per outage names the unavailable capability
+  and dropped rows. With neither directory input, it explicitly reports
+  logging off. Existing `buddy.log` and transcript output remain unchanged.
 - **`commentAfterEachTurn`** (on by default). At the end of every answered turn, tool use or
   not, one short call on `model` at the `effort` level (at most 2048
   output tokens, its thinking included, a 30-second deadline) reads its `chatTurnsToRead` (the chat's
@@ -522,11 +536,32 @@ flowchart LR
 
 ## ⚙️ Configuration
 
-Set these through `/plugin configure`, or under `pluginConfigs["buddy@buddy"].options`
-in `settings.json`. The key must be the full plugin id: Claude Code silently
-ignores options under any other key. A value buddy cannot use is ignored by
-name and its default kept: the first
-greeting's bubble says so once, and `/buddy help` and the log list it.
+buddy reads its options from one JSON file of its own, not from Claude Code's
+settings:
+
+- **Location:** `$XDG_CONFIG_HOME/buddy/config.json` when `XDG_CONFIG_HOME` is
+  set to an absolute path, else `$HOME/.config/buddy/config.json` (`HOME`
+  absolute too: a relative one places no file). buddy never
+  creates it; copy [`config.example.json`](config.example.json) there (the
+  folder too) and keep the keys you want to change.
+- **Shape:** one flat JSON object keyed by the option names below, with JSON's
+  own types: `true` or `false` for a boolean, a number for a number, a string
+  for the rest. Keys left out use their defaults.
+- **Read once, at session start:** an edit applies from the next session;
+  `/buddy reload` does not re-read it. The file is shared by every
+  Claude Code account of the machine that has the same `XDG_CONFIG_HOME` and
+  `HOME`; there is no other place to set an option: no environment variable,
+  no `/plugin configure` field, no `pluginConfigs` entry in `settings.json`.
+- **Missing file:** the defaults, silently. **Anything wrong with the file:**
+  the defaults for what is wrong, the valid keys still apply, and each problem
+  is named once: the first greeting's bubble says so, and `/buddy help` and the
+  log list it. That covers a file buddy cannot read, one that is not valid JSON
+  or not an object, an unknown key, and a value of the wrong type or out of
+  range.
+- **Migrating from a `pluginConfigs` entry (buddy before 3.0.0):** remove
+  `pluginConfigs["buddy@buddy"]` from `settings.json` and put the same keys, as
+  they were under `options`, into the config file. While the entry is there,
+  buddy ignores its values and says so, naming the file.
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -548,16 +583,12 @@ greeting's bubble says so once, and `/buddy help` and the log list it.
 
 ```json
 {
-  "env": { "CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "1" },
-  "pluginConfigs": {
-    "buddy@buddy": {
-      "options": { "customCharactersDir": "/path/to/my-characters", "commentAfterEachTurn": true }
-    }
-  }
+  "customCharactersDir": "/path/to/my-characters",
+  "commentAfterEachTurn": true
 }
 ```
 
-[`config.example.json`](config.example.json) lists every option at its default, ready to merge into your `settings.json`.
+[`config.example.json`](config.example.json) lists every option at its default: it is the config file itself, ready to copy.
 
 ### Speed and context
 

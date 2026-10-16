@@ -135,9 +135,9 @@ Every pose it leaves out falls back as the table above says: `oops`,
 
 1. Save the file in a folder of your own, for example
    `my-characters/blob.json`.
-2. Point the `customCharactersDir` option at that folder: through `/plugin configure`, or in
-   `settings.json` under `pluginConfigs["buddy@buddy"].options.customCharactersDir`.
-   Start a new session.
+2. Point the `customCharactersDir` option at that folder in buddy's config file,
+   `~/.config/buddy/config.json` (under `$XDG_CONFIG_HOME` when that is set to an absolute path):
+   `{ "customCharactersDir": "/path/to/my-characters" }`. Start a new session.
 3. `/buddy` opens the drawer; ctrl+x t there opens the personality picker, which lists it under Yours, or as `blob (invalid)`
    with the first thing wrong in the file in its preview.
 4. ↑ or ↓ onto it, then Enter, draws it.

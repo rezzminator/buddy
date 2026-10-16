@@ -32,9 +32,10 @@
 # Prints a table, one row per check, and exits 1 when any check fails,
 # 2 when the session could not be driven (no transcript, a turn timed out).
 # Spends real tokens: a few cents of Haiku. It runs in a config dir of its own
-# ($RUN/config, live_isolate in live-lib.sh), so nothing lands in yours, and
-# --setting-sources project keeps your settings, and so your character option,
-# out of the run.
+# ($RUN/config, live_isolate in live-lib.sh), so nothing lands in yours;
+# --setting-sources project keeps your settings out of the run, and the run's
+# XDG_CONFIG_HOME ($RUN/xdg) holds its own buddy/config.json, so your options
+# stay out of it too.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -54,10 +55,7 @@ WORK=$RUN/work
 mkdir -p "$WORK"
 # Only a test runner's output reacts as a test: (e) runs `npm test` here, which prints a pass summary.
 printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
-cat > "$RUN/settings.json" <<'EOF'
-{ "pluginConfigs": { "buddy@inline": { "options": { "commentAfterEachTurn": false, "suggestNextPrompt": false, "walkOverPromptBar": true, "logLevel": "debug", "logFile": "RUNDIR/buddy.log" } } } }
-EOF
-sed -i.bak "s|RUNDIR|$RUN|" "$RUN/settings.json" && rm -f "$RUN/settings.json.bak"
+live_buddy_config "{ \"commentAfterEachTurn\": false, \"suggestNextPrompt\": false, \"walkOverPromptBar\": true, \"logLevel\": \"debug\", \"logFile\": \"$RUN/buddy.log\" }"
 ID=$(uuidgen | tr 'A-Z' 'a-z')
 live_isolate
 T="tmux -L buddy-proof"
@@ -75,7 +73,7 @@ pool_of "$DEFAULT" testPass > "$RUN/testpass.pool"
 
 $T kill-session -t proof 2>/dev/null
 $T new-session -d -s proof -x 160 -y 50 -c "$WORK" \
-  "'$LIVE_CLAUDE' --model haiku --setting-sources project --settings '$RUN/settings.json' \
+  "'$LIVE_CLAUDE' --model haiku --setting-sources project \
    --allowedTools Bash --plugin-dir '$PLUGIN' --session-id $ID"
 trap '$T capture-pane -p -t proof -S -300 > "$RUN/pane.txt" 2>/dev/null; $T kill-server 2>/dev/null' EXIT
 live_boot
