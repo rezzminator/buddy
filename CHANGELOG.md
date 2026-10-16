@@ -4,7 +4,7 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
-## [3.0.0] — 2026-10-15
+## [3.0.0] — 2026-10-16
 
 ### Changed
 - Every option now lives in one JSON file of buddy's own, `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json` (`XDG_CONFIG_HOME` is used only when set to an absolute path, and `HOME` only when absolute): a flat object keyed by the same option names, with JSON's own types (a boolean is `true` or `false`, a number a number; the text forms `"true"` and `"10"` are no longer read). buddy reads it once, at session start. A missing file gives the defaults silently; a file that cannot be read, is not valid JSON or not an object, an unknown key, and a wrong-typed or out-of-range value are each named once, with that key's default applied and the valid keys still applied. `config.example.json` is now an example of that file.
