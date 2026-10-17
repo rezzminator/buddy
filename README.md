@@ -5,7 +5,7 @@
 **Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-3.0.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.0.1--alpha-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/ci.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -434,7 +434,15 @@ flowchart LR
   rotation and permission contract. In that runtime no level files are
   written: one transcript notice per outage names the unavailable capability
   and dropped rows. With neither directory input, it explicitly reports
-  logging off. Existing `buddy.log` and transcript output remain unchanged.
+  logging off. Every error-level diagnostic appears on screen and in the
+  plugin log, including repeated failures. Warning- and info-level diagnostics
+  are log-only while that log works: routine comment misses and state changes
+  do not interrupt the screen. If no directory can be resolved or an append
+  fails, each lost warning or info diagnostic falls back to the screen; the
+  logging failure itself stays visible once per outage. Unreadable or invalid
+  configuration, ignored legacy options, unavailable character selections and
+  unanswered `/buddy` questions are errors, not warnings. Companion art,
+  bubbles, comments and command replies are product output and unchanged.
 - **`commentAfterEachTurn`** (on by default). At the end of every answered turn, tool use or
   not, one short call on `model` at the `effort` level (at most 2048
   output tokens, its thinking included, a 30-second deadline) reads its `chatTurnsToRead` (the chat's
@@ -554,14 +562,14 @@ settings:
   no `/plugin configure` field, no `pluginConfigs` entry in `settings.json`.
 - **Missing file:** the defaults, silently. **Anything wrong with the file:**
   the defaults for what is wrong, the valid keys still apply, and each problem
-  is named once: the first greeting's bubble says so, and `/buddy help` and the
-  log list it. That covers a file buddy cannot read, one that is not valid JSON
+  is an error on screen and in the plugin log: the first greeting's bubble
+  also says so, and `/buddy help` and the log list it. That covers a file buddy cannot read, one that is not valid JSON
   or not an object, an unknown key, and a value of the wrong type or out of
   range.
 - **Migrating from a `pluginConfigs` entry (buddy before 3.0.0):** remove
   `pluginConfigs["buddy@buddy"]` from `settings.json` and put the same keys, as
   they were under `options`, into the config file. While the entry is there,
-  buddy ignores its values and says so, naming the file.
+  buddy ignores its values and reports an error, naming the file.
 
 | Option | Type | Default | Meaning |
 | --- | --- | --- | --- |

@@ -201,6 +201,16 @@ describe('real append script', () => {
 });
 
 describe('plugin log queue', () => {
+  test.each(['warning', 'info'] as const)('lost %s rows fall back individually throughout an outage', async (level) => {
+    const queue = new PluginLogQueue('/logs', 'buddy');
+    const notices: string[] = [];
+    for (const msg of ['first diagnostic', 'second diagnostic']) {
+      queue.add(levelRow({ ...fields, level, msg }, now));
+      await queue.flush(async () => ({ exitCode: 1, stdout: '', stderr: 'disk full' }), (line) => notices.push(line));
+    }
+    expect(notices.filter((line) => line.includes('plugin log /logs failed:'))).toHaveLength(1);
+    expect(notices.filter((line) => !line.includes('plugin log /logs failed:'))).toEqual(['first diagnostic', 'second diagnostic']);
+  });
   test('does not run for an empty queue and serializes concurrent flushes', async () => {
     const dir = await temp();
     const queue = new PluginLogQueue(dir, 'buddy');

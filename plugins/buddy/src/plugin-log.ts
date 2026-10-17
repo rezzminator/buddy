@@ -30,7 +30,7 @@ export function pluginLogDetail(fields: Record<string, unknown>): Record<string,
 /** Only actionable outcomes and visible state changes, never routine hook traffic. */
 export function infoEvent(event: string, fields: Record<string, unknown> = {}): boolean {
   return ['character.switch', 'hidden.shared', 'session.forget', 'personality.pick',
-    'drawer.open', 'drawer.close', 'drawer.use', 'rule.strike', 'ask.outcome',
+    'drawer.open', 'drawer.close', 'drawer.use', 'rule.strike', 'ask.outcome', 'ask.dropped',
     'promptToMainChat.sent', 'promptToMainChat.dropped', 'promptToMainChat.stale', 'promptToMainChat.movedOn'].includes(event)
     || typeof fields.deny === 'string';
 }
@@ -90,7 +90,7 @@ plugin=$2
 shift 2
 refuse() { printf 'plugin log %s: %s\\n' "$1" "$2" >&2; exit 1; }
 case "$plugin" in *[!a-z0-9-]*|'') refuse "$dir" 'invalid plugin';; esac
-mkdir -p "$dir"
+mkdir -p "$dir" || refuse "$dir" 'directory creation failed'
 cap_file() {
   cap_path=$dir/$1
   [ -f "$cap_path" ] || return 1
@@ -183,7 +183,7 @@ export function appendArgv(dir: string, plugin: string, rows: string[]): string[
   return batches;
 }
 
-/** A serial chain, with one fallback per outage and no retained engine handle. */
+/** A serial chain: one outage notice, each lost non-error on screen, no retained engine handle. */
 export class PluginLogQueue {
   private pending: string[] = [];
   private chain: Promise<FlushResult> = Promise.resolve({ written: 0, dropped: 0 });
@@ -215,6 +215,14 @@ export class PluginLogQueue {
           const status = !run || reason.startsWith('process.run unavailable;') ? 'unavailable' : 'failed';
           const line = this.dir ? `plugin log ${this.dir} ${status}: ${reason}; dropped ${dropped} row(s)` : `${reason}; dropped ${dropped} row(s)`;
           try { fallback?.(line); } catch { /* The screen is the last fallback; never break the hook. */ }
+        }
+        // Errors already reach the screen at emission. Every other lost row
+        // needs its own fallback, even after the outage notice was said once.
+        for (const row of rows.slice(written)) {
+          try {
+            const diagnostic = JSON.parse(row) as LevelFields;
+            if (diagnostic.level !== 'error') fallback?.(diagnostic.msg);
+          } catch { /* The screen is the last fallback; never break the hook. */ }
         }
         return { written, dropped, error: reason };
       }

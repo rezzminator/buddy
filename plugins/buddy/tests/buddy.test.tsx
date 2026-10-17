@@ -373,6 +373,53 @@ describe('plugin log capability fallback', () => {
   });
 });
 
+describe('diagnostic screen policy', () => {
+  test('warnings and routine info stay off screen while the plugin log works', async ($, on) => {
+    const rows: Record<string, unknown>[] = [];
+    on('process.run', async (_$, e) => {
+      for (let i = 7; i < e.argv.length; i += 2) rows.push(JSON.parse(e.argv[i]!));
+      return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } };
+    });
+    const w = world(on, { character: 'fixy' });
+    await $.session.start(START);
+    await $.command.run(run(''));
+    await w.clock.settle();
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+    expect(rows.some((r) => r.level === 'warning' && r.event === 'roster-invalid')).toBe(true);
+    expect(rows.some((r) => r.level === 'info' && r.event === 'drawer-open')).toBe(true);
+    expect(w.logs.some((line) => line.includes('character broken (builtin) is invalid'))).toBe(false);
+    expect(w.logs.some((line) => line.includes('Buddy recorded drawer-open.'))).toBe(false);
+  });
+
+  for (const outage of ['no directory', 'failed write'] as const) {
+    test(`warnings and routine info fall back to screen with ${outage}`, async ($, on) => {
+      on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: 'disk full', isStdoutTruncated: false, isStderrTruncated: false } }));
+      const w = world(on, { character: 'fixy' }, {}, { env: outage === 'no directory' ? { HOME: '' } : {} });
+      await $.session.start(START);
+      await $.command.run(run(''));
+      await w.clock.settle();
+      await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+      expect(w.logs.some((line) => line.includes('character broken (builtin) is invalid'))).toBe(true);
+      expect(w.logs).toContain('buddy: Buddy recorded drawer-open.');
+      expect(w.logs.some((line) => line.includes(outage === 'no directory' ? 'plugin log off:' : 'plugin log') && line.includes(outage === 'no directory' ? 'no PLUGIN_LOG_DIR and no HOME' : 'disk full'))).toBe(true);
+    });
+  }
+
+  test('an unreadable config is an error on screen and in the plugin log', { config: {} }, async ($, on) => {
+    const rows: Record<string, unknown>[] = [];
+    on('process.run', async (_$, e) => {
+      for (let i = 7; i < e.argv.length; i += 2) rows.push(JSON.parse(e.argv[i]!));
+      return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } };
+    });
+    const w = world(on, { character: 'fixy' }, {}, { refuseConfig: true });
+    await $.session.start(START);
+    await w.clock.settle();
+    await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
+    expect(w.logs.some((line) => line.includes('config file') && line.includes('unreadable:'))).toBe(true);
+    expect(rows.some((r) => r.level === 'error' && String(r.msg).includes('unreadable:'))).toBe(true);
+  });
+});
+
 describe('the band', () => {
   test('draws the stored character and its greeting', async ($, on) => {
     world(on, { character: 'fixy' });
@@ -3246,7 +3293,7 @@ describe("a turn's numbers", () => {
     await ui.unmount();
   });
 
-  test("a session usage that comes back malformed is said once: the turn is still filed, with its numbers and without the cost, context and limits", async ($, on) => {
+  test("a session usage that comes back malformed shows every error: the turn is still filed, with its numbers and without the cost, context and limits", async ($, on) => {
     const w = world(on, { character: 'fixy' });
     on('session.usage', async () => ({ value: 'offline' }) as never);
     await $.session.start(START);
@@ -3264,7 +3311,7 @@ describe("a turn's numbers", () => {
       expect(s.usd).toBeUndefined();
       expect(s.context).toBeUndefined();
     }
-    expect(w.logs.filter((l) => /reading the session's usage at the turn's (start|end) failed: it came back as string, not the usage/.test(l))).toHaveLength(1);
+    expect(w.logs.filter((l) => /reading the session's usage at the turn's (start|end) failed: it came back as string, not the usage/.test(l))).toHaveLength(4);
     expect(records(w).filter((r) => r.event === "reading the session's usage at the turn's start" || r.event === "reading the session's usage at the turn's end").length).toBeGreaterThanOrEqual(4);
     await ui.unmount();
   });
@@ -3368,7 +3415,7 @@ describe('promptToMainChat', () => {
     expect(records(w).filter((r) => r.event === 'promptToMainChat.sent')).toHaveLength(0);
   });
 
-  test('the config file sets promptToMainChat; a bad effort in it is warned of by name and its default used', { config: { promptToMainChat: false, effort: 'turbo' } }, async ($, on) => {
+  test('the config file sets promptToMainChat; a bad effort in it is an error by name and its default used', { config: { promptToMainChat: false, effort: 'turbo' } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
     await $.session.start(START);
     await prompt($, 'fix the login bug', 't1');
@@ -3378,7 +3425,7 @@ describe('promptToMainChat', () => {
     expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
     expect(w.completes[0]!.effort).toBe('low');
     expect(w.submitted).toEqual([{ text: 'fix the login bug' }]);
-    expect(records(w).filter((r) => r.event === 'option.warning').map((r) => JSON.stringify(r))).toEqual([expect.stringContaining('option effort ignored')]);
+    expect(records(w).filter((r) => r.event === 'option.error').map((r) => JSON.stringify(r))).toEqual([expect.stringContaining('option effort ignored')]);
   });
 
   /** memory.json holding the user's rule `rule.main-safe` and a fact, and `strikes` when given. */
@@ -3904,7 +3951,7 @@ describe('a call a reload abandoned', () => {
 });
 
 describe('the config file', () => {
-  const warnings = (w: { files: Record<string, string> }) => records(w).filter((r) => r.event === 'option.warning').map((r) => String(r.text));
+  const configErrors = (w: { files: Record<string, string> }) => records(w).filter((r) => r.event === 'option.error').map((r) => String(r.text));
   const FILE = `${HOME}/.config/buddy/config.json`;
 
   test('missing: the defaults and no warning at all', async ($, on) => {
@@ -3914,7 +3961,7 @@ describe('the config file', () => {
     await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
-    expect(warnings(w)).toEqual([]);
+    expect(configErrors(w)).toEqual([]);
   });
 
   test('read once, at session start: a later edit of the file changes nothing until the next session', { config: { promptToMainChat: false } }, async ($, on) => {
@@ -3925,20 +3972,20 @@ describe('the config file', () => {
     await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes.filter(asksToPrompt)).toHaveLength(0);
-    expect(warnings(w)).toEqual([]);
+    expect(configErrors(w)).toEqual([]);
   });
 
-  test('invalid JSON: one warning naming the file, the defaults used', { config: '{"promptToMainChat": ' }, async ($, on) => {
+  test('invalid JSON: one error naming the file, the defaults used', { config: '{"promptToMainChat": ' }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } });
     await $.session.start(START);
     await prompt($, 'fix the login bug', 't1');
     await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(warnings(w)).toEqual([expect.stringContaining(`config file ${FILE} is not valid JSON`)]);
+    expect(configErrors(w)).toEqual([expect.stringContaining(`config file ${FILE} is not valid JSON`)]);
     expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
   });
 
-  test('an old pluginConfigs entry in the settings: one warning naming its keys and the file, its values never applied; a source that cannot be read is said', async ($, on) => {
+  test('an old pluginConfigs entry in the settings: one error naming its keys and the file, its values never applied; a source that cannot be read is said', async ($, on) => {
     const settings = {
       user: { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false } }, 'other@x': { options: { colour: 'red' } } } },
       local: { pluginConfigs: { 'buddy@buddy-dev': { options: { commentAfterEachTurn: false, promptToMainChat: false } } } },
@@ -3948,15 +3995,15 @@ describe('the config file', () => {
     await prompt($, 'fix the login bug', 't1');
     await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    expect(warnings(w)).toEqual([`pluginConfigs options (promptToMainChat, commentAfterEachTurn) are no longer read and not applied: buddy reads ${FILE} instead; move them there and remove the pluginConfigs entry`]);
+    expect(configErrors(w)).toEqual([`pluginConfigs options (promptToMainChat, commentAfterEachTurn) are no longer read and not applied: buddy reads ${FILE} instead; move them there and remove the pluginConfigs entry`]);
     expect(w.logs.filter((line) => /^buddy: reading the policy settings for an old pluginConfigs entry failed: .+/.test(line))).toHaveLength(1);
     expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
   });
 
-  test('an unreadable file: one warning naming the file and the cause, the defaults used', { config: {} }, async ($, on) => {
+  test('an unreadable file: one error naming the file and the cause, the defaults used', { config: {} }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { refuseConfig: true });
     await $.session.start(START);
-    expect(warnings(w)).toEqual([expect.stringMatching(new RegExp(`^config file ${FILE} unreadable: .+; using the defaults$`))]);
+    expect(configErrors(w)).toEqual([expect.stringMatching(new RegExp(`^config file ${FILE} unreadable: .+; using the defaults$`))]);
   });
 
   test('an absolute XDG_CONFIG_HOME is where it reads, not HOME/.config', async ($, on) => {
@@ -3966,6 +4013,6 @@ describe('the config file', () => {
     await $.turn.complete({ reason: 'answer', answer: 'Fixed; the tests pass.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes.filter(asksToPrompt)).toHaveLength(1);
-    expect(warnings(w)).toEqual([]);
+    expect(configErrors(w)).toEqual([]);
   });
 });

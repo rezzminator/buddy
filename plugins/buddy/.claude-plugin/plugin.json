@@ -1,6 +1,6 @@
 {
   "name": "buddy",
-  "version": "3.0.0",
+  "version": "3.0.1-alpha",
   "description": "Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts",
   "license": "MIT",
   "author": {

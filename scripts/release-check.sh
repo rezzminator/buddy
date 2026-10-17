@@ -26,7 +26,7 @@ tested=$(node -e 'const t = require("fs").readFileSync("README.md", "utf8").repl
 pin=$(sed -nE 's/^[[:space:]]*CLAUDE_CODE_VERSION:[[:space:]]*"?([0-9][0-9.]*)"?[[:space:]]*$/\1/p' .github/workflows/ci.yml | sort -u | tr '\n' ' ' | sed 's/ $//')
 # shellcheck disable=SC2016 # the pin is matched literally, not expanded
 unpinned=$(grep -nE '@anthropic-ai/claude-code' .github/workflows/*.yml | grep -vF '@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}')
-b=$(grep -oE 'badge/version-[0-9.]+-' README.md | sed -E 's/badge\/version-|-$//g')
+b=$(sed -nE 's@.*badge/version-([0-9]+\.[0-9]+\.[0-9]+(\-\-[0-9A-Za-z.-]+)?)-blue.*@\1@p' README.md | sed 's/--/-/g')
 [ "$m" = "$v" ] || { echo "FAIL marketplace.json says ${m:-nothing}, plugin.json $v"; fail=1; }
 [ "$p" = "$v" ] || { echo "FAIL package.json says ${p:-nothing}, plugin.json $v"; fail=1; }
 [ "$b" = "$v" ] || { echo "FAIL README badge says ${b:-nothing}, plugin.json $v"; fail=1; }
