@@ -3,10 +3,10 @@
 # CHANGELOG.md has a dated section for it. With a base version argument (the
 # version on main), the version must also have moved past it.
 # The engine: the README's "tested on Claude Code X.Y.Z" names the one version
-# ci.yml pins in CLAUDE_CODE_VERSION, and every workflow install uses that pin.
+# release.yml pins in CLAUDE_CODE_VERSION, and every workflow install uses that pin.
 # The install ref: marketplace.json points installs at main, which is
-# release-only (ci.yml's release job gates every pull request into main and
-# every push onto it). A tag ref cannot work here: the tag is created after the
+# release-only (release.yml's release job gates every pull request into main before
+# the merge publishes it). A tag ref cannot work here: the tag is created after the
 # release merge, so main's marketplace.json would name a tag that does not
 # exist yet.
 # Prints one line per failure and exits 1; exits 2 when a file cannot be read.
@@ -20,10 +20,10 @@ m=$(node -e 'const j = require("./.claude-plugin/marketplace.json"); process.std
 p=$(read_json package.json version) || { echo "ERROR cannot read package.json"; exit 2; }
 [ -r README.md ] || { echo "ERROR cannot read README.md"; exit 2; }
 [ -r CHANGELOG.md ] || { echo "ERROR cannot read CHANGELOG.md"; exit 2; }
-[ -r .github/workflows/ci.yml ] || { echo "ERROR cannot read .github/workflows/ci.yml"; exit 2; }
+[ -r .github/workflows/release.yml ] || { echo "ERROR cannot read .github/workflows/release.yml"; exit 2; }
 ref=$(node -e 'const j = require("./.claude-plugin/marketplace.json"); process.stdout.write(j.plugins.find((p) => p.name === "buddy")?.source?.ref ?? "")') || { echo "ERROR cannot read .claude-plugin/marketplace.json"; exit 2; }
 tested=$(node -e 'const t = require("fs").readFileSync("README.md", "utf8").replace(/\n>?[ \t]*/g, " "); process.stdout.write([...new Set([...t.matchAll(/tested on Claude Code (\d+\.\d+\.\d+)/gi)].map((m) => m[1]))].join(" "))') || { echo "ERROR cannot read README.md"; exit 2; }
-pin=$(sed -nE 's/^[[:space:]]*CLAUDE_CODE_VERSION:[[:space:]]*"?([0-9][0-9.]*)"?[[:space:]]*$/\1/p' .github/workflows/ci.yml | sort -u | tr '\n' ' ' | sed 's/ $//')
+pin=$(sed -nE 's/^[[:space:]]*CLAUDE_CODE_VERSION:[[:space:]]*"?([0-9][0-9.]*)"?[[:space:]]*$/\1/p' .github/workflows/release.yml | sort -u | tr '\n' ' ' | sed 's/ $//')
 # shellcheck disable=SC2016 # the pin is matched literally, not expanded
 unpinned=$(grep -nE '@anthropic-ai/claude-code' .github/workflows/*.yml | grep -vF '@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}')
 b=$(sed -nE 's@.*badge/version-([0-9]+\.[0-9]+\.[0-9]+(\-\-[0-9A-Za-z.-]+)?)-blue.*@\1@p' README.md | sed 's/--/-/g')
@@ -32,10 +32,10 @@ b=$(sed -nE 's@.*badge/version-([0-9]+\.[0-9]+\.[0-9]+(\-\-[0-9A-Za-z.-]+)?)-blu
 [ "$b" = "$v" ] || { echo "FAIL README badge says ${b:-nothing}, plugin.json $v"; fail=1; }
 grep -qE "^## \[$v\] — [0-9]{4}-[0-9]{2}-[0-9]{2}$" CHANGELOG.md || { echo "FAIL CHANGELOG.md has no dated section for $v"; fail=1; }
 case "$tested" in *" "*) echo "FAIL README names several tested-on versions: $tested"; fail=1 ;; esac
-case "$pin" in *" "*) echo "FAIL ci.yml sets CLAUDE_CODE_VERSION more than once: $pin"; fail=1 ;; esac
+case "$pin" in *" "*) echo "FAIL release.yml sets CLAUDE_CODE_VERSION more than once: $pin"; fail=1 ;; esac
 [ -n "$tested" ] || { echo "FAIL README names no \"tested on Claude Code X.Y.Z\" version"; fail=1; }
-[ -n "$pin" ] || { echo "FAIL ci.yml pins no CLAUDE_CODE_VERSION"; fail=1; }
-[ "$tested" = "$pin" ] || { echo "FAIL README is tested on Claude Code ${tested:-nothing}, ci.yml pins ${pin:-nothing}"; fail=1; }
+[ -n "$pin" ] || { echo "FAIL release.yml pins no CLAUDE_CODE_VERSION"; fail=1; }
+[ "$tested" = "$pin" ] || { echo "FAIL README is tested on Claude Code ${tested:-nothing}, release.yml pins ${pin:-nothing}"; fail=1; }
 [ -z "$unpinned" ] || { echo "FAIL a workflow installs Claude Code without the CLAUDE_CODE_VERSION pin: $unpinned"; fail=1; }
 [ "$ref" = main ] || { echo "FAIL marketplace.json points installs at ${ref:-no ref}, not the release-only main"; fail=1; }
 if [ -n "${1:-}" ]; then

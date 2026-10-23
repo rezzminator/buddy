@@ -18,7 +18,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - live proof: a real Haiku session driven in tmux · `scripts/live-proof.sh`
 - live configuration proof: five sessions over option sets, buddy on opus low, each turn's time and tokens in a report · `scripts/live-configs.sh`, helpers shared in `scripts/live-lib.sh`
 - release check: the version agrees everywhere and the CHANGELOG section is dated · `scripts/release-check.sh`
-- CI: the gates on push and pull request, and the GitHub release on a tag · `.github/workflows/`
+- CI: the gates on a pull request into `main`, and the GitHub release when it merges · `.github/workflows/release.yml`
 - repo agents: `gitter`, the only git writer · `.claude/agents/`
 
 ## Runtime
@@ -36,11 +36,12 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - Targeted runs: `npx vitest run tests/{concern}.test.ts` runs one unit file; the hook tests have no targeted runner (`claude plugin test` takes only a folder and runs every file in it, and `plugins/buddy/tests/` holds one file of two to four minutes), so `npm run test:hooks` runs once, at the end of a change, never per edit.
 - `npm run live` runs the live proof and `npm run live:configs` the configuration proof, both with `--plugin-dir plugins/buddy`; run both after any change to the adapter.
 - `npm run release:check` proves a release's versions and CHANGELOG section.
+- `make release-check` runs exactly the checks CI runs on a pull request into `main` (`make check`, then `make release` against the local `origin/main`, so `git fetch origin main` first); Node 22 through mise.
 
 ### CI
 
-- `.github/workflows/ci.yml` runs the three gates on every push to `{develop|main}` and every pull request; on a pull request into `main`, its `release` job requires the version to move past `main`'s.
-- `.github/workflows/release.yml` publishes the GitHub release from the CHANGELOG section when a `buddy--v*` tag on `main` is pushed.
+- `.github/workflows/release.yml` is the only workflow; no CI runs on a push to any branch. On a pull request into `main`, its `check` job runs `make check` (the three gates) and its `release` job runs `make release`: the release check with the version moved past `main`'s, and non-empty CHANGELOG notes.
+- When that pull request merges, its `publish` job tags the merge commit `buddy--v{X.Y.Z}` and publishes the GitHub release from the CHANGELOG section; it fails when the tag already exists.
 
 ## Rules
 
@@ -67,8 +68,10 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 
 ### Branches and releases
 
-- `develop` is the default branch: every change lands there, by a commit or a pull request.
+- `develop` is the default branch: every change lands there, by a commit or a pull request. It is protected by the ruleset `develop keeps its history`: never force-push or delete it.
+- `main` is protected by the ruleset `main is release-only`: it merges only after `check` and `release` pass, never by a direct push and never by an admin override.
+- Every merge into `main` publishes: the version moves past `main`'s, and a pre-release version (`-alpha`) is bumped to the real release version in that pull request.
 - A version bump moves `plugins/buddy/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `package.json` and the README badge together, and turns `## [Unreleased]` in `CHANGELOG.md` into `## [X.Y.Z] — {date}`; installed copies update only on a new version.
 - Semantic versioning: a fix is a patch; a new option, behaviour or built-in character is a minor; a renamed or removed option, command or character field, or a moved option home, is a major, and its CHANGELOG entry says how to migrate.
-- A release is `gitter`'s RELEASE phase: the `develop → main` pull request, merged once CI is green, then `claude plugin tag --push plugins/buddy` on `main` creates `buddy--v{X.Y.Z}`.
+- A release is `gitter`'s RELEASE phase: bump the version and the dated CHANGELOG section on `develop`, `git fetch origin main` then `make release-check`, open the `develop → main` pull request, merge it once `check` and `release` are green; the merge is the release, `release.yml` tags and publishes it, and no tag is ever pushed by hand.
 - Git writes go through `gitter`, `.claude/agents/gitter.md`.

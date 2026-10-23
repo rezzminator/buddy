@@ -7,7 +7,7 @@
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
 [![Version](https://img.shields.io/badge/version-3.0.1--alpha-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
-[![CI](https://github.com/rezzminator/buddy/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/ci.yml)
+[![CI](https://github.com/rezzminator/buddy/actions/workflows/release.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/release.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
 
 ![Demo: Terry, a tiny ASCII programmer, paces above the Claude Code prompt; as Claude fixes a failing test he flinches at the error, comments on the one-character fix in a speech bubble, a suggested next prompt appears in the box, and asked "/buddy should we pull in a library for this?" he answers in character](docs/demo/buddy.gif)
@@ -718,9 +718,11 @@ npm run live:configs  # five sessions, one per configuration, every turn measure
 npm run live:drawer   # one session: two turns, a question, then /buddy opens the drawer, kept and closed with ctrl+x q; screen in /tmp/buddy/drawer-*/
 ```
 
-Work lands on `develop`; `main` holds only releases, and each one is tagged
-`buddy--vX.Y.Z` with its notes in [CHANGELOG.md](./CHANGELOG.md). Pull
-requests go to `develop`; [CONTRIBUTING.md](./CONTRIBUTING.md) covers both
+Work lands on `develop`; `main` holds only releases. Merging the `develop → main`
+pull request is the release: [release.yml](./.github/workflows/release.yml)
+tags it `buddy--vX.Y.Z` and publishes its notes from
+[CHANGELOG.md](./CHANGELOG.md). `make release-check` runs the same checks
+locally before that pull request opens. Pull requests go to `develop`; [CONTRIBUTING.md](./CONTRIBUTING.md) covers both
 characters and code.
 
 `plugins/buddy/hooks/buddy.tsx` is a thin adapter over `plugins/buddy/src/`,
