@@ -15,7 +15,7 @@
         "ref": "main"
       },
       "description": "Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts",
-      "version": "3.0.1-alpha",
+      "version": "3.0.1",
       "license": "MIT",
       "keywords": ["claude-code", "claude-code-plugin", "claude-code-buddy", "buddy", "companion", "coding-companion", "ascii-art", "terminal-pet", "virtual-pet", "duck", "prompt-suggestions", "function-hooks", "claude-code-hooks", "claude-mods", "professor"],
       "author": {

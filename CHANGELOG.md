@@ -2,7 +2,7 @@
 
 Every release of buddy. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `buddy--v<version>`, with a GitHub release carrying the section below.
 
-## [3.0.1-alpha] — 2026-10-17
+## [3.0.1] — 2026-10-27
 
 ### Fixed
 - Error-level diagnostics always appear on screen and in the plugin log, including previously log-only failures. Warnings and routine info stay in the plugin log while it works; every lost warning or info falls back to the screen when no directory is available or a write fails, with one visible logging-failure notice per outage.
