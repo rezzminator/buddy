@@ -1,28 +1,88 @@
 name: release
 
 on:
-  push:
-    tags: ['buddy--v*']
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  # The Claude Code the README says buddy is tested on; function hooks are early
+  # access, so CI runs that engine and a bump is deliberate.
+  # scripts/release-check.sh fails when this and the README's "tested on" differ.
+  CLAUDE_CODE_VERSION: "2.1.286"
 
 jobs:
-  publish:
+  check:
+    name: check
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+      - run: make check
+
+  release:
+    name: release
+    # main is release-only, and installs track main: a pull request into main
+    # must move the version past main's previous one and carry its dated
+    # CHANGELOG section with release notes, before the merge publishes it.
+    if: github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - name: The tag sits on main
-        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-      - name: The tag matches the manifest and CHANGELOG
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - run: make release
+
+  publish:
+    name: publish
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: The tag is new
+        id: tag
         run: |
-          v="${GITHUB_REF_NAME#buddy--v}"
-          test "$v" = "$(node -p 'require("./plugins/buddy/.claude-plugin/plugin.json").version')"
-          scripts/release-check.sh
+          v="$(node -p 'require("./plugins/buddy/.claude-plugin/plugin.json").version')"
+          tag="buddy--v$v"
+          rc=0
+          git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::tag $tag already exists"
+            exit 1
+          elif [ "$rc" -ne 2 ]; then
+            echo "::error::could not look up tag $tag (git ls-remote exit $rc)"
+            exit 1
+          fi
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Release notes from the CHANGELOG
+        env:
+          v: ${{ steps.tag.outputs.v }}
+        run: |
           awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ || /^\[/ {f=0} f' CHANGELOG.md > notes.md
           test -s notes.md
-      - run: gh release create "$GITHUB_REF_NAME" --title "buddy ${GITHUB_REF_NAME#buddy--v}" --notes-file notes.md --verify-tag
+      - run: gh release create "$tag" --target "${{ github.event.pull_request.merge_commit_sha }}" --title "buddy $v" --notes-file notes.md
         env:
           GH_TOKEN: ${{ github.token }}
+          tag: ${{ steps.tag.outputs.tag }}
+          v: ${{ steps.tag.outputs.v }}

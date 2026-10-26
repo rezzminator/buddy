@@ -255,20 +255,23 @@ function flushPluginLog($: EngineInterface) {
 
 /** Separate level rows, without retaining a hook's engine or copying log bodies. */
 function plog($: EngineInterface, level: Level, event: string, msg: string, where: string, fields: LogFields = {}): void {
+  if (level === 'error') say($, msg);
   try {
     pluginLog.add(levelRow({ plugin: 'buddy', level, event: eventId(event), msg, where: `hooks/buddy.tsx#${where}`, session: L.context.session, detail: pluginLogDetail(fields) }, Date.now()));
     void flushPluginLog($);
   } catch (error) {
     logIO($).fallback(`plugin log row ${event} could not be queued: ${message(error)}`);
+    if (level !== 'error') say($, msg);
   }
 }
 
 /** One record, written now through `$`; never throws. */
-function lg($: EngineInterface, level: LogLevel, event: string, fields: LogFields = {}, pluginLevel: Level | undefined = level === 'debug' ? undefined : level): void {
+function lg($: EngineInterface, level: LogLevel, event: string, fields: LogFields = {}, pluginLevel: Level | undefined = level === 'debug' ? undefined : level, diagnosticText?: string): void {
   L.log(level, event, fields);
   if (pluginLevel && (pluginLevel !== 'info' || infoEvent(event, fields))) {
-    const msg = pluginLevel === 'warning' && typeof fields.text === 'string' ? fields.text : `Buddy recorded ${eventId(event)}.`;
-    plog($, pluginLevel, event, msg, pluginLevel === 'warning' ? 'warn' : 'lg', fields);
+    // Only authored diagnostics may supply message text, never prompt/answer fields.
+    const msg = diagnosticText ?? `Buddy recorded ${eventId(event)}.`;
+    plog($, pluginLevel, event, msg, diagnosticText === undefined ? 'lg' : 'diagnostic', fields);
   }
   L.flush(logIO($)).catch(() => undefined);
   flushRound($);
@@ -284,23 +287,21 @@ function lgT($: EngineInterface, event: string, fields: LogFields = {}): void {
 /** Every failure: a transcript notice, and an error record with its context and stack; a render's call a newer render superseded is only an info record (Logger.failed). */
 function log($: EngineInterface, what: string, error: unknown, fields: LogFields = {}): void {
   const failed = L.failed(what, error, fields);
-  if (failed) say($, `${what} failed: ${message(error)}`);
   plog($, failed ? 'error' : 'info', failed ? failureEvent(what) : 'render-superseded', failed ? `${what} failed: ${message(error)}` : 'A newer render superseded this render.', what === 'writing memory.md' ? 'writeMemoryText' : 'log', { ...fields, error: message(error) });
   L.flush(logIO($)).catch(() => undefined);
   flushRound($);
 }
 
-/** An intentionally silent work failure still reaches both logs. */
-function logOnly($: EngineInterface, what: string, error: unknown, where: string, fields: LogFields = {}): void {
+/** A work failure reaches the screen and both logs, including repeated failures. */
+function logError($: EngineInterface, what: string, error: unknown, where: string, fields: LogFields = {}): void {
   L.error(what, error, fields);
   plog($, 'error', failureEvent(what), `${what} failed: ${message(error)}`, where, { ...fields, error: message(error) });
   L.flush(logIO($)).catch(() => undefined);
 }
 
-/** A problem said in the transcript and the plugin log alike. */
-function warn($: EngineInterface, event: string, text: string, fields: LogFields = {}): void {
-  say($, text);
-  lg($, 'info', event, { ...fields, text }, 'warning');
+/** Errors are visible; warnings and info reach the screen only if the plugin log fails. */
+function diagnostic($: EngineInterface, level: Level, event: string, text: string, fields: LogFields = {}): void {
+  lg($, level === 'error' ? 'error' : 'info', event, { ...fields, text }, level, text);
 }
 
 // ---- roster -------------------------------------------------------------
@@ -343,15 +344,15 @@ async function loadRoster(st: State, $: EngineInterface): Promise<void> {
   st.roster = mergeRoster(builtin.entries, user, errors);
   if (st.original) st.roster = withEntry(st.roster, st.original);
   // The merged roster's errors: the listing failures, and a file taking a reserved id.
-  for (const e of st.roster.errors) warn($, 'roster.error', e);
-  for (const e of st.roster.entries) if (e.error) warn($, 'roster.invalid', `character ${e.id} (${e.source}) is invalid: ${e.error}`, { id: e.id, source: e.source });
+  for (const e of st.roster.errors) diagnostic($, 'error', 'roster.error', e);
+  for (const e of st.roster.entries) if (e.error) diagnostic($, 'warning', 'roster.invalid', `character ${e.id} (${e.source}) is invalid: ${e.error}`, { id: e.id, source: e.source });
   lg($, 'info', 'roster.load', { characters: st.roster.entries.length, invalid: st.roster.entries.filter((e) => !e.character).length });
 }
 
 /** Draws the stored/option/default choice; a bad one draws the default (the duck) and says why. */
 function applyChoice(st: State, $: EngineInterface): void {
   const choice = choose(st.roster, st.storeChoice, st.options.character);
-  if (choice.error) warn($, 'character.choice', choice.error);
+  if (choice.error) diagnostic($, 'error', 'character.choice', choice.error);
   // An ignored option is said once, in the first greeting's bubble, as a character or roster error is: never a silent revert.
   const warning = startWarning(choice.error, st.roster.errors, st.warned ? [] : st.options.errors);
   st.warned = true;
@@ -485,7 +486,7 @@ async function writeMemoryText(st: State, $: EngineInterface, m: Memory): Promis
  * starts; `waitMs`, a reader's patience, drops it unrun if it is still queued
  * then. An abandonment is said once, the next only after a link lands; a link
  * dropped unrun is logged, never said failed. A link failing after it was
- * abandoned is logged, never said twice. Resolves true when the link landed.
+ * abandoned is still an error on screen and in the logs. Resolves true when the link landed.
  */
 async function chainChatTurnsToRead(st: State, $: EngineInterface, what: string, ms: number, link: (live: () => boolean) => Promise<void>, waitMs?: number): Promise<boolean> {
   const o = await chained(
@@ -827,8 +828,8 @@ async function readUsage(st: State, $: EngineInterface, when: string): Promise<U
     lg($, 'info', 'usage.read', { when, outcome: 'timeout', ms: USAGE_DEADLINE_MS });
     return null;
   } catch (error) {
-    // Said once: a usage that never reads would otherwise say so at every turn.
-    if (st.usageFailSaid) logOnly($, `reading the session's usage at ${when}`, error, 'readUsage');
+    // Every failed usage read remains visible, including a repeated failure.
+    if (st.usageFailSaid) logError($, `reading the session's usage at ${when}`, error, 'readUsage');
     else log($, `reading the session's usage at ${when}`, error);
     st.usageFailSaid = true;
     return null;
@@ -1124,7 +1125,7 @@ async function startSession(st: State, $: EngineInterface, handed: Record<string
     log($, 'reading the config file', error);
   }
   await startLog(st, $);
-  for (const e of st.options.errors) warn($, 'option.warning', e);
+  for (const e of st.options.errors) diagnostic($, 'error', 'option.error', e);
   await readStore(st, $);
   await loadRoster(st, $);
   if ((st.storeChoice ?? st.options.character) === ORIGINAL_ID) await restoreOriginal(st, $);
@@ -1528,11 +1529,11 @@ function forgetConversation(st: State, $: EngineInterface, reason: string): void
   lg($, 'info', 'session.forget', { reason });
 }
 
-/** One change to the round files, after every change made before; a failure is said once, then logged. Never throws. */
+/** One change to the round files, after every change made before; every failure is shown and logged. Never throws. */
 function changeRounds(st: State, $: EngineInterface, what: string, change: () => Promise<void>): void {
   if (!st.options.saveRounds) return;
   st.roundsChain = st.roundsChain.then(change).catch((error) => {
-    if (st.roundsFailed) logOnly($, what, error, 'changeRounds');
+    if (st.roundsFailed) logError($, what, error, 'changeRounds');
     else log($, what, error);
     st.roundsFailed = true;
   });
@@ -1891,7 +1892,7 @@ function disarmAway(st: State, $: EngineInterface): void {
   try {
     st.idleWait?.cancel();
   } catch (error) {
-    logOnly($, 'cancelling the away wait', error, 'disarmAway');
+    logError($, 'cancelling the away wait', error, 'disarmAway');
   }
   st.idleWait = null;
   keepAway(st, $, null);
@@ -2165,7 +2166,7 @@ function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t:
       const outcome = shown ? 'answered' : outranked ? 'outranked' : st.hidden ? 'hidden' : 'dropped';
       lg($, 'info', 'commentAfterEachTurn.outcome', { outcome, ...(outcome === 'dropped' ? { asker: c.id, drawn: b.character.id } : {}), ...fields });
     } else {
-      warn($, 'comment-after-each-turn-unanswered', `a commentAfterEachTurn got no answer: ${reason}`, { reason });
+      diagnostic($, 'warning', 'comment-after-each-turn-unanswered', `a commentAfterEachTurn got no answer: ${reason}`, { reason });
       const shown = failAnswer(b, reason, c.id, true);
       lg($, 'info', 'commentAfterEachTurn.outcome', { outcome: shown ? 'failed' : 'dropped', reason, ...fields });
     }
@@ -2317,7 +2318,7 @@ async function backupSoul($: EngineInterface, src: ConfigSources, notes: string[
     const j = await readJson($, c.path, c.label);
     if (j.error) {
       skipped++;
-      warn($, 'backup-skipped', `skipping a backup: ${j.error}`, { error: j.error, file: c.path });
+      diagnostic($, 'warning', 'backup-skipped', `skipping a backup: ${j.error}`, { error: j.error, file: c.path });
       continue;
     }
     const s = companionOf(j.value);
@@ -2353,7 +2354,7 @@ async function rollOriginal($: EngineInterface, identity: string, soul: Soul, va
 async function findOriginals($: EngineInterface): Promise<Originals> {
   const config = await readConfig($);
   if ('error' in config) {
-    warn($, 'personalities-unreadable', `Personalities: ${config.error}`, { error: config.error });
+    diagnostic($, 'error', 'personalities-unreadable', `Personalities: ${config.error}`, { error: config.error });
     return { kind: 'error', error: config.error };
   }
   const notes: string[] = [];
@@ -2367,7 +2368,7 @@ async function findOriginals($: EngineInterface): Promise<Originals> {
   const rolls: { variant: Variant; character?: Character; error?: string }[] = [];
   for (const variant of VARIANTS) {
     const r = await rollOriginal($, config.identity, soul, variant);
-    if (r.error) warn($, 'original-undrawable', `the ${variant} roll of your original companion will not draw: ${r.error}`, { error: r.error });
+    if (r.error) diagnostic($, 'error', 'original-undrawable', `the ${variant} roll of your original companion will not draw: ${r.error}`, { error: r.error });
     rolls.push({ variant, ...r });
   }
   return from === undefined ? { kind: 'found', soul, notes, rolls } : { kind: 'found', soul, from, notes, rolls };
@@ -2515,13 +2516,13 @@ async function pickItem(st: State, $: EngineInterface, item: Item): Promise<void
   if (!b || !menu) return;
   const c = item.character;
   if (!c) {
-    warn($, 'character-unavailable', `Can't pick ${item.label}: ${item.error}`, { error: item.error });
+    diagnostic($, 'error', 'character-unavailable', `Can't pick ${item.label}: ${item.error}`, { error: item.error });
     return;
   }
   let note = '';
   if (item.pick.kind === 'original') {
     if (!menu.soul) {
-      warn($, 'original-soul-missing', `Can't pick ${item.label}: its soul was not found`);
+      diagnostic($, 'error', 'original-soul-missing', `Can't pick ${item.label}: its soul was not found`);
       return;
     }
     st.original = { id: ORIGINAL_ID, source: 'original', character: c };
@@ -2755,15 +2756,15 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
       shown = !st.hidden && answer(b, text, null, c.id);
     } else {
       reason = r === 'timeout' ? deadlineReason(COMPLETE_DEADLINE_MS) : r.isAnswered ? 'empty reply' : noAnswerReason(r);
-      warn($, 'ask-unanswered', `a /buddy question got no answer: ${reason}`, { reason });
+      diagnostic($, 'error', 'ask-unanswered', `a /buddy question got no answer: ${reason}`, { reason });
       shown = failAnswer(b, reason, c.id);
     }
   } catch (error) {
     if (conversation !== st.conversation) {
-      // Failed after /clear or a resume: dropped as an answer is, never a failure about the old chat shown in this one.
+      // The old chat gets no answer; its error still reaches the screen and logs.
       cleared = true;
       reason = 'the conversation it was asked in ended';
-      logOnly($, 'a /buddy question', error, 'ask', { dropped: true });
+      logError($, 'a /buddy question', error, 'ask', { dropped: true });
       shown = failAnswer(b, reason, c.id);
     } else {
       reason = message(error);
@@ -2777,13 +2778,13 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
   // What the calls cost and how much they read from the prompt cache.
   const usage = usageFields(paid);
   if (cleared) {
-    warn($, 'ask.dropped', `${c.name}'s answer was dropped: the conversation it was asked in ended`, { asker: c.id });
+    diagnostic($, 'info', 'ask.dropped', `${c.name}'s answer was dropped: the conversation it was asked in ended`, { asker: c.id });
     lg($, 'info', 'ask.outcome', { outcome: 'dropped', reason, ms: Date.now() - started, ...usage });
     refresh(st, $);
     return;
   }
   const hidden = !shown && st.hidden;
-  if (!shown && !hidden) warn($, 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
+  if (!shown && !hidden) diagnostic($, 'info', 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
   lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', ...(reason ? { reason } : {}), ms: Date.now() - started, ...usage });
   // The drawer: the answer, or why there is none.
   const tokens = tokensOf(usage);
@@ -2799,7 +2800,7 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
 async function putAskedPrompt(st: State, $: EngineInterface, c: Character, asked: { prompt: string | null; tooLong: boolean }): Promise<void> {
   try {
     if (asked.tooLong) {
-      warn($, 'ask-prompt-too-long', `${c.name}'s prompt was longer than ${ASKED_PROMPT_MAX_CHARS} characters, so it was not put in your prompt box`);
+      diagnostic($, 'error', 'ask-prompt-too-long', `${c.name}'s prompt was longer than ${ASKED_PROMPT_MAX_CHARS} characters, so it was not put in your prompt box`);
       feedAdd(st, $, { at: Date.now(), kind: 'failed', text: `its prompt passed ${ASKED_PROMPT_MAX_CHARS} characters`, ...voice(c) });
       lg($, 'info', 'ask.prompt.outcome', { outcome: 'too-long' });
       return;
