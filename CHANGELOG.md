@@ -2,6 +2,10 @@
 
 Every release of buddy. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `buddy--v<version>`, with a GitHub release carrying the section below.
 
+## [Unreleased]
+
+- Installs as `buddy@professor` from the professor marketplace; the repo's own marketplace file is gone.
+
 ## [3.0.1] — 2026-10-27
 
 ### Fixed

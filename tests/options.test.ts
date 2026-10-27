@@ -296,8 +296,8 @@ describe('resolveOptions from the config file', () => {
 
 describe('leftoverOptionKeys', () => {
   test('the option keys of every buddy@ entry across the sources, each once; other plugins, empty and malformed entries add none', () => {
-    const user = { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false, effort: 'high' } }, 'other@x': { options: { colour: 'red' } }, 'buddyx@y': { options: { model: 'haiku' } } } };
-    const local = { pluginConfigs: { 'buddy@inline': { options: { effort: 'low', saveRounds: false } }, 'buddy@buddy-dev': { options: {} } } };
+    const user = { pluginConfigs: { 'buddy@professor': { options: { promptToMainChat: false, effort: 'high' } }, 'other@x': { options: { colour: 'red' } }, 'buddyx@y': { options: { model: 'haiku' } } } };
+    const local = { pluginConfigs: { 'buddy@inline': { options: { effort: 'low', saveRounds: false } }, 'buddy@elsewhere': { options: {} } } };
     const odd = { pluginConfigs: { 'buddy@a': null, 'buddy@b': { options: ['x'] }, 'buddy@c': 'text' } };
     expect(leftoverOptionKeys([user, {}, local, odd, { pluginConfigs: [] }])).toEqual(['promptToMainChat', 'effort', 'saveRounds']);
   });
