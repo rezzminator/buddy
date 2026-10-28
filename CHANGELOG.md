@@ -4,7 +4,20 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 
 ## [Unreleased]
 
+### Changed
 - Installs as `buddy@professor` from the professor marketplace; the repo's own marketplace file is gone.
+- The level logs are now written by the shared plugin-log library, vendored as `plugins/buddy/src/plugin-log.ts`; their rows, files and directory are unchanged. A level file past 20 MiB now keeps five generations (`.1` newest to `.5`) instead of one, appends take a lock so two sessions never rotate the same file twice, and rows a failed write could not append are kept for the next flush instead of dropped.
+- `buddy.log` moved into buddy's plugin log directory, beside the level logs: `$PLUGIN_LOG_DIR/buddy/buddy.log` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/buddy/logs/buddy.log`. `npm run audit` reads it there. `/buddy log` shows the new path.
+
+### Removed
+- The `logFile` option. A config file still naming it gets one warning, `option logFile ignored: removed; buddy.log is in $PLUGIN_LOG_DIR/buddy, else ~/.local/state/buddy/logs`, and its value is never applied.
+
+### Fixed
+- Warning and info diagnostics no longer reach the screen when the plugin log is off or failing; they go to their level files, or nowhere while the log cannot be written. The screen shows only errors, and one line per failing streak of a log, said again only after a write succeeds.
+- A `buddy.log` write that keeps failing says so once per failing streak instead of at every flush; every error record it held still reaches the screen.
+
+### Migration
+- Remove `logFile` from `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json`. The file now lives at `$PLUGIN_LOG_DIR/buddy/buddy.log`, else `~/.local/state/buddy/logs/buddy.log`, and no option moves it. An old `buddy.log` (by default `$CLAUDE_CONFIG_DIR/buddy/buddy.log`, else `~/.claude/buddy/buddy.log`) stays where it was: delete it, or total it with `npm run audit -- {path}`.
 
 ## [3.0.1] — 2026-10-27
 

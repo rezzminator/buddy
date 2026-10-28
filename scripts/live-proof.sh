@@ -27,7 +27,7 @@
 #   (k) a /buddy question while a main turn runs (`sleep 15` via Bash) is
 #       answered at once, before that turn ends, and a second immediate ask
 #       gets a visible outcome: refused out loud, or asked
-#   (l) the plugin log (logFile set to this run's folder) holds the ask's
+#   (l) the plugin log (PLUGIN_LOG_DIR set to this run's folder) holds the ask's
 #       start and its answered outcome, and /buddy log prints its path and lines
 # Prints a table, one row per check, and exits 1 when any check fails,
 # 2 when the session could not be driven (no transcript, a turn timed out).
@@ -55,7 +55,7 @@ WORK=$RUN/work
 mkdir -p "$WORK"
 # Only a test runner's output reacts as a test: (e) runs `npm test` here, which prints a pass summary.
 printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
-live_buddy_config "{ \"commentAfterEachTurn\": false, \"suggestNextPrompt\": false, \"walkOverPromptBar\": true, \"logLevel\": \"debug\", \"logFile\": \"$RUN/buddy.log\" }"
+live_buddy_config "{ \"commentAfterEachTurn\": false, \"suggestNextPrompt\": false, \"walkOverPromptBar\": true, \"logLevel\": \"debug\" }"
 ID=$(uuidgen | tr 'A-Z' 'a-z')
 live_isolate
 T="tmux -L buddy-proof"
@@ -267,17 +267,17 @@ got=$(answered); v=$?
 sleep 3
 mem=$([ -n "$MEM" ] && jq -r --arg d "$DEFAULT" '.blocks[]?.characters[$d][]? | select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")"' "$MEM" 2>&1)
 a1=$(grep -F 'do you like yourself? -> ' <<<"$mem" | tail -1 | sed 's/.* -> //')
-route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "\($o.outcome // "none") in \($o.ms // "-") ms"' "$RUN/buddy.log" 2>&1)
+route=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last) as $o | "\($o.outcome // "none") in \($o.ms // "-") ms"' "$RUN/logs/buddy/buddy.log" 2>&1)
 # The answer came before the main turn ended: by the log, its answered outcome
 # precedes the turn's end (turn.call or turn.skipped, logged at every main turn end).
-for _ in $(seq 1 60); do jq -e -s 'any(.[]; .event == "turn.call" or .event == "turn.skipped")' "$RUN/buddy.log" >/dev/null 2>&1 && [ "$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then 0 else ([.[] | select((.event == "turn.call" or .event == "turn.skipped") and .ts > $a)] | length) end' "$RUN/buddy.log" 2>/dev/null)" -gt 0 ] && break; sleep 0.5; done
-ended=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then "no answer" elif any(.[]; (.event == "turn.call" or .event == "turn.skipped") and .ts > $a) then "no" else "yes" end' "$RUN/buddy.log" 2>&1)
+for _ in $(seq 1 60); do jq -e -s 'any(.[]; .event == "turn.call" or .event == "turn.skipped")' "$RUN/logs/buddy/buddy.log" >/dev/null 2>&1 && [ "$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then 0 else ([.[] | select((.event == "turn.call" or .event == "turn.skipped") and .ts > $a)] | length) end' "$RUN/logs/buddy/buddy.log" 2>/dev/null)" -gt 0 ] && break; sleep 0.5; done
+ended=$(jq -r -s '([.[] | select(.event == "ask.outcome" and .outcome != "refused")] | last | .ts) as $a | if $a == null then "no answer" elif any(.[]; (.event == "turn.call" or .event == "turn.skipped") and .ts > $a) then "no" else "yes" end' "$RUN/logs/buddy/buddy.log" 2>&1)
 echo "$out / $out2 / $got / $a1 / turn ended first: $ended / $route" > "$RUN/k.txt"
 if grep -q 'Asked' <<<"$out" && [ -n "$a1" ] && [ "$a1" != "(no answer)" ] && [ "$ended" = no ] && grep -q '^answered' <<<"$route"; then add "(k) a question during a busy main turn: answered before the turn ends" PASS "$a1 ($route)"; else add "(k) a question during a busy main turn: answered before the turn ends" FAIL "$out / ${a1:-not in chatTurnsToRead} / turn ended first: $ended / $route"; fi
 if grep -q 'still thinking about your last question' <<<"$out2" || { grep -q 'Asked' <<<"$out2" && [ $v -eq 0 ]; }; then add "(k) a second immediate ask: a visible outcome" PASS "$out2 / bubble: $got"; else add "(k) a second immediate ask: a visible outcome" FAIL "${out2:-no reply} / $got"; fi
 for _ in $(seq 1 60); do sleep 0.5; f=$(transcript); jq -e 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | select(.text|contains("K1"))' "$f" >/dev/null 2>&1 && break; done
 # (l) The plugin log: this run's file, the ask's start and outcome.
-BLOG=$RUN/buddy.log
+BLOG=$RUN/logs/buddy/buddy.log
 if [ -s "$BLOG" ] && jq -e -s 'any(.[]; .event == "ask.start") and any(.[]; .event == "ask.outcome" and .outcome == "answered")' "$BLOG" >/dev/null 2>&1; then
   add "(l) the log holds the ask's start and outcome" PASS "$(jq -r -s '[.[] | select(.event == "ask.outcome")] | map("\(.outcome) \(.ms)ms") | join(", ")' "$BLOG")"
 else add "(l) the log holds the ask's start and outcome" FAIL "$(tail -c 200 "$BLOG" 2>&1)"; fi

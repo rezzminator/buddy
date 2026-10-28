@@ -5,7 +5,6 @@
 // default is used for it; the valid keys still apply.
 
 import { isMainLoop } from './brain.ts';
-import { configDir, type ConfigEnv } from './config-source.ts';
 import { LOG_LEVELS, type LogLevel } from './log.ts';
 import { CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX } from './chatTurnsToRead.ts';
 import { AMBIGUOUS_CHARACTER_WIDTHS, type AmbiguousCharacterWidth } from './width.ts';
@@ -40,13 +39,16 @@ export type Options = {
   chatTurnsToRead: number;
   /** The plugin log's level: error, info or debug. */
   logLevel: LogLevel;
-  /** The plugin log's file, `~` and `$CLAUDE_CONFIG_DIR` not yet expanded (logPath); '' = no log file (errors still go to the debug log). */
-  logFile: string;
   /** Each round (one main-chat turn, and every model call the buddy made after it, verbatim) is written as its own file into the chat's own folder, beside its transcript (src/chatFolder.ts). */
   saveRounds: boolean;
   /** How many columns an East Asian ambiguous-width character takes: narrow 1, wide 2. */
   ambiguousCharacterWidth: AmbiguousCharacterWidth;
   errors: string[];
+};
+
+/** Options a release removed: a config file still naming one is told why, by name. */
+const REMOVED: Record<string, string> = {
+  logFile: 'removed; buddy.log is in $PLUGIN_LOG_DIR/buddy, else ~/.local/state/buddy/logs',
 };
 
 export const DEFAULTS: Omit<Options, 'errors'> = {
@@ -62,7 +64,6 @@ export const DEFAULTS: Omit<Options, 'errors'> = {
   promptWhenIdle: false,
   chatTurnsToRead: CHAT_TURNS_TO_READ_DEFAULT,
   logLevel: 'info',
-  logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log',
   saveRounds: true,
   ambiguousCharacterWidth: 'narrow',
 };
@@ -146,7 +147,7 @@ export function staleOptionsWarning(keys: readonly string[], path: string): stri
 export function resolveOptions(raw: Record<string, unknown>, fileErrors: readonly string[] = []): Options {
   const { o, problems } = resolve(raw);
   const shown = (p: Problem) => `option ${p.key} ignored: ${p.why}${p.kept ? `; ${p.kept}` : ''}`;
-  const unknown = Object.keys(raw).filter((k) => !Object.hasOwn(DEFAULTS, k)).map((key) => ({ key, why: 'not a buddy option' }));
+  const unknown = Object.keys(raw).filter((k) => !Object.hasOwn(DEFAULTS, k)).map((key) => ({ key, why: Object.hasOwn(REMOVED, key) ? REMOVED[key]! : 'not a buddy option' }));
   o.errors = [...fileErrors, ...[...problems, ...unknown].map(shown)];
   return o;
 }
@@ -165,7 +166,7 @@ function resolve(raw: Record<string, unknown>): { o: Options; problems: Problem[
   const o: Options = { ...DEFAULTS, errors: [] };
   const problems: Problem[] = [];
   const bad = (key: string, why: string, kept?: string) => problems.push({ key, why, kept });
-  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, promptToMainChat, promptWhenIdle, chatTurnsToRead, logLevel, logFile, saveRounds, ambiguousCharacterWidth } = raw;
+  const { character, customCharactersDir, walkOverPromptBar, commentAfterEachTurn, model, effort, secondsBetweenComments, suggestNextPrompt, promptToMainChat, promptWhenIdle, chatTurnsToRead, logLevel, saveRounds, ambiguousCharacterWidth } = raw;
   if (character !== undefined && character !== '') {
     if (typeof character === 'string') o.character = character.trim().toLowerCase();
     else bad('character', 'not a string');
@@ -234,11 +235,6 @@ function resolve(raw: Record<string, unknown>): { o: Options; problems: Problem[
     if ((AMBIGUOUS_CHARACTER_WIDTHS as readonly string[]).includes(w)) o.ambiguousCharacterWidth = w as AmbiguousCharacterWidth;
     else bad('ambiguousCharacterWidth', `${JSON.stringify(ambiguousCharacterWidth)} is not narrow or wide`);
   }
-  // Unlike the others, an empty logFile means something: no log file.
-  if (logFile !== undefined) {
-    if (typeof logFile === 'string') o.logFile = logFile.trim();
-    else bad('logFile', 'not a string');
-  }
   return { o, problems };
 }
 
@@ -266,24 +262,6 @@ export function observeEffort(recorded: ObservedEffort, step: { turnId: string; 
 export function resolveEffort(option: Effort | typeof INHERIT, observed: ObservedEffort): Effort | undefined {
   if (option !== INHERIT) return option;
   return typeof observed === 'string' && (EFFORTS as readonly string[]).includes(observed) ? observed : undefined;
-}
-
-/** Stands for Claude Code's config folder at the start of logFile: CLAUDE_CONFIG_DIR, or ~/.claude when it is unset. */
-export const CONFIG_DIR_TOKEN = '$CLAUDE_CONFIG_DIR';
-
-/**
- * Where the plugin log goes: '' for no file; a leading `$CLAUDE_CONFIG_DIR`
- * is the config folder, as Claude Code resolves it, so accounts never share
- * the default log; a leading `~` is HOME; any other path as given.
- */
-export function logPath(logFile: string, env: ConfigEnv): { path: string } | { error: string } {
-  if (logFile === CONFIG_DIR_TOKEN || logFile.startsWith(`${CONFIG_DIR_TOKEN}/`)) {
-    const dir = configDir(env);
-    return dir === null ? { error: `no log file: neither CLAUDE_CONFIG_DIR nor HOME is set to place ${logFile}` } : { path: dir + logFile.slice(CONFIG_DIR_TOKEN.length) };
-  }
-  if (!logFile.startsWith('~')) return { path: logFile };
-  const path = expandHome(logFile, env.HOME);
-  return path.startsWith('~') ? { error: `no HOME to expand ${logFile}` } : { path };
 }
 
 /** `~` or `~/...` against the home directory; anything else as given. */

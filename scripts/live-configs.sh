@@ -2,7 +2,7 @@
 # Live configuration proof: five real Claude Code sessions (the main chat on
 # Haiku) with this checkout loaded by --plugin-dir, two user turns each (S1 three), the
 # buddy options pinned per session (model opus, effort low, logLevel debug,
-# logFile in the session's folder, always), every turn measured:
+# buddy.log in the session's folder through PLUGIN_LOG_DIR, always), every turn measured:
 #   S1 defaults (commentAfterEachTurn, suggestNextPrompt, chatTurnsToRead 4): after each turn commentAfterEachTurn
 #      shows in the bubble and suggestNextPrompt in the prompt box; a /buddy question is
 #      answered, and a second one referring to it is answered from chatTurnsToRead; a third
@@ -48,9 +48,9 @@ options_of() {
     S5) jq -n --arg d "$RUN/chars" '{ customCharactersDir: $d, character: "broken" }' ;;
   esac
 }
-lines() { [ -f "$RUN/buddy.log" ] && wc -l < "$RUN/buddy.log" | tr -d ' ' || echo 0; }
+lines() { [ -f "$RUN/logs/buddy/buddy.log" ] && wc -l < "$RUN/logs/buddy/buddy.log" | tr -d ' ' || echo 0; }
 # How many records of event $1 the log holds from line $2 on.
-count() { tail -n +"$(($2 + 1))" "$RUN/buddy.log" 2>/dev/null | jq -c --arg e "$1" 'select(.event == $e)' 2>/dev/null | grep -c .; }
+count() { tail -n +"$(($2 + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -c --arg e "$1" 'select(.event == $e)' 2>/dev/null | grep -c .; }
 check() { printf '%s\t%s\t%s\n' "$1" "$2" "${3//$'\t'/ }" >> "$RUN/checks.tsv"; [ "$1" = PASS ] || log "FAIL $2: $3"; }
 # The newest `question` exchange of this session's chatTurnsToRead in its memory.json, or the newest endOfTurn exchange's `commentAfterEachTurn` or `suggestNextPrompt`; nothing when none.
 stored() { local s; s=$(memory_file); [ -n "$s" ] && jq -r --arg f "$1" '[.blocks[]?.characters[]?[]? | if $f == "question" then select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")" else select(.kind == "endOfTurn") | .[$f] // empty end] | last // empty' "$s" 2>/dev/null; }
@@ -66,7 +66,7 @@ suggestion_after() { local s; s=$(memory_file); [ -n "$s" ] && jq -r --arg m "$1
 
 # One turn's metrics row from the log records since line $2 (node: JSON and ISO dates).
 metrics() {
-  node --input-type=module - "$RUN/buddy.log" "$2" "$S" "$1" "$3" "$4" "$5" "$6" >> "$RUN/turns.jsonl" <<'JS'
+  node --input-type=module - "$RUN/logs/buddy/buddy.log" "$2" "$S" "$1" "$3" "$4" "$5" "$6" >> "$RUN/turns.jsonl" <<'JS'
 import { readFileSync } from 'node:fs';
 const [log, from, session, turn, endTs, bubble, paneMatch, suggestNextPromptSeen] = process.argv.slice(2);
 let recs = [];
@@ -109,15 +109,15 @@ turn() {
   # The turn's own records: turn.call (then its outcomes) or turn.skipped, 45 s at most (the call's deadline is 30 s).
   t0=$SECONDS
   while [ $((SECONDS - t0)) -lt 45 ]; do
-    want_commentAfterEachTurn=$(tail -n +"$((from + 1))" "$RUN/buddy.log" 2>/dev/null | jq -r 'select(.event == "turn.call") | .commentAfterEachTurn' | tail -1)
-    want_suggestNextPrompt=$(tail -n +"$((from + 1))" "$RUN/buddy.log" 2>/dev/null | jq -r 'select(.event == "turn.call") | .suggestNextPrompt' | tail -1)
+    want_commentAfterEachTurn=$(tail -n +"$((from + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -r 'select(.event == "turn.call") | .commentAfterEachTurn' | tail -1)
+    want_suggestNextPrompt=$(tail -n +"$((from + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -r 'select(.event == "turn.call") | .suggestNextPrompt' | tail -1)
     if [ -n "$want_commentAfterEachTurn" ]; then
       { [ "$want_commentAfterEachTurn" != true ] || [ "$(count commentAfterEachTurn.outcome "$from")" -gt 0 ]; } && { [ "$want_suggestNextPrompt" != true ] || [ "$(count suggestNextPrompt.outcome "$from")" -gt 0 ]; } && break
     elif [ "$(count turn.skipped "$from")" -gt 0 ]; then break; fi
     sleep 0.5
   done
   commentAfterEachTurn_text=$(stored commentAfterEachTurn | squash); suggestNextPrompt_text=$(stored suggestNextPrompt | squash)
-  commentAfterEachTurn_outcome=$(tail -n +"$((from + 1))" "$RUN/buddy.log" 2>/dev/null | jq -r 'select(.event == "commentAfterEachTurn.outcome") | .outcome' | tail -1)
+  commentAfterEachTurn_outcome=$(tail -n +"$((from + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -r 'select(.event == "commentAfterEachTurn.outcome") | .outcome' | tail -1)
   if [ "$commentAfterEachTurn_outcome" = answered ] && [ -n "$commentAfterEachTurn_text" ]; then
     t0=$SECONDS
     while [ $((SECONDS - t0)) -lt 15 ]; do
@@ -172,7 +172,7 @@ run_session() {
     for n in $(seq 1 150); do f=$ROUNDS/$(printf 'round-%03d.txt' "$n"); echo "seeded $n" > "$f"; touch -t 202601020000 "$f"; done
   fi
   if [ "$S" = S5 ]; then mkdir -p "$RUN/chars"; printf '%s\n' '{ "name": "Broken", "poses": 3 }' > "$RUN/chars/broken.json"; fi
-  live_buddy_config "$(jq -n --arg log "$RUN/buddy.log" --argjson o "$(options_of "$S")" '{ model: "opus", effort: "low", logLevel: "debug", logFile: $log } + $o')"
+  live_buddy_config "$(jq -n --argjson o "$(options_of "$S")" '{ model: "opus", effort: "low", logLevel: "debug" } + $o')"
   pool_of duck thinking > "$RUN/thinking.pool"
   [ -s "$RUN/thinking.pool" ] || printf '%s\n' 'Let me think...' 'Hmm...' 'One moment...' > "$RUN/thinking.pool"
   rows_of duck > "$RUN/duck.rows"
@@ -187,10 +187,10 @@ run_session() {
       --plugin-dir "$PLUGIN" --resume "$ID" "Reply with exactly: S4T2" < /dev/null > "$RUN/p2.txt" 2>&1) || { echo "ERROR claude -p --resume exited $?: $(head -c 200 "$RUN/p2.txt")" >&2; exit 2; }
     end=$(reply_ts S4T2); metrics S4T2 "$from" "$end" "" "" ""
     grep -q S4T1 "$RUN/p1.txt" && grep -q S4T2 "$RUN/p2.txt" || { echo "ERROR a -p reply lacks its marker: $(head -c 80 "$RUN/p1.txt") / $(head -c 80 "$RUN/p2.txt")" >&2; exit 2; }
-    f1=$(jq -c -s '[.[] | select(.event == "turn.skipped" and .why == "headless")] | length' "$RUN/buddy.log" 2>&1)
-    f2=$(jq -r -s '[.[] | select(.event | test("^(turn\\.call|turn\\.settings|turn\\.prompt|ask\\.settings|ask\\.start)$")) | .event] | join(",")' "$RUN/buddy.log" 2>&1)
+    f1=$(jq -c -s '[.[] | select(.event == "turn.skipped" and .why == "headless")] | length' "$RUN/logs/buddy/buddy.log" 2>&1)
+    f2=$(jq -r -s '[.[] | select(.event | test("^(turn\\.call|turn\\.settings|turn\\.prompt|ask\\.settings|ask\\.start)$")) | .event] | join(",")' "$RUN/logs/buddy/buddy.log" 2>&1)
     [ "$f1" = 2 ] && check PASS "two turns skipped, why headless" "turn.skipped headless x$f1" || check FAIL "two turns skipped, why headless" "turn.skipped headless x${f1:-none}"
-    [ -z "$f2" ] && [ -s "$RUN/buddy.log" ] && check PASS "no model call from the plugin" "no turn.call/turn.settings/ask.settings/ask.start record" || check FAIL "no model call from the plugin" "${f2:-the log is empty}"
+    [ -z "$f2" ] && [ -s "$RUN/logs/buddy/buddy.log" ] && check PASS "no model call from the plugin" "no turn.call/turn.settings/ask.settings/ask.start record" || check FAIL "no model call from the plugin" "${f2:-the log is empty}"
     return 0
   fi
 

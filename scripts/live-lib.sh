@@ -66,7 +66,7 @@ live_isolate() {
   cat > "$LIVE_CLAUDE" <<LAUNCH
 #!/bin/sh
 exec env -i HOME="\$HOME" PATH="$LIVE_PATH" TERM="\${TERM:-xterm-256color}" COLORTERM="\${COLORTERM:-truecolor}" LANG="\${LANG:-en_US.UTF-8}" TMPDIR="\${TMPDIR:-/tmp}" \\
-  CLAUDE_CONFIG_DIR="$LIVE_CONFIG" XDG_CONFIG_HOME="$RUN/xdg" CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 $token_arg \\
+  CLAUDE_CONFIG_DIR="$LIVE_CONFIG" XDG_CONFIG_HOME="$RUN/xdg" PLUGIN_LOG_DIR="$RUN/logs" CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 $token_arg \\
   '$CLAUDE_BIN' "\$@"
 LAUNCH
   chmod 700 "$LIVE_CLAUDE"
@@ -102,7 +102,7 @@ live_boot() {
     fi
     if grep -q -E 'Enter to confirm' <<<"$pane"; then $T send-keys -t "$TGT" Enter; log "confirm accepted"; sleep 3; continue; fi
     # The prompt glyph is followed by a space or a no-break space (U+00A0), as Claude Code draws it.
-    if grep -q -E $'^ *(>|❯)( |\xc2\xa0)' <<<"$pane" && grep -q '"event":"session.start"' "$RUN/buddy.log" 2>/dev/null; then return 0; fi
+    if grep -q -E $'^ *(>|❯)( |\xc2\xa0)' <<<"$pane" && grep -q '"event":"session.start"' "$RUN/logs/buddy/buddy.log" 2>/dev/null; then return 0; fi
   done
   pane > "$RUN/boot-timeout.txt"
   echo "ERROR no ready buddy prompt in 30 s; pane in $RUN/boot-timeout.txt" >&2

@@ -23,7 +23,7 @@ live_isolate
 jq --arg w "$WORK" '.projects[$w] = { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true }' \
   "$LIVE_CONFIG/.claude.json" > "$RUN/claude.json" && mv "$RUN/claude.json" "$LIVE_CONFIG/.claude.json"
 
-live_buddy_config "$(jq -n --arg log "$RUN/buddy.log" '{ character: "terry", model: "sonnet", effort: "low", logFile: $log }')"
+live_buddy_config "$(jq -n '{ character: "terry", model: "sonnet", effort: "low" }')"
 
 cat > "$WORK/package.json" <<'EOF'
 { "name": "demo-app", "private": true, "type": "module", "scripts": { "test": "node --test" } }

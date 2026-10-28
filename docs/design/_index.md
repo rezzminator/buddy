@@ -53,7 +53,7 @@ flowchart LR
 
 ## What persists
 
-`$.store` survives `/reload` and restarts. The buddy's memory of each chat (`memory.json`: the turns, the memory items, the ended ones and each live rule's `strikes`; and `memory.md` beside it for you to read) and its round files (`saveRounds`) are kept in the chat's own folder beside its transcript ([chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept)); the only other file written is the plugin log (`logFile`, [Verification](./verification.md#logging)).
+`$.store` survives `/reload` and restarts. The buddy's memory of each chat (`memory.json`: the turns, the memory items, the ended ones and each live rule's `strikes`; and `memory.md` beside it for you to read) and its round files (`saveRounds`) are kept in the chat's own folder beside its transcript ([chatTurnsToRead](./chatTurnsToRead.md#where-it-is-kept)); the only other files written are the plugin logs (`buddy.log` and the level files in `$PLUGIN_LOG_DIR/buddy`, else `~/.local/state/buddy/logs`, [Verification](./verification.md#logging)).
 
 | Key | Holds | Written by |
 | --- | --- | --- |

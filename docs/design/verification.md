@@ -27,7 +27,7 @@ The hook tests and the validation need `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, as
 The script drives a real, interactive Claude Code session and reads the screen.
 
 - **The session.** tmux on a private socket (`-L buddy-proof`), a 160 × 50 window, never your own tmux server. The real Claude binary (`CLAUDE_BIN`, else `claude` resolved past a text wrapper), with `--model haiku --setting-sources project --allowedTools Bash --plugin-dir plugins/buddy`, a fresh `--session-id`, and function hooks on.
-- **The options.** A settings file pins them under `buddy@inline`, the id a `--plugin-dir` copy reads: `commentAfterEachTurn: false`, `suggestNextPrompt: false`, `walkOverPromptBar: true`, `logLevel: debug`, and `logFile` in the run folder.
+- **The options.** The run's config file (`$RUN/xdg/buddy/config.json`, `live_buddy_config`) pins them: `commentAfterEachTurn: false`, `suggestNextPrompt: false`, `walkOverPromptBar: true`, `logLevel: debug`; the launcher sets `PLUGIN_LOG_DIR` to `$RUN/logs`, so the log is the run's `logs/buddy/buddy.log`.
 - **The boot.** The trust dialog defaults to "No, exit", so the script presses Down until the next capture shows Yes selected, then Enter; the session is up once the prompt glyph shows, followed by a space or the no-break space Claude Code draws, and the plugin log records `session.start`, after buddy registers its command. The script reads a fresh pane after dismissing each dialog and stops with exit 2 if buddy is not ready within 30 seconds.
 - **The helpers.** `scripts/live-lib.sh` holds what both live scripts use: the binary, the run's own config dir (`live_isolate`), the boot, the pane, the bubble, the transcript's replies, and sending a prompt or a command.
 - **What it reads.** What is drawn, from the pane (`tmux capture-pane`). The art to look for, from the characters' own JSON: rows of four or more visible characters, and for a second character only rows the duck lacks. The bubble, as the text between the round border's bars. Each command's reply, from the session transcript's `<local-command-stdout>`, so a reply is read as data, not scraped.
@@ -65,7 +65,7 @@ The test-pass row waits 16 seconds for the preceding model answer's 15-second bu
 | (j) the chat's memory.json holds this session's chatTurnsToRead | nothing; `projects/*/{session}/buddy/memory.json` in the run's config dir is read | it holds both questions among its blocks' `characters.duck` exchanges, no `thinking` filler |
 | (k) a question during a busy main turn | a prompt that runs `sleep 8` via Bash, then replies `K1`; `/buddy do you like yourself?` during it | the reply says `Asked`; the answer arrives before the main turn's `K1` reply, and the last outcome in the log is `answered` |
 | (k) a second immediate ask | `/buddy say ack` right after | its reply refuses out loud (`still thinking about your last question`) or says `Asked` |
-| (l) the log holds the ask | nothing; the run's `buddy.log` (the proof sets `logFile` into its run folder, `logLevel` debug) is read | an `ask.start` and an `ask.outcome` answered |
+| (l) the log holds the ask | nothing; the run's `logs/buddy/buddy.log` (the launcher sets `PLUGIN_LOG_DIR` into its run folder, `logLevel` debug) is read | an `ask.start` and an `ask.outcome` answered |
 | (l) `/buddy log` | `/buddy log` | the reply names the run's log path and holds JSON lines |
 
 ### Why there is no fake HOME
@@ -78,7 +78,7 @@ The hook tests prove that path instead, with an invented `~/.claude.json` and ba
 ## The live configuration proof
 
 `scripts/live-configs.sh` proves the buddy per configuration and measures every turn.
-Each session is the live proof's (the helpers in `scripts/live-lib.sh`, the main chat on Haiku, `--plugin-dir plugins/buddy`), on its own tmux socket (`-L buddy-cfg-{S}`) and folder, three at once at most; the options always pin `model: opus`, `effort: low`, `logLevel: debug` and `logFile` in the session's folder.
+Each session is the live proof's (the helpers in `scripts/live-lib.sh`, the main chat on Haiku, `--plugin-dir plugins/buddy`), on its own tmux socket (`-L buddy-cfg-{S}`) and folder, three at once at most; the options always pin `model: opus`, `effort: low`, `logLevel: debug`, and `PLUGIN_LOG_DIR` puts `buddy.log` in the session's folder.
 Each session sends two prompts (one running `ls` via Bash, one plain reply), waits for the reply in the transcript, then for the end-of-turn records (`turn.call` and its outcomes, or `turn.skipped`), 45 seconds at most.
 
 | Session | Options | Passes when |
@@ -97,9 +97,9 @@ A metric no record carried is `unread`, never a zero. The run folder `/tmp/buddy
 ## Logging
 
 The plugin log is for debugging a live session: `src/log.ts` queues one JSON line per record, `{ts, level, event, session?, character?, ...fields}`, and the adapter writes the queue through the calling hook's `$.fs` (a hook's `$` is never kept).
-`logLevel` (`error`, `info` or `debug`; default `info`) sets what is written, and `logFile` where: by default `$CLAUDE_CONFIG_DIR/buddy/buddy.log` when `CLAUDE_CONFIG_DIR` is set, else `~/.claude/buddy/buddy.log`; a path set in the option is used as written, `~` expanded to HOME and a leading `$CLAUDE_CONFIG_DIR` to the config folder; empty for no file.
-`$.fs` has no append, so each flush writes the whole file, reads it back and puts back records another session wrote over, up to `WRITE_ATTEMPTS` (3) tries; a loss the re-read sees is reported on the fallback (`the log {file} lost N records to another writer at the same time`), never dropped silently; past 1 MB the file is archived whole to the next free `{logFile}.N` (1, 2, 3, …), none overwritten: the cap bounds what one flush reads and writes back, never what is kept.
-A failed write goes to the transcript (`$.ui.log`, its default target) with every error record in it, and never throws into a hook; an empty `logFile` writes no file and errors still reach the transcript.
+`logLevel` (`error`, `info` or `debug`; default `info`) sets what is written; the file is `buddy.log` in the plugin log directory, `$PLUGIN_LOG_DIR/buddy` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/buddy/logs` (`pluginLogDir` of `src/plugin-log.ts`); with neither `PLUGIN_LOG_DIR` nor `HOME`, no file.
+`$.fs` has no append, so each flush writes the whole file, reads it back and puts back records another session wrote over, up to `WRITE_ATTEMPTS` (3) tries; a loss the re-read sees is reported on the fallback (`the log {file} lost N records to another writer at the same time`), never dropped silently; past 1 MB the file is archived whole to the next free `buddy.log.N` (1, 2, 3, …), none overwritten: the cap bounds what one flush reads and writes back, never what is kept.
+A failed write goes to the transcript (`$.ui.log`, its default target) once per failing streak, said again only after a write lands, with every error record in it each time, and never throws into a hook; with no file, errors still reach the transcript.
 
 | Level | Adds |
 | --- | --- |

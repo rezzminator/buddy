@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, notice, sumUsage, superseded, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
+import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, eventId, failureEvent, infoEvent, notice, pluginLogDetail, sumUsage, superseded, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
 
 function disk(refuse = false) {
   const files: Record<string, string> = {};
@@ -100,6 +100,22 @@ describe('Logger', () => {
     expect(d.fallback[0]).toBe('writing the log /l/b.log failed: EACCES: /l/b.log');
     expect(d.fallback[1]).toMatch(/^\{.*"event":"reading x".*"message":"nope"/);
     expect(d.fallback).toHaveLength(2);
+  });
+
+  test('a failing write says so once per failing streak, again only after a write succeeds', async () => {
+    const d = disk();
+    let refuse = true;
+    const io: LogIO = { ...d.io, write: async (p, t) => { if (refuse) throw new Error(`EACCES: ${p}`); await d.io.write(p, t); } };
+    const L = new Logger('info', '/l/b.log');
+    const failures = () => d.fallback.filter((l) => l.startsWith('writing the log '));
+    for (let i = 0; i < 3; i++) { L.log('info', `lost ${i}`); await L.flush(io); }
+    expect(failures()).toEqual(['writing the log /l/b.log failed: EACCES: /l/b.log']);
+    refuse = false;
+    L.log('info', 'kept'); await L.flush(io);
+    refuse = true;
+    L.log('info', 'lost again'); await L.flush(io);
+    expect(failures()).toHaveLength(2);
+    expect(d.fallback.every((l) => l.startsWith('writing the log '))).toBe(true);
   });
 
   test('a fallback that throws never kills the log: a later flush still writes, and flush never throws', async () => {
@@ -232,4 +248,22 @@ describe('sumUsage', () => {
     await L.flush(d.io);
     expect(d.files['/logs/b.log']).toContain('"event":"still"');
   });
+});
+
+describe('plugin log rows', () => {
+  test.each([
+    ['option.warning', 'option-warning'], ['promptToMainChat.dropped', 'prompt-to-main-chat-dropped'],
+    ['writing memory.md', 'writing-memory-md'], ['session-id-unreadable', 'session-id-unreadable'],
+  ])('eventId normalizes %s', (input, expected) => expect(eventId(input)).toBe(expected));
+  test.each([
+    ['writing memory.md', 'writing-memory-failed'], ['drawing the band', 'drawing-the-band-failed'],
+  ])('failure event for %s', (what, expected) => expect(failureEvent(what)).toBe(expected));
+  test('only approved scalar diagnostic details cross the adapter', () => {
+    expect(pluginLogDetail({ id: 'duck', count: 2, file: '/f', error: 'denied', outcome: 'refused', prompt: 'private prompt', text: 'private answer', toolInput: { body: 'private' }, env: { SECRET: 'private' }, reason: { body: 'private' }, length: 10 })).toEqual({ id: 'duck', count: 2, file: '/f', error: 'denied', outcome: 'refused', length: 10 });
+  });
+  test.each([
+    ['character.switch', {}, true], ['promptToMainChat.dropped', {}, true], ['drawer.open', {}, true],
+    ['ask.outcome', { outcome: 'refused' }, true], ['roster.load', {}, false], ['turn.numbers', {}, false],
+    ['memory.op', {}, false], ['call.cost', {}, false], ['session.start', {}, false],
+  ] as const)('info policy for %s', (event, detail, expected) => expect(infoEvent(event, detail)).toBe(expected));
 });
