@@ -69,9 +69,9 @@ describe('the tally', () => {
     countToolCall(t, call('Bash', { command: 'echo "git commit" is how' }));
     countToolCall(t, call('Bash', { command: 'git log --oneline' }));
     countToolCall(t, call('WebFetch', { url: 'https://example.com' }));
-    countToolCall(t, call('mcp__harvester-professor__read'));
+    countToolCall(t, call('mcp__harvester__read'));
     countToolCall(t, call('mcp__playwright__browser_click', {}));
-    countToolCall(t, call('mcp__chat-professor__ls'));
+    countToolCall(t, call('mcp__chat__ls'));
     const s = closeTally(t, { ms: 0 }, null, null);
     expect(s.tests).toEqual({ passed: 1, failed: 1, seq: 'pf' });
     // A commit in a quoted string, and a log, are no commits.
@@ -159,7 +159,7 @@ describe('the line the model reads', () => {
   test('one push past zero commits; an MCP tool by its own name', () => {
     expect(renderStats({ ms: 0, tools: { Read: 1 }, git: { commits: 0, pushes: 2 } })).toBe('Numbers: 0s · 1 tool call (Read 1) · 2 pushes');
     // An MCP tool by its own name, its server dropped.
-    expect(renderStats({ ms: 0, tools: { 'mcp__chat-professor__new': 2, 'mcp__chat-professor__call': 1, 'mcp__harvester-professor__read': 1, mcp__x: 1 } })).toBe('Numbers: 0s · 5 tool calls (new 2, call 1, read 1, mcp__x 1)');
+    expect(renderStats({ ms: 0, tools: { 'mcp__chat__new': 2, 'mcp__chat__call': 1, 'mcp__harvester__read': 1, mcp__x: 1 } })).toBe('Numbers: 0s · 5 tool calls (new 2, call 1, read 1, mcp__x 1)');
   });
 
   test('the drawer\'s brief: its time, its tool calls, its cost, else its tokens', () => {
@@ -196,8 +196,8 @@ describe('stored numbers', () => {
 
 describe("a shell command's own edits", () => {
   test('its candidates: every path-like word or quoted string, against the session folder and each folder it cds into; home for ~; no flag, URL or glob', () => {
-    const c = shellTargets("cd pfm && sed -i '' s/a/b/ src/a.ts > ~/out.log; curl https://x.io/a.json; rm -f *.tmp; python3 - <<'PY'\np='docs/x.md'\nopen(p,'w')\nPY", '/w/app', '/h');
-    for (const f of ['/w/app/src/a.ts', '/w/app/pfm/src/a.ts', '/w/app/docs/x.md', '/w/app/pfm/docs/x.md', '/h/out.log']) expect(c).toContain(f);
+    const c = shellTargets("cd api && sed -i '' s/a/b/ src/a.ts > ~/out.log; curl https://x.io/a.json; rm -f *.tmp; python3 - <<'PY'\np='docs/x.md'\nopen(p,'w')\nPY", '/w/app', '/h');
+    for (const f of ['/w/app/src/a.ts', '/w/app/api/src/a.ts', '/w/app/docs/x.md', '/w/app/api/docs/x.md', '/h/out.log']) expect(c).toContain(f);
     expect(c.some((f) => f.includes('https') || f.includes('*') || f.includes('-i'))).toBe(false);
     expect(shellTargets('cat /etc/hosts ../up/b.txt', '/w/app', '/h')).toEqual(['/etc/hosts', '/w/up/b.txt']);
     expect(shellTargets('git -C sub commit -a && cat notes.md 2>/dev/null', '/w/app', '/h')).toEqual(['/w/app/notes.md', '/w/app/sub/notes.md']);
@@ -236,7 +236,7 @@ describe("a shell command's own edits", () => {
     expect([t.added, t.removed]).toEqual([5, 3]);
   });
   test('the folders a command works in: the session folder, then each it cds into or points -C at', () => {
-    expect(shellFolders('cd pfm && make; git -C ../lib status; cd ~/x', '/w/app', '/h')).toEqual(['/w/app', '/w/app/pfm', '/w/lib', '/h/x']);
+    expect(shellFolders('cd api && make; git -C ../lib status; cd ~/x', '/w/app', '/h')).toEqual(['/w/app', '/w/app/api', '/w/lib', '/h/x']);
     expect(shellFolders('python3 fix.py', '/w/app', '/h')).toEqual(['/w/app']);
   });
   test("a tree sweep's changes: size or time moved is changed; made and gone only when both sweeps were whole", () => {

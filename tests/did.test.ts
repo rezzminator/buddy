@@ -57,10 +57,10 @@ describe('a step', () => {
       [{ tool: 'Agent', description: 'Audit the diff', prompt: 'long…' }],
       [{ tool: 'Skill', skill: 'dev' }],
       [{ tool: 'WebFetch', url: 'https://example.com/a/b?c=1' }],
-      [{ tool: 'mcp__chat-professor__new', name: 'x' }],
-      [{ tool: 'mcp__chat-professor__call', target: 'x', message: 'm' }],
-      [{ tool: 'mcp__harvester-professor__read', url: 'https://example.com' }],
-      [{ tool: 'mcp__harvester-professor__search_literature', query: 'x' }],
+      [{ tool: 'mcp__chat__new', name: 'x' }],
+      [{ tool: 'mcp__chat__call', target: 'x', message: 'm' }],
+      [{ tool: 'mcp__harvester__read', url: 'https://example.com' }],
+      [{ tool: 'mcp__harvester__search_literature', query: 'x' }],
       [{ tool: 'SendMessage', to: 'gitter', message: 'm' }],
     )).toEqual(['agent: Audit the diff', 'skill dev', 'fetched example.com', 'new', 'call', 'read', 'search literature', 'messaged gitter']);
   });

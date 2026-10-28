@@ -537,7 +537,7 @@ const testRuns = (t: { passed: number; failed: number; seq?: string }): string =
 };
 /** A model id without its vendor prefix: claude-opus-5 is opus-5. */
 const modelName = (m: string): string => m.replace(/^claude-/, '');
-/** A tool by its own name, an MCP tool's server dropped: mcp__chat-professor__new is new. */
+/** A tool by its own name, an MCP tool's server dropped: mcp__chat__new is new. */
 const toolName = (t: string): string => (t.startsWith('mcp__') ? t.split('__').slice(2).join('__') || t : t);
 
 /**
