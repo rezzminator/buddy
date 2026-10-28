@@ -24,7 +24,7 @@ RUN=/tmp/buddy/drawer-$(date +%Y%m%dT%H%M%S)
 WORK=$RUN/work
 mkdir -p "$WORK"
 printf '%s\n' '{ "name": "proof", "private": true, "scripts": { "test": "echo Tests: 3 passed" } }' > "$WORK/package.json"
-live_buddy_config "{ \"commentAfterEachTurn\": true, \"suggestNextPrompt\": true, \"logLevel\": \"debug\", \"logFile\": \"$RUN/buddy.log\" }"
+live_buddy_config "{ \"commentAfterEachTurn\": true, \"suggestNextPrompt\": true, \"logLevel\": \"debug\" }"
 ID=$(uuidgen | tr 'A-Z' 'a-z')
 live_isolate
 T="tmux -L buddy-drawer"
@@ -42,14 +42,14 @@ live_boot
 
 FAILS=0
 check() { if eval "$2"; then echo "PASS $1"; else echo "FAIL $1"; FAILS=$((FAILS + 1)); fi; }
-wait_log() { for _ in $(seq 1 90); do grep -q -- "$1" "$RUN/buddy.log" 2>/dev/null && return 0; sleep 1; done; return 1; }
+wait_log() { for _ in $(seq 1 90); do grep -q -- "$1" "$RUN/logs/buddy/buddy.log" 2>/dev/null && return 0; sleep 1; done; return 1; }
 
 send "Run this Bash command: ls -a. Then reply in one short sentence about what is there."
 check "turn 1: the buddy commented" "wait_log commentAfterEachTurn.outcome"
 sleep 3
 send "Now run: npm test. Then reply with the result in five words."
-for _ in $(seq 1 90); do [ "$(grep -c commentAfterEachTurn.outcome "$RUN/buddy.log" 2>/dev/null)" -ge 2 ] && break; sleep 1; done
-check "turn 2: the buddy commented" "[ \"\$(grep -c commentAfterEachTurn.outcome '$RUN/buddy.log')\" -ge 2 ]"
+for _ in $(seq 1 90); do [ "$(grep -c commentAfterEachTurn.outcome "$RUN/logs/buddy/buddy.log" 2>/dev/null)" -ge 2 ] && break; sleep 1; done
+check "turn 2: the buddy commented" "[ \"\$(grep -c commentAfterEachTurn.outcome '$RUN/logs/buddy/buddy.log')\" -ge 2 ]"
 send "/buddy what do you make of this project so far?"
 check "the question was answered" "wait_log '\"ask.outcome\"'"
 sleep 2

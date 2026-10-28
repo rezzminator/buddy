@@ -11,7 +11,6 @@
   "promptWhenIdle": false,
   "chatTurnsToRead": 4,
   "logLevel": "info",
-  "logFile": "$CLAUDE_CONFIG_DIR/buddy/buddy.log",
   "saveRounds": true,
   "ambiguousCharacterWidth": "narrow"
 }

@@ -4,9 +4,9 @@
 // What the buddy's model calls cost, and how much of the main chat its memory
 // cut, from the `call.cost` lines the plugin logs (one per call). With no
 // files given, reads every rotated archive (buddy.log.1, buddy.log.2, ...,
-// oldest first) and then buddy.log, under $CLAUDE_CONFIG_DIR/buddy/ and
-// ~/.claude/buddy/. Prints one row per day and one per kind of call, then the
-// totals.
+// oldest first) and then buddy.log, under $PLUGIN_LOG_DIR/buddy/ when
+// PLUGIN_LOG_DIR is set, else ~/.local/state/buddy/logs/. Prints one row per
+// day and one per kind of call, then the totals.
 //
 // A call's cost is the `usd` its line logged. A line with no `usd` (the plugin
 // before it logged one) is priced by priceCall of plugins/buddy/src/prices.ts,
@@ -53,21 +53,19 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 if (files.length === 0) {
-  const dirs = [process.env.CLAUDE_CONFIG_DIR && join(process.env.CLAUDE_CONFIG_DIR, 'buddy'), join(homedir(), '.claude', 'buddy')].filter(Boolean);
-  for (const dir of [...new Set(dirs)]) {
-    let names = [];
-    try {
-      names = readdirSync(dir);
-    } catch {
-      // no such directory: nothing to read there
-    }
-    const archives = names
-      .map((n) => /^buddy\.log\.(\d+)$/.exec(n))
-      .filter((m) => m !== null)
-      .sort((a, b) => Number(a[1]) - Number(b[1]))
-      .map((m) => m[0]);
-    for (const f of [...archives, 'buddy.log']) files.push(join(dir, f));
+  const dir = process.env.PLUGIN_LOG_DIR ? join(process.env.PLUGIN_LOG_DIR, 'buddy') : join(homedir(), '.local', 'state', 'buddy', 'logs');
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    // no such directory: nothing to read there
   }
+  const archives = names
+    .map((n) => /^buddy\.log\.(\d+)$/.exec(n))
+    .filter((m) => m !== null)
+    .sort((a, b) => Number(a[1]) - Number(b[1]))
+    .map((m) => m[0]);
+  for (const f of [...archives, 'buddy.log']) files.push(join(dir, f));
 }
 
 const calls = [];

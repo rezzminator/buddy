@@ -83,10 +83,10 @@ It writes these, and nothing else:
 - **Its own Claude Code plugin state:** the picked character, the picked
   original companion's soul (its name and personality) and which install's
   roll you chose, whether it is hidden, and the drawer's conversation.
-- **The log file**, unless `logFile` is empty: by default
-  `~/.claude/buddy/buddy.log` (`$CLAUDE_CONFIG_DIR/buddy/buddy.log` when
-  `CLAUDE_CONFIG_DIR` is set; a path you set is used with `~` and a leading
-  `$CLAUDE_CONFIG_DIR` expanded). Past 1 MB it is archived whole to the next
+- **The log file** `buddy.log`, in buddy's plugin log directory:
+  `$PLUGIN_LOG_DIR/buddy` when `PLUGIN_LOG_DIR` is set, else
+  `~/.local/state/buddy/logs` (no file when neither `PLUGIN_LOG_DIR` nor
+  `HOME` is set). Past 1 MB it is archived whole to the next
   free `buddy.log.N` (`.1`, `.2`, …), none ever overwritten or deleted.
   One JSON line per record: every failure with its message and stack; at
   `info` (the default) also session starts, commands (their kind and length,
@@ -94,6 +94,11 @@ It writes these, and nothing else:
   `debug` also the question text, the first 80 characters of each model
   answer, and band decisions. It never holds your account identity or any
   content of `~/.claude.json`.
+- **The level logs** beside it, `errors.jsonl`, `warnings.jsonl` and
+  `info.jsonl` (directory 0700, files 0600; past 20 MiB moved to `.1`, five
+  generations kept): errors, warnings and actionable state changes, each row
+  its event, message and scalar details, never a prompt, an answer or a tool
+  body.
 - **The round files**, unless `saveRounds` is off (on by default): one
   text file per main-chat turn in the same chat folder as its memory,
   `round-001.txt` on, every turn kept and none ever overwritten, holding

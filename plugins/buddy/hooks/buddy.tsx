@@ -22,12 +22,12 @@ import { answerSuggestions, feedOfMemory, knownEntries, lastMessageOf, markNumbe
 import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
 import { drawerRows } from '../src/drawer.ts';
 import { callSection, capValue, eventLine, newRoundSlot, roundHead, toolLines, turnEndSection, type RoundCall } from '../src/rounds.ts';
-import { Logger, notice, sumUsage, superseded, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
-import { PluginLogQueue, eventId, failureEvent, infoEvent, levelRow, pluginLogDetail, pluginLogDir, type Level } from '../src/plugin-log.ts';
+import { Logger, eventId, failureEvent, infoEvent, notice, pluginLogDetail, sumUsage, superseded, usageFields, type LogFields, type LogIO, type LogLevel } from '../src/log.ts';
+import { PluginLogQueue, levelRow, pluginLogDir, type PluginLogLevel } from '../src/plugin-log.ts';
 import { priceCall } from '../src/prices.ts';
 import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
-import { CONFIG_FILE_SUFFIX, INHERIT, SETTINGS_SOURCES, configFilePath, expandHome, leftoverOptionKeys, logPath, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
+import { CONFIG_FILE_SUFFIX, INHERIT, SETTINGS_SOURCES, configFilePath, expandHome, leftoverOptionKeys, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
   ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, EXTENDED_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostTurnOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   sayInTurn, skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Said, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
@@ -238,7 +238,8 @@ function logIO($: EngineInterface): LogIO {
 /** Only a real process door can append with private modes and .1 rename. */
 async function runPluginLog($: EngineInterface, argv: string[]) {
   try {
-    return await $.process.run(argv, { timeoutMs: 5000 });
+    // Past the library's lock wait (LOCK_WAIT_SECONDS), so a contended append ends on its own.
+    return await $.process.run(argv, { timeoutMs: 15_000 });
   } catch (error) {
     const reason = message(error);
     if (reason === 'no implementation for process.run' || (error instanceof TypeError && /undefined|null|not a function/.test(reason))) {
@@ -248,25 +249,29 @@ async function runPluginLog($: EngineInterface, argv: string[]) {
   }
 }
 
-/** The actual fs façade only replaces text; never pretend its write is append. */
-function flushPluginLog($: EngineInterface) {
-  return pluginLog.flush((argv) => runPluginLog($, argv), (line) => logIO($).fallback(line));
+/** Writes the queued rows; the library's one line per failing streak (already naming buddy) reaches the screen. Never rejects. */
+async function flushPluginLog($: EngineInterface): Promise<void> {
+  const result = await pluginLog.flush((argv) => runPluginLog($, argv));
+  try {
+    if (result.screen) $.ui.log(result.screen);
+  } catch {
+    // The screen is the last place the line can go.
+  }
 }
 
-/** Separate level rows, without retaining a hook's engine or copying log bodies. */
-function plog($: EngineInterface, level: Level, event: string, msg: string, where: string, fields: LogFields = {}): void {
+/** Separate level rows, without retaining a hook's engine or copying log bodies; only an error reaches the screen. */
+function plog($: EngineInterface, level: PluginLogLevel, event: string, msg: string, where: string, fields: LogFields = {}): void {
   if (level === 'error') say($, msg);
   try {
     pluginLog.add(levelRow({ plugin: 'buddy', level, event: eventId(event), msg, where: `hooks/buddy.tsx#${where}`, session: L.context.session, detail: pluginLogDetail(fields) }, Date.now()));
     void flushPluginLog($);
   } catch (error) {
     logIO($).fallback(`plugin log row ${event} could not be queued: ${message(error)}`);
-    if (level !== 'error') say($, msg);
   }
 }
 
 /** One record, written now through `$`; never throws. */
-function lg($: EngineInterface, level: LogLevel, event: string, fields: LogFields = {}, pluginLevel: Level | undefined = level === 'debug' ? undefined : level, diagnosticText?: string): void {
+function lg($: EngineInterface, level: LogLevel, event: string, fields: LogFields = {}, pluginLevel: PluginLogLevel | undefined = level === 'debug' ? undefined : level, diagnosticText?: string): void {
   L.log(level, event, fields);
   if (pluginLevel && (pluginLevel !== 'info' || infoEvent(event, fields))) {
     // Only authored diagnostics may supply message text, never prompt/answer fields.
@@ -299,8 +304,8 @@ function logError($: EngineInterface, what: string, error: unknown, where: strin
   L.flush(logIO($)).catch(() => undefined);
 }
 
-/** Errors are visible; warnings and info reach the screen only if the plugin log fails. */
-function diagnostic($: EngineInterface, level: Level, event: string, text: string, fields: LogFields = {}): void {
+/** Errors are visible; warnings and info go to the plugin log only. */
+function diagnostic($: EngineInterface, level: PluginLogLevel, event: string, text: string, fields: LogFields = {}): void {
   lg($, level === 'error' ? 'error' : 'info', event, { ...fields, text }, level, text);
 }
 
@@ -1146,26 +1151,19 @@ async function startSession(st: State, $: EngineInterface, handed: Record<string
   if (st.interactive) abandonPendingCalls(st, $);
 }
 
-/** The log's level, file (logPath: the config folder's by default) and session; a failure here leaves file logging off, said. */
+/** The log's level, file (buddy.log in the plugin log directory) and session; a failure here leaves file logging off, said. */
 async function startLog(st: State, $: EngineInterface): Promise<void> {
   await flushPluginLog($);
   pluginLog = new PluginLogQueue(undefined, 'buddy');
   L.context.session = undefined;
-  try {
-    const dir = await $.env.get('PLUGIN_LOG_DIR');
-    const home = await $.env.get('HOME');
-    pluginLog = new PluginLogQueue(pluginLogDir(dir, home, 'buddy'), 'buddy');
-  } catch (error) {
-    log($, 'reading the plugin log directory', error);
-  }
+  L.file = '';
   L.level = st.options.logLevel;
   try {
-    const where = logPath(st.options.logFile, { HOME: await $.env.get('HOME'), CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') });
-    if ('error' in where) throw new Error(where.error);
-    L.file = where.path;
+    const dir = pluginLogDir(await $.env.get('PLUGIN_LOG_DIR'), await $.env.get('HOME'), 'buddy');
+    pluginLog = new PluginLogQueue(dir, 'buddy');
+    if (dir !== undefined) L.file = `${dir}/buddy.log`;
   } catch (error) {
-    L.file = '';
-    log($, 'opening the log file', error, { logFile: st.options.logFile });
+    log($, 'reading the plugin log directory', error);
   }
   try {
     L.context.session = await $.session.id();
@@ -2870,7 +2868,7 @@ async function runCommand(st: State, $: EngineInterface, args: string, asQuestio
       case 'moved':
         return { text: `Switching characters moved to the personality picker: ctrl+x t in /${COMMAND}.` };
       case 'log': {
-        if (!L.file) return { text: 'No log file: the option logFile is empty (failures still go to the debug log).' };
+        if (!L.file) return { text: 'No log file: neither PLUGIN_LOG_DIR nor HOME is set (failures still go to the debug log).' };
         try {
           const lines = await L.tail(logIO($));
           return { text: [`Log: ${L.file}`, ...(lines.length > 0 ? lines : ['(empty)'])].join('\n') };
