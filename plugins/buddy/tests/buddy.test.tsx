@@ -3987,8 +3987,8 @@ describe('the config file', () => {
 
   test('an old pluginConfigs entry in the settings: one error naming its keys and the file, its values never applied; a source that cannot be read is said', async ($, on) => {
     const settings = {
-      user: { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false } }, 'other@x': { options: { colour: 'red' } } } },
-      local: { pluginConfigs: { 'buddy@buddy-dev': { options: { commentAfterEachTurn: false, promptToMainChat: false } } } },
+      user: { pluginConfigs: { 'buddy@professor': { options: { promptToMainChat: false } }, 'other@x': { options: { colour: 'red' } } } },
+      local: { pluginConfigs: { 'buddy@elsewhere': { options: { commentAfterEachTurn: false, promptToMainChat: false } } } },
     };
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } }, { settings, refuseSettings: ['policy'] });
     await $.session.start(START);

@@ -61,8 +61,8 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 2. Install:
 
    ```sh
-   claude plugin marketplace add rezzminator/buddy
-   claude plugin install buddy@buddy
+   claude plugin marketplace add rezzminator/professor
+   claude plugin install buddy@professor
    ```
 
 3. Start a new session: Quack walks in above your prompt. Type `/buddy` to
@@ -88,8 +88,8 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 > [!IMPORTANT]
 > buddy is built on Claude Code's function hooks, an early-access surface
 > that may change between releases. A plugin built on function hooks cannot
-> enter the official plugin directory, so buddy installs from this
-> repository's own marketplace, as above. It is tested on Claude Code
+> enter the official plugin directory, so buddy installs from
+> Professor's marketplace, as above. It is tested on Claude Code
 > 2.1.286.
 
 > [!NOTE]
@@ -567,7 +567,7 @@ settings:
   or not an object, an unknown key, and a value of the wrong type or out of
   range.
 - **Migrating from a `pluginConfigs` entry (buddy before 3.0.0):** remove
-  `pluginConfigs["buddy@buddy"]` from `settings.json` and put the same keys, as
+  `pluginConfigs["buddy@professor"]` from `settings.json` and put the same keys, as
   they were under `options`, into the config file. While the entry is there,
   buddy ignores its values and reports an error, naming the file.
 
