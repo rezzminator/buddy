@@ -1,6 +1,6 @@
 # buddy — a Claude Code function-hooks plugin: an ASCII companion above the prompt that reacts to the work and answers `/buddy` questions
 
-The repo is its own marketplace, and `main` reaches every user at their next `plugin update`: a hook that throws or blocks breaks the prompt line of everyone who installed it.
+Professor's marketplace installs `main` of this repo, and `main` reaches every user at their next `plugin update`: a hook that throws or blocks breaks the prompt line of everyone who installed it.
 
 ## Vocabulary
 
@@ -11,7 +11,6 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - character: one JSON file per id · `plugins/buddy/characters/{id}.json` · contract `plugins/buddy/schema/character.schema.json`, guide `CONTRIBUTING.md`
 - manifest: `plugin.json`, which declares no `userConfig`, and `icon.svg` · `plugins/buddy/.claude-plugin/`
 - config file: every option, one flat JSON object · `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json` · parsed by `configFilePath`, `parseConfigFile` and `resolveOptions` in `plugins/buddy/src/options.ts`, example `config.example.json`
-- marketplace: installs the plugin directory from `main` (`git-subdir`) · `.claude-plugin/marketplace.json`
 - unit tests: one vitest file per engine concern · `tests/`
 - hook tests: function-hook tests on the testing kit of the `claude-code` module; `claude plugin test` requires them inside the plugin directory · `plugins/buddy/tests/`
 - plugin API: every hook's shape; grep it before using an event · `types/claude-code.d.ts`, untracked, written by `npm run types` (run by `npm run typecheck`)
@@ -71,7 +70,7 @@ The repo is its own marketplace, and `main` reaches every user at their next `pl
 - `develop` is the default branch: every change lands there, by a commit or a pull request. It is protected by the ruleset `develop keeps its history`: never force-push or delete it.
 - `main` is protected by the ruleset `main is release-only`: it merges only after `check` and `release` pass, never by a direct push and never by an admin override.
 - Every merge into `main` publishes: the version moves past `main`'s, and a pre-release version (`-alpha`) is bumped to the real release version in that pull request.
-- A version bump moves `plugins/buddy/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `package.json` and the README badge together, and turns `## [Unreleased]` in `CHANGELOG.md` into `## [X.Y.Z] — {date}`; installed copies update only on a new version.
+- A version bump moves `plugins/buddy/.claude-plugin/plugin.json`, `package.json` and the README badge together, and turns `## [Unreleased]` in `CHANGELOG.md` into `## [X.Y.Z] — {date}`; installed copies update only on a new version.
 - Semantic versioning: a fix is a patch; a new option, behaviour or built-in character is a minor; a renamed or removed option, command or character field, or a moved option home, is a major, and its CHANGELOG entry says how to migrate.
 - A release is `gitter`'s RELEASE phase: bump the version and the dated CHANGELOG section on `develop`, `git fetch origin main` then `make release-check`, open the `develop → main` pull request, merge it once `check` and `release` are green; the merge is the release, `release.yml` tags and publishes it, and no tag is ever pushed by hand.
 - Git writes go through `gitter`, `.claude/agents/gitter.md`.
