@@ -13,7 +13,7 @@ Professor's marketplace installs `main` of this repo, and `main` reaches every u
 - config file: every option, one flat JSON object · `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json` · parsed by `configFilePath`, `parseConfigFile` and `resolveOptions` in `plugins/buddy/src/options.ts`, example `config.example.json`
 - unit tests: one vitest file per engine concern · `tests/`
 - hook tests: function-hook tests on the testing kit of the `claude-code` module; `claude plugin test` requires them inside the plugin directory · `plugins/buddy/tests/`
-- plugin API: every hook's shape; grep it before using an event · `types/claude-code.d.ts`, untracked, written by `npm run types` (run by `npm run typecheck`)
+- plugin API: every hook's shape; grep it before using an event · `types/claude-code.d.ts`, tracked, the declarations Claude Code writes into a loaded plugin's `.claude-plugin/types/claude-code/index.d.ts`; refresh it by copying a newer one over it
 - live proof: a real Haiku session driven in tmux · `scripts/live-proof.sh`
 - live configuration proof: five sessions over option sets, buddy on opus low, each turn's time and tokens in a report · `scripts/live-configs.sh`, helpers shared in `scripts/live-lib.sh`
 - release check: the version agrees everywhere and the CHANGELOG section is dated · `scripts/release-check.sh`

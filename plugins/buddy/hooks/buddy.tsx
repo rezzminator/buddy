@@ -209,6 +209,8 @@ function message(error: unknown): string {
 /** The plugin's log (src/log.ts): records queue here; each `lg` writes them through that hook's `$`. */
 const L = new Logger();
 let pluginLog = new PluginLogQueue(undefined, 'buddy');
+/** Why buddy.log is off, for `/buddy log`: a failed read is never shown as an unset variable. */
+let logOff = 'neither PLUGIN_LOG_DIR nor HOME is set';
 
 /** A notice in the transcript, naming the plugin (notice): Claude Code names it only in the debug log. */
 function say($: EngineInterface, text: string): void {
@@ -1157,12 +1159,14 @@ async function startLog(st: State, $: EngineInterface): Promise<void> {
   pluginLog = new PluginLogQueue(undefined, 'buddy');
   L.context.session = undefined;
   L.file = '';
+  logOff = 'neither PLUGIN_LOG_DIR nor HOME is set';
   L.level = st.options.logLevel;
   try {
     const dir = pluginLogDir(await $.env.get('PLUGIN_LOG_DIR'), await $.env.get('HOME'), 'buddy');
     pluginLog = new PluginLogQueue(dir, 'buddy');
     if (dir !== undefined) L.file = `${dir}/buddy.log`;
   } catch (error) {
+    logOff = `reading the plugin log directory failed: ${message(error)}`;
     log($, 'reading the plugin log directory', error);
   }
   try {
@@ -2868,7 +2872,7 @@ async function runCommand(st: State, $: EngineInterface, args: string, asQuestio
       case 'moved':
         return { text: `Switching characters moved to the personality picker: ctrl+x t in /${COMMAND}.` };
       case 'log': {
-        if (!L.file) return { text: 'No log file: neither PLUGIN_LOG_DIR nor HOME is set (failures still go to the debug log).' };
+        if (!L.file) return { text: `No log file: ${logOff} (failures still go to the debug log).` };
         try {
           const lines = await L.tail(logIO($));
           return { text: [`Log: ${L.file}`, ...(lines.length > 0 ? lines : ['(empty)'])].join('\n') };

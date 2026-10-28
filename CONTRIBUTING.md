@@ -255,6 +255,7 @@ a test in `tests/` that you watched fail first; `plugins/buddy/hooks/buddy.tsx`
 only wires it to Claude Code, and its hook tests live in `plugins/buddy/tests/`,
 where `claude plugin test` requires them. `npm test`, `npm run typecheck` and
 `npm run validate:plugin` pass before a pull request, and the pull request
-goes to `develop`. `npm run typecheck` first writes the plugin API's types
-into `types/` from your installed Claude Code (`npm run types`); git ignores
-them, so they always match the Claude Code you run.
+goes to `develop`. `npm run typecheck` checks against the plugin API's types
+in `types/claude-code.d.ts`, tracked; to move to a newer Claude Code, copy the
+`.claude-plugin/types/claude-code/index.d.ts` it writes into a loaded plugin
+over that file.

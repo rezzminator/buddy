@@ -57,8 +57,12 @@ if (files.length === 0) {
   let names = [];
   try {
     names = readdirSync(dir);
-  } catch {
-    // no such directory: nothing to read there
+  } catch (error) {
+    // No such directory is nothing to read there; any other failure is no answer at all.
+    if (error.code !== 'ENOENT') {
+      console.error(`audit: reading ${dir} failed: ${error.message}`);
+      process.exit(2);
+    }
   }
   const archives = names
     .map((n) => /^buddy\.log\.(\d+)$/.exec(n))
