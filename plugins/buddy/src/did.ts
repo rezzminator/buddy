@@ -248,7 +248,7 @@ export function actionOf(call: { tool: string; [argument: string]: unknown }, fa
       return text('asked the user');
   }
   if (BOOKKEEPING.includes(call.tool)) return null;
-  // An MCP tool by its own name, its server dropped: mcp__chat-professor__new is "new".
+  // An MCP tool by its own name, its server dropped: mcp__chat__new is "new".
   if (call.tool.startsWith('mcp__')) return text(call.tool.split('__').slice(2).join(' ').replace(/_/g, ' '));
   return text(call.tool);
 }
