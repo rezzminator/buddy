@@ -15,6 +15,7 @@ Every release of buddy. Versions follow [semantic versioning](https://semver.org
 ### Fixed
 - Warning and info diagnostics no longer reach the screen when the plugin log is off or failing; they go to their level files, or nowhere while the log cannot be written. The screen shows only errors, and one line per failing streak of a log, said again only after a write succeeds.
 - A `buddy.log` write that keeps failing says so once per failing streak instead of at every flush; every error record it held still reaches the screen.
+- **A cancelled log write no longer shows on screen.** When Claude Code abandons a hook mid-write, the shared plugin-log library keeps the rows for the next write, and nothing is lost; it used to print a "plugin log … failed" line. A real write failure is still said once per failing streak.
 
 ### Migration
 - Remove `logFile` from `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json`. The file now lives at `$PLUGIN_LOG_DIR/buddy/buddy.log`, else `~/.local/state/buddy/logs/buddy.log`, and no option moves it. An old `buddy.log` (by default `$CLAUDE_CONFIG_DIR/buddy/buddy.log`, else `~/.claude/buddy/buddy.log`) stays where it was: delete it, or total it with `npm run audit -- {path}`.
