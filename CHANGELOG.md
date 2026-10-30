@@ -2,6 +2,25 @@
 
 Every release of buddy. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `buddy--v<version>`, with a GitHub release carrying the section below.
 
+## [4.0.0] — 2026-10-30
+
+### Changed
+- Installs as `buddy@professor` from the professor marketplace; the repo's own marketplace file is gone. A `buddy@buddy` install gets no further updates (§ Migration).
+- The level logs are now written by the shared plugin-log library, vendored as `plugins/buddy/src/plugin-log.ts`; their rows, files and directory are unchanged. A level file past 20 MiB now keeps five generations (`.1` newest to `.5`) instead of one, appends take a lock so two sessions never rotate the same file twice, and rows a failed write could not append are kept for the next flush instead of dropped.
+- `buddy.log` moved into buddy's plugin log directory, beside the level logs: `$PLUGIN_LOG_DIR/buddy/buddy.log` when `PLUGIN_LOG_DIR` is set, else `~/.local/state/buddy/logs/buddy.log`. `npm run audit` reads it there. `/buddy log` shows the new path.
+
+### Removed
+- The `logFile` option. A config file still naming it gets one warning, `option logFile ignored: removed; buddy.log is in $PLUGIN_LOG_DIR/buddy, else ~/.local/state/buddy/logs`, and its value is never applied.
+
+### Fixed
+- Warning and info diagnostics no longer reach the screen when the plugin log is off or failing; they go to their level files, or nowhere while the log cannot be written. The screen shows only errors, and one line per failing streak of a log, said again only after a write succeeds.
+- A `buddy.log` write that keeps failing says so once per failing streak instead of at every flush; every error record it held still reaches the screen.
+- **A cancelled log write no longer shows on screen.** When Claude Code abandons a hook mid-write, the shared plugin-log library keeps the rows for the next write, and nothing is lost; it used to print a "plugin log … failed" line. A real write failure is still said once per failing streak.
+
+### Migration
+- Move a `buddy@buddy` install to the professor marketplace: uninstall it, then `claude plugin marketplace add rezzminator/professor` and `claude plugin install buddy@professor`. Your `config.json` is read as before.
+- Remove `logFile` from `${XDG_CONFIG_HOME:-$HOME/.config}/buddy/config.json`. The file now lives at `$PLUGIN_LOG_DIR/buddy/buddy.log`, else `~/.local/state/buddy/logs/buddy.log`, and no option moves it. An old `buddy.log` (by default `$CLAUDE_CONFIG_DIR/buddy/buddy.log`, else `~/.claude/buddy/buddy.log`) stays where it was: delete it, or total it with `npm run audit -- {path}`.
+
 ## [3.0.1] — 2026-10-27
 
 ### Fixed

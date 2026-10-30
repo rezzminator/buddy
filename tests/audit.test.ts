@@ -58,14 +58,30 @@ function rowCells(out: string, name: string): string[] {
 }
 
 describe('audit default logs', () => {
-  it('reads every rotated archive and the live log under $CLAUDE_CONFIG_DIR/buddy', () => {
+  // The config folder holds an old buddy.log the audit must never read: buddy.log lives in the plugin log directory.
+  function logs(at: string) {
     const config = join(dir, 'config');
     const home = join(dir, 'home');
     mkdirSync(join(config, 'buddy'), { recursive: true });
-    mkdirSync(home);
-    for (const name of ['buddy.log', 'buddy.log.1', 'buddy.log.2']) writeFileSync(join(config, 'buddy', name), `${cost({ inTok: M })}\n`);
-    // HOME is an empty dir, so the real ~/.claude/buddy is never read
-    const run = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: config, HOME: home } });
+    writeFileSync(join(config, 'buddy', 'buddy.log'), `${cost({ inTok: M })}\n`);
+    mkdirSync(join(dir, at), { recursive: true });
+    for (const name of ['buddy.log', 'buddy.log.1', 'buddy.log.2']) writeFileSync(join(dir, at, name), `${cost({ inTok: M })}\n`);
+    mkdirSync(home, { recursive: true });
+    const { PLUGIN_LOG_DIR: _, ...env } = process.env;
+    return { config, home, env };
+  }
+
+  it('reads every rotated archive and the live log under $PLUGIN_LOG_DIR/buddy', () => {
+    const { config, home, env } = logs('logs/buddy');
+    const run = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8', env: { ...env, PLUGIN_LOG_DIR: join(dir, 'logs'), CLAUDE_CONFIG_DIR: config, HOME: home } });
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain('Buddy model calls from 3 log file(s)');
+    expect(rowCells(run.stdout, 'total')[0]).toBe('3');
+  });
+
+  it('without PLUGIN_LOG_DIR, under ~/.local/state/buddy/logs', () => {
+    const { config, home, env } = logs('home/.local/state/buddy/logs');
+    const run = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_CONFIG_DIR: config, HOME: home } });
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('Buddy model calls from 3 log file(s)');
     expect(rowCells(run.stdout, 'total')[0]).toBe('3');

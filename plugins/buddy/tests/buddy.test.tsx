@@ -82,6 +82,8 @@ type Disk = { files?: Record<string, string>; mtimes?: Record<string, number>; r
 
 const HOME = '/test-home';
 const SESSION = 'test-session';
+/** buddy.log, in the plugin log directory: no PLUGIN_LOG_DIR in these tests, so HOME's. */
+const LOG = `${HOME}/.local/state/buddy/logs/buddy.log`;
 /** The session's project root, and the buddy's folder in each session's own chat folder beside its transcript. */
 const ROOT = '/work/app';
 /** Where buddy's config file is: under an absolute XDG_CONFIG_HOME when the test sets one, else in HOME's .config. */
@@ -329,7 +331,7 @@ describe('plugin log capability fallback', () => {
       for (const call of calls) {
         expect(call.argv.slice(0, 2)).toEqual(['/bin/sh', '-c']);
         expect(call.argv.slice(3, 6)).toEqual(['plugin-log', dir, 'buddy']);
-        expect(call.timeoutMs).toBe(5000);
+        expect(call.timeoutMs).toBe(15_000);
         for (let i = 6; i < call.argv.length; i += 2) rows.push({ target: call.argv[i]!, row: JSON.parse(call.argv[i + 1]!) });
       }
       expect(rows.some(({ target, row }) => target === 'warnings.jsonl' && row.level === 'warning' && row.event === 'roster-invalid')).toBe(true);
@@ -347,12 +349,12 @@ describe('plugin log capability fallback', () => {
       await $.command.run(run(''));
       await w.clock.settle();
       await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
-      const notices = w.logs.filter((line) => line.startsWith(`buddy: plugin log ${dir} unavailable:`));
+      const notices = w.logs.filter((line) => line.startsWith(`buddy: plugin log ${dir} failed:`));
       expect(notices.length).toBe(1);
       expect(notices[0]).toContain('process.run unavailable');
       expect(notices[0]).toContain('fs.write replaces whole files');
       expect(notices[0]).toContain('append/private modes/.1 rename');
-      expect(notices[0]).toContain('dropped');
+      expect(notices[0]).toContain('kept for the next write');
       const logFile = Object.keys(w.files).find((file) => file.endsWith('/buddy.log'));
       expect(logFile !== undefined).toBe(true);
       const existing = w.files[logFile!]!.trim().split('\n').map((line) => JSON.parse(line));
@@ -392,16 +394,18 @@ describe('diagnostic screen policy', () => {
   });
 
   for (const outage of ['no directory', 'failed write'] as const) {
-    test(`warnings and routine info fall back to screen with ${outage}`, async ($, on) => {
+    test(`warnings and routine info never reach the screen with ${outage}; the log's failing-streak line does, once`, async ($, on) => {
       on('process.run', async () => ({ value: { exitCode: 1, stdout: '', stderr: 'disk full', isStdoutTruncated: false, isStderrTruncated: false } }));
       const w = world(on, { character: 'fixy' }, {}, { env: outage === 'no directory' ? { HOME: '' } : {} });
       await $.session.start(START);
       await $.command.run(run(''));
       await w.clock.settle();
       await $.session.end({ reason: 'clear', sessionId: SESSION, resume: {} } as never);
-      expect(w.logs.some((line) => line.includes('character broken (builtin) is invalid'))).toBe(true);
-      expect(w.logs).toContain('buddy: Buddy recorded drawer-open.');
-      expect(w.logs.some((line) => line.includes(outage === 'no directory' ? 'plugin log off:' : 'plugin log') && line.includes(outage === 'no directory' ? 'no PLUGIN_LOG_DIR and no HOME' : 'disk full'))).toBe(true);
+      expect(w.logs.some((line) => line.includes('character broken (builtin) is invalid'))).toBe(false);
+      expect(w.logs.some((line) => line.includes('Buddy recorded drawer-open.'))).toBe(false);
+      const streak = w.logs.filter((line) => line.startsWith('buddy: plugin log '));
+      expect(streak).toHaveLength(1);
+      expect(streak[0]).toContain(outage === 'no directory' ? 'plugin log off: no PLUGIN_LOG_DIR and no HOME' : 'disk full');
     });
   }
 
@@ -470,7 +474,9 @@ describe('the band', () => {
     const ui = await band($);
     expect(await shows(ui, /\(d_d\)/)).toBe(true);
     expect(await shows(ui, /Couldn't load broken: persona: required/)).toBe(true);
-    expect(w.logs).toContain('buddy: character broken (builtin) is invalid: persona: required');
+    // The invalid file is a warning: in the log, never on screen, where the bubble and the error notice say it.
+    expect(w.logs).not.toContain('buddy: character broken (builtin) is invalid: persona: required');
+    expect(records(w).find((r) => r.event === 'roster.invalid')).toMatchObject({ text: 'character broken (builtin) is invalid: persona: required' });
     // Claude Code names the plugin only in the debug log: every transcript notice names it itself.
     expect(w.logs.filter((l) => !l.startsWith('buddy: '))).toEqual([]);
     await ui.unmount();
@@ -737,7 +743,7 @@ describe('/buddy', () => {
     expect(await shows(ui, /^Quack, I am here\.$/)).toBe(true);
     const exchanges: { answer?: string }[] = ring(w, 'fixy');
     expect(exchanges.at(-1)).toMatchObject({ question: 'you like yourself!?', answer: 'Quack, I am here.' });
-    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    const records = (w.files[LOG] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'answered' });
     await ui.unmount();
   });
@@ -786,7 +792,7 @@ describe('/buddy', () => {
     expect(await shows(ui, /^Fixy couldn't answer: no answer in 90 s$/)).toBe(true);
     expect(w.logs).toContain('buddy: a /buddy question got no answer: no answer in 90 s');
     await w.clock.settle();
-    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    const records = (w.files[LOG] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(records.find((r) => r.event === 'ask.outcome')).toMatchObject({ outcome: 'failed', reason: 'no answer in 90 s' });
     // The ask is over: the next question is taken, not refused.
     expect((await $.command.run(run('again?'))).text).toBe('Asked Fixy.');
@@ -815,7 +821,7 @@ describe('/buddy', () => {
     await $.command.run(run('what is up'));
     await w.clock.settle();
     await w.clock.settle();
-    const file = `${HOME}/.claude/buddy/buddy.log`;
+    const file = LOG;
     const records = (w.files[file] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(records.some((r) => r.event === 'ask.start' && r.level === 'info' && r.session === SESSION)).toBe(true);
     expect(records.some((r) => r.event === 'ask.outcome' && r.outcome === 'answered' && typeof r.ms === 'number')).toBe(true);
@@ -1129,9 +1135,9 @@ describe('the personality pane', () => {
     expect(await shows(ui, eyesOf('npm'))).toBe(true);
     expect(await shows(ui, /Mochi says hello\./)).toBe(true);
     // The plugin writes only its own log and the chat's buddy folder, and none of it holds the identity.
-    expect(w.writes.filter((p) => !p.endsWith('/.claude/buddy/buddy.log') && !p.startsWith(`${chatDir()}/`))).toEqual([]);
+    expect(w.writes.filter((p) => p !== LOG && !p.startsWith(`${chatDir()}/`))).toEqual([]);
     expect(w.writes.filter((p) => w.files[p]!.includes(UUID) || w.files[p]!.includes('an-invented-user-id'))).toEqual([]);
-    expect(w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').not.toContain(UUID);
+    expect(w.files[LOG] ?? '').not.toContain(UUID);
     expect(w.logs.join('\n')).not.toContain(UUID);
     expect(JSON.stringify([...w.saved.entries()])).not.toContain(UUID);
     await ui.unmount();
@@ -1222,7 +1228,9 @@ describe('core fixes', () => {
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
     expect(await shows(ui, /A completed answer\./)).toBe(false);
-    expect(w.logs).toContain("buddy: Fixy's answer was dropped: Duck Fixture is drawn now");
+    // An info diagnostic: in the log, never on screen.
+    expect(w.logs).not.toContain("buddy: Fixy's answer was dropped: Duck Fixture is drawn now");
+    expect(records(w).find((r) => r.event === 'ask.dropped')).toMatchObject({ text: "Fixy's answer was dropped: Duck Fixture is drawn now" });
     await ui.unmount();
   });
 
@@ -1283,7 +1291,7 @@ describe('hook paths', () => {
     expect(w.completes[0]?.prompt.endsWith(`\n\n${JUST_ENDED}`)).toBe(true);
     // An untagged reply is the commentAfterEachTurn alone.
     expect(await shows(ui, /A completed answer\./)).toBe(true);
-    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    const records = (w.files[LOG] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(records.find((r) => r.event === 'turn.call')).toMatchObject({ commentAfterEachTurn: true, suggestNextPrompt: true });
     expect(records.find((r) => r.event === 'commentAfterEachTurn.outcome')).toMatchObject({ outcome: 'answered', inTok: 1, outTok: 1, cacheRead: 0, cachePct: 0 });
     await ui.unmount();
@@ -1315,7 +1323,7 @@ describe('hook paths', () => {
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes[0]).toMatchObject({ model: 'opus', effort: 'low' });
-    expect(w.logs.filter((l) => /failed:/.test(l))).toEqual([]);
+    expect(failedLines(w)).toEqual([]);
     await ui.unmount();
   });
 
@@ -1345,7 +1353,7 @@ describe('hook paths', () => {
     const turns = (memory(w) as { blocks: { turnId?: string; turn?: { added?: string[] } }[] }).blocks.filter((b) => b.turn);
     expect(turns.map((b) => [b.turnId, b.turn!.added])).toEqual([['t1', ['also end with BANANA']], ['t2', undefined]]);
     expect((turns[0]!.turn as { addedAfter?: number[] }).addedAfter).toEqual([0]);
-    expect(w.logs.filter((l) => /failed:/.test(l))).toEqual([]);
+    expect(failedLines(w)).toEqual([]);
     await ui.unmount();
   });
 
@@ -1387,7 +1395,7 @@ describe('hook paths', () => {
     expect(p).not.toContain('SUBAGENT_TEXT');
     const filed = (memory(w) as { blocks: { turnId?: string; turn?: Record<string, unknown> }[] }).blocks.find((b) => b.turnId === 't1')!.turn!;
     expect(filed).toMatchObject({ added: ['and check the totals'], addedAfter: [2], said: [{ after: 0, text: 'Yes, every row will carry the account.' }] });
-    expect(w.logs.filter((l) => /failed:/.test(l))).toEqual([]);
+    expect(failedLines(w)).toEqual([]);
     await ui.unmount();
   });
 
@@ -1421,7 +1429,7 @@ describe('hook paths', () => {
     const ui = await band($);
     await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
-    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    const records = (w.files[LOG] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(typeof records.find((r) => r.event === 'commentAfterEachTurn.outcome')?.ms).toBe('number');
     expect(typeof records.find((r) => r.event === 'suggestNextPrompt.outcome')?.ms).toBe('number');
     await ui.unmount();
@@ -1434,7 +1442,7 @@ describe('hook paths', () => {
     await $.turn.complete({ reason: 'answer', answer: 'T1', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     expect(w.completes).toHaveLength(0);
-    const records = (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+    const records = (w.files[LOG] ?? '').trim().split('\n').map((l) => JSON.parse(l));
     expect(records.find((r) => r.event === 'turn.skipped')).toMatchObject({ why: 'headless' });
   });
 
@@ -1607,20 +1615,21 @@ describe('hook paths', () => {
 });
 
 describe('pre-release fixes', () => {
-  test('the default log follows CLAUDE_CONFIG_DIR: $CLAUDE_CONFIG_DIR/buddy/buddy.log, never under HOME', async ($, on) => {
+  test('buddy.log lives in $PLUGIN_LOG_DIR/buddy when it is set, whatever CLAUDE_CONFIG_DIR says', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, {}, { env: { PLUGIN_LOG_DIR: '/test-logs', CLAUDE_CONFIG_DIR: '/test-ccd' } });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(w.writes).toContain('/test-logs/buddy/buddy.log');
+    expect(w.writes.filter((p) => p.startsWith('/test-ccd/buddy/'))).toEqual([]);
+    expect((await $.command.run(run('log'))).text).toMatch(/^Log: \/test-logs\/buddy\/buddy\.log\n/);
+  });
+
+  test('without PLUGIN_LOG_DIR buddy.log is ~/.local/state/buddy/logs/buddy.log, never in the config folder', async ($, on) => {
     const w = world(on, { character: 'fixy' }, {}, { env: { CLAUDE_CONFIG_DIR: '/test-ccd' } });
     await $.session.start(START);
     await w.clock.settle();
-    expect(w.writes).toContain('/test-ccd/buddy/buddy.log');
-    expect(w.writes.filter((p) => p.startsWith(`${HOME}/`))).toEqual([]);
-    expect((await $.command.run(run('log'))).text).toMatch(/^Log: \/test-ccd\/buddy\/buddy\.log\n/);
-  });
-
-  test('without CLAUDE_CONFIG_DIR the default log is ~/.claude/buddy/buddy.log', async ($, on) => {
-    const w = world(on, { character: 'fixy' });
-    await $.session.start(START);
-    await w.clock.settle();
-    expect(w.writes).toContain(`${HOME}/.claude/buddy/buddy.log`);
+    expect(w.writes).toContain(LOG);
+    expect(w.writes.filter((p) => p.startsWith('/test-ccd/buddy/') || p.startsWith(`${HOME}/.claude/buddy/`))).toEqual([]);
   });
 
   test('an answer arriving after /buddy off is never remembered as said; the question alone is', async ($, on) => {
@@ -1815,8 +1824,13 @@ describe('suggestNextPrompt', () => {
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** Screen lines saying something failed, less the plugin log's own failing-streak line: the test runtime has no process.run, so that log always fails. */
+function failedLines(w: { logs: string[] }): string[] {
+  return w.logs.filter((l) => /failed:/.test(l) && !l.startsWith('buddy: plugin log '));
+}
+
 function records(w: { files: Record<string, string> }): any[] {
-  return (w.files[`${HOME}/.claude/buddy/buddy.log`] ?? '').trim().split('\n').map((l) => JSON.parse(l));
+  return (w.files[LOG] ?? '').trim().split('\n').map((l) => JSON.parse(l));
 }
 
 /** The buddy's memory of session `session` as its chat folder's memory.json holds it; undefined when none was written. */
@@ -3289,7 +3303,7 @@ describe("a turn's numbers", () => {
     expect(second.agents).toBeUndefined();
     expect(typeof second.gapMs).toBe('number');
     // The kit has no ui.scroll for the open drawer; nothing else failed.
-    expect(w.logs.filter((l) => /failed:/.test(l) && !/no implementation for ui\.scroll/.test(l))).toEqual([]);
+    expect(failedLines(w).filter((l) => !/no implementation for ui\.scroll/.test(l))).toEqual([]);
     await ui.unmount();
   });
 
@@ -3987,8 +4001,8 @@ describe('the config file', () => {
 
   test('an old pluginConfigs entry in the settings: one error naming its keys and the file, its values never applied; a source that cannot be read is said', async ($, on) => {
     const settings = {
-      user: { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false } }, 'other@x': { options: { colour: 'red' } } } },
-      local: { pluginConfigs: { 'buddy@buddy-dev': { options: { commentAfterEachTurn: false, promptToMainChat: false } } } },
+      user: { pluginConfigs: { 'buddy@professor': { options: { promptToMainChat: false } }, 'other@x': { options: { colour: 'red' } } } },
+      local: { pluginConfigs: { 'buddy@elsewhere': { options: { commentAfterEachTurn: false, promptToMainChat: false } } } },
     };
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: PROMPTS_CLAUDE } }, { settings, refuseSettings: ['policy'] });
     await $.session.start(START);

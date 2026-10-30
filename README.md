@@ -5,7 +5,7 @@
 **Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-3.0.1-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.0-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/release.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/release.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -61,8 +61,8 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 2. Install:
 
    ```sh
-   claude plugin marketplace add rezzminator/buddy
-   claude plugin install buddy@buddy
+   claude plugin marketplace add rezzminator/professor
+   claude plugin install buddy@professor
    ```
 
 3. Start a new session: Quack walks in above your prompt. Type `/buddy` to
@@ -88,8 +88,8 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 > [!IMPORTANT]
 > buddy is built on Claude Code's function hooks, an early-access surface
 > that may change between releases. A plugin built on function hooks cannot
-> enter the official plugin directory, so buddy installs from this
-> repository's own marketplace, as above. It is tested on Claude Code
+> enter the official plugin directory, so buddy installs from
+> Professor's marketplace, as above. It is tested on Claude Code
 > 2.1.286.
 
 > [!NOTE]
@@ -410,39 +410,36 @@ flowchart LR
   new one. One
   question at a time: asking again before the answer gets `{name} is still
   thinking about your last question; ask again once it answers.`
-- **The log.** buddy keeps its own log in `logFile` (default
-  `~/.claude/buddy/buddy.log`, or `$CLAUDE_CONFIG_DIR/buddy/buddy.log` when
-  `CLAUDE_CONFIG_DIR` is set; a path you set is used with `~` and a leading `$CLAUDE_CONFIG_DIR` expanded), one JSON
+- **The log.** buddy keeps its own log, `buddy.log`, in its plugin log
+  directory: `$PLUGIN_LOG_DIR/buddy` when `PLUGIN_LOG_DIR` is set, else
+  `~/.local/state/buddy/logs` (neither `PLUGIN_LOG_DIR` nor `HOME` set: no
+  file). One JSON
   line per record; a write another session overwrote is retried, and a record
   lost after the retries is reported, though two writes landing at the same instant can still drop one unseen; past 1 MB archived whole to the next free `buddy.log.N` (`.1`, `.2`, …), none ever overwritten, so no record is dropped. `logLevel` `error` writes failures
   only; `info`, the default, adds sessions, commands, questions and their
   outcomes, `commentAfterEachTurn` and menu picks; `debug` adds the question text and the
   model's result shapes. It never holds your account id or anything from
   `~/.claude.json`. `/buddy log` shows the path and the last 20 lines, to
-  paste into an issue; an empty `logFile` writes no file.
-- **Separate level logs.** When the engine exposes `process.run`, buddy also
-  appends `errors.jsonl`, `warnings.jsonl` and `info.jsonl` beneath
-  `$PLUGIN_LOG_DIR/buddy`, or `$HOME/.local/state/buddy/logs` when unset.
-  These are independent of `logLevel` and `logFile`: errors, warnings and
-  actionable state changes only;
-  no debug records or prompt/tool bodies. Rows are at most 4096 UTF-8 bytes,
-  explicitly marked when truncated. New directories and files use a private
-  umask. A file over 20 MiB moves to `.1` before the next append,
-  replacing its previous `.1` and recording `log-capped`.
-  The current function-hook test runtime has no built-in implementation of
-  `process.run`; its filesystem writes replace whole files and cannot meet this append,
-  rotation and permission contract. In that runtime no level files are
-  written: one transcript notice per outage names the unavailable capability
-  and dropped rows. With neither directory input, it explicitly reports
-  logging off. Every error-level diagnostic appears on screen and in the
-  plugin log, including repeated failures. Warning- and info-level diagnostics
-  are log-only while that log works: routine comment misses and state changes
-  do not interrupt the screen. If no directory can be resolved or an append
-  fails, each lost warning or info diagnostic falls back to the screen; the
-  logging failure itself stays visible once per outage. Unreadable or invalid
-  configuration, ignored legacy options, unavailable character selections and
-  unanswered `/buddy` questions are errors, not warnings. Companion art,
-  bubbles, comments and command replies are product output and unchanged.
+  paste into an issue.
+- **Level logs.** Beside `buddy.log`, the shared plugin-log library (vendored
+  as `plugins/buddy/src/plugin-log.ts`) appends `errors.jsonl`,
+  `warnings.jsonl` and `info.jsonl`, independent of `logLevel`: errors,
+  warnings and actionable state changes only; no debug records or
+  prompt/tool bodies. Rows are at most 4096 UTF-8 bytes, explicitly marked
+  when truncated; the directory is private (0700) and its files 0600. A file
+  over 20 MiB moves to `.1` before the next append, five generations kept
+  (`.1` newest), and records `log-capped`. Appends need the engine's
+  `process.run`; where it is missing (the function-hook test runtime has
+  none), no level file is written and the failure says so.
+- **The screen.** It shows only an error's line, and one line per failing
+  streak of a log (`buddy: plugin log {dir} failed: …`, `buddy: plugin log
+  off: …` with no directory, or `buddy: writing the log {file} failed: …`),
+  said again only after a write succeeds. Warning and info diagnostics never
+  reach it: they go to their level files, or nowhere while the log cannot be
+  written. Unreadable or invalid configuration, ignored legacy options,
+  unavailable character selections and unanswered `/buddy` questions are
+  errors, not warnings. Companion art, bubbles, comments and command replies
+  are product output and unchanged.
 - **`commentAfterEachTurn`** (on by default). At the end of every answered turn, tool use or
   not, one short call on `model` at the `effort` level (at most 2048
   output tokens, its thinking included, a 30-second deadline) reads its `chatTurnsToRead` (the chat's
@@ -567,7 +564,7 @@ settings:
   or not an object, an unknown key, and a value of the wrong type or out of
   range.
 - **Migrating from a `pluginConfigs` entry (buddy before 3.0.0):** remove
-  `pluginConfigs["buddy@buddy"]` from `settings.json` and put the same keys, as
+  `pluginConfigs["buddy@professor"]` from `settings.json` and put the same keys, as
   they were under `options`, into the config file. While the entry is there,
   buddy ignores its values and reports an error, naming the file.
 
@@ -585,7 +582,6 @@ settings:
 | `promptWhenIdle` | boolean | `false` | After an answered turn, once the chat sits idle 30 minutes with no turn running, one call on opus at low effort reads Claude's last answer and replies `PAUSE` or a one-line push, sent to Claude as the buddy's prompt; never a git push, a deletion, a publication, a credential or an account step; at most 3 pushes before you prompt again. One model call per idle stretch (spends tokens); a reload or restart keeps the wait; logs `away.decision` |
 | `chatTurnsToRead` | number | `4` | The buddy's memory: how many of the chat's latest turns it remembers, 1 to 10, after the chat's memory items (at most 10 rules, 6 open items, 6 facts, 4 lessons and 3 doubts, edited by the buddy at every turn's end and checked in code). Each turn comes with what the buddy showed after it (`commentAfterEachTurn`, a warning or scream, and `suggestNextPrompt`) and your /buddy questions with its answers; a compaction of the chat counts as a turn, its summary the answer; the last turn with its numbers (time, requests, tool calls, files, lines, tests in their order, commits, tokens, cost, context), each older one told shorter, its numbers only its failed tool calls; anything older is forgotten, and the buddy knows it. Every call reads it; kept per chat, in the chat's own folder beside its transcript (`{config}/projects/{project}/{session id}/buddy/memory.json`, and beside it `memory.md`, for you to read: the memory items, the newest ended ones, and the turns as the character drawn now reads them), so reopening a chat brings it back; the exchanges are kept per character, the memory items per chat; a write that fails retried twice while your next turn has not started; more turns, more tokens per call |
 | `logLevel` | string | `"info"` | Log level: error, info or debug |
-| `logFile` | string | `"$CLAUDE_CONFIG_DIR/buddy/buddy.log"` | Log file, one JSON line appended per record, archived whole to the next free `{logFile}.N` past 1 MB and never deleted; a leading `$CLAUDE_CONFIG_DIR` is the config folder (`~/.claude` when the variable is unset), `~` is your home folder, any other path is used as given (empty = no log file) |
 | `saveRounds` | boolean | `true` | One text file per main-chat turn in the chat's own folder, beside its transcript and next to `memory.json`, the buddy's memory of that chat (`{config}/projects/{project}/{session id}/buddy/`), every turn kept (`round-001.txt` on, each new round numbered after the highest, none ever overwritten; `ls -t` lists them newest first), holding everything that went into buddy and came out of it, in the order it happened, from the turn's start to the next turn's start: the prompt the turn began with, each tool call buddy heard with its arguments and output (each value cut at 500 characters), every buddy log record at any level, each bubble line and prompt-box suggestion, the turn's end as buddy filed it into its memory, and every model call buddy made, its system prompt, prompt and reply verbatim (they hold what the transcript beside them holds: your prompts, Claude's answers and tool output); `false` = no files |
 | `ambiguousCharacterWidth` | string | `"narrow"` | Ambiguous-width characters: narrow or wide; `wide` for a terminal that draws them two columns wide, as a CJK locale often does |
 

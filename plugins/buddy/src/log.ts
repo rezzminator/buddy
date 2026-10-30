@@ -10,7 +10,8 @@
 // writes it back with the new lines, and reads it again: when another session
 // sharing the file wrote over them in between, it adds them again, up to
 // WRITE_ATTEMPTS times. A record is lost only when the other session's write
-// lands after that re-read, and then the fallback says so.
+// lands after that re-read, and then the fallback says so, once per failing
+// streak; error records still go to the fallback every time.
 
 /** The plugin's name, which every transcript notice leads with. */
 export const PLUGIN_NAME = 'buddy';
@@ -84,6 +85,8 @@ export class Logger {
 
   /** Records queued while the file is off, errors only, waiting for a fallback. */
   private orphans: string[] = [];
+  /** A write failed and was said; the next failure stays quiet until a write lands. */
+  private failing = false;
 
   constructor(level: LogLevel = 'info', file = '', cap = LOG_CAP, now: () => number = Date.now) {
     this.now = now;
@@ -169,13 +172,22 @@ export class Logger {
     const file = this.file;
     try {
       for (let attempt = 0; attempt < WRITE_ATTEMPTS; attempt++) {
-        if (await this.landed(io, file, await this.put(io, file, add))) return;
+        if (await this.landed(io, file, await this.put(io, file, add))) {
+          this.failing = false;
+          return;
+        }
       }
-      this.fallback(io, `the log ${file} lost ${lines.length} records to another writer at the same time`);
+      this.failure(io, `the log ${file} lost ${lines.length} records to another writer at the same time`);
     } catch (error) {
-      this.fallback(io, `writing the log ${file} failed: ${errorFields(error).message}`);
+      this.failure(io, `writing the log ${file} failed: ${errorFields(error).message}`);
     }
     for (const l of lines) if (l.includes('"level":"error"')) this.fallback(io, l);
+  }
+
+  /** A failed write, said only at the start of its failing streak. */
+  private failure(io: LogIO, line: string): void {
+    if (!this.failing) this.fallback(io, line);
+    this.failing = true;
   }
 
   /** `line` to the fallback; a fallback that throws is swallowed, there being nowhere left to say it. */
@@ -212,6 +224,36 @@ export class Logger {
     const n = await this.newestArchive(io, file);
     return n > 0 && ((await io.read(`${file}.${n}`)) ?? '').includes(text);
   }
+}
+
+/** A buddy.log event as a plugin log event id: kebab case. */
+export function eventId(event: string): string {
+  return event.replace(/([a-z0-9])([A-Z])/g, '$1-$2').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+}
+
+/** The existing memory failure keeps its stable report event despite the filename. */
+export function failureEvent(what: string): string {
+  return what === 'writing memory.md' ? 'writing-memory-failed' : `${eventId(what)}-failed`;
+}
+
+/** Never copy prompt, transcript, tool input or env bodies from buddy.log fields. */
+export function pluginLogDetail(fields: Record<string, unknown>): Record<string, unknown> {
+  const detail: Record<string, unknown> = {};
+  for (const key of ['id', 'session', 'character', 'asker', 'drawn', 'count', 'characters', 'invalid',
+    'length', 'ms', 'try', 'turn', 'turnId', 'file', 'path', 'area', 'source', 'via', 'kind',
+    'outcome', 'reason', 'error', 'hidden', 'saved', 'filled']) {
+    const value = fields[key];
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') detail[key] = value;
+  }
+  return detail;
+}
+
+/** Only actionable outcomes and visible state changes, never routine hook traffic. */
+export function infoEvent(event: string, fields: Record<string, unknown> = {}): boolean {
+  return ['character.switch', 'hidden.shared', 'session.forget', 'personality.pick',
+    'drawer.open', 'drawer.close', 'drawer.use', 'rule.strike', 'ask.outcome', 'ask.dropped',
+    'promptToMainChat.sent', 'promptToMainChat.dropped', 'promptToMainChat.stale', 'promptToMainChat.movedOn'].includes(event)
+    || typeof fields.deny === 'string';
 }
 
 /** Two calls' raw usage added key by key (numbers only), so a retried call logs what both cost. */

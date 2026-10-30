@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'vitest';
-import { DEFAULTS, configFilePath, expandHome, leftoverOptionKeys, logPath, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, staleOptionsWarning } from '../plugins/buddy/src/options.ts';
+import { DEFAULTS, configFilePath, expandHome, leftoverOptionKeys, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, staleOptionsWarning } from '../plugins/buddy/src/options.ts';
 
 describe('resolveOptions', () => {
   test('the manifest defaults', () => {
     expect(resolveOptions({})).toEqual({ ...DEFAULTS, errors: [] });
-    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, promptToMainChat: true, promptWhenIdle: false, chatTurnsToRead: 4, logLevel: 'info', logFile: '$CLAUDE_CONFIG_DIR/buddy/buddy.log', saveRounds: true, ambiguousCharacterWidth: 'narrow' });
+    expect(DEFAULTS).toEqual({ character: 'duck', customCharactersDir: '', walkOverPromptBar: true, commentAfterEachTurn: true, model: 'opus', effort: 'low', secondsBetweenComments: 0, suggestNextPrompt: true, promptToMainChat: true, promptWhenIdle: false, chatTurnsToRead: 4, logLevel: 'info', saveRounds: true, ambiguousCharacterWidth: 'narrow' });
   });
   test('good values', () => {
     const o = resolveOptions({ character: ' Cat ', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: false, model: 'sonnet', effort: ' HIGH ', secondsBetweenComments: 10 });
@@ -132,23 +132,6 @@ describe('the chatTurnsToRead option', () => {
   });
 });
 
-describe('logPath', () => {
-  test('the default, $CLAUDE_CONFIG_DIR/buddy/buddy.log: in CLAUDE_CONFIG_DIR when set, else in ~/.claude', () => {
-    const d = DEFAULTS.logFile;
-    expect(logPath(d, { HOME: '/opt/me', CLAUDE_CONFIG_DIR: '/opt/work/' })).toEqual({ path: '/opt/work/buddy/buddy.log' });
-    expect(logPath(d, { HOME: '/opt/me/' })).toEqual({ path: '/opt/me/.claude/buddy/buddy.log' });
-    expect(logPath(d, { HOME: '/opt/me', CLAUDE_CONFIG_DIR: '' })).toEqual({ path: '/opt/me/.claude/buddy/buddy.log' });
-    expect(logPath(d, {})).toEqual({ error: 'no log file: neither CLAUDE_CONFIG_DIR nor HOME is set to place $CLAUDE_CONFIG_DIR/buddy/buddy.log' });
-    expect(logPath('$CLAUDE_CONFIG_DIRx/b.log', { HOME: '/opt/me', CLAUDE_CONFIG_DIR: '/opt/work' })).toEqual({ path: '$CLAUDE_CONFIG_DIRx/b.log' });
-  });
-  test('set: used as given, ~ against HOME whatever CLAUDE_CONFIG_DIR says; empty is no file', () => {
-    expect(logPath('/var/b.log', { HOME: '/opt/me', CLAUDE_CONFIG_DIR: '/opt/work' })).toEqual({ path: '/var/b.log' });
-    expect(logPath('~/.claude/buddy/buddy.log', { HOME: '/opt/me', CLAUDE_CONFIG_DIR: '/opt/work' })).toEqual({ path: '/opt/me/.claude/buddy/buddy.log' });
-    expect(logPath('', { HOME: '/opt/me', CLAUDE_CONFIG_DIR: '/opt/work' })).toEqual({ path: '' });
-    expect(logPath('~/b.log', {})).toEqual({ error: 'no HOME to expand ~/b.log' });
-  });
-});
-
 describe('expandHome', () => {
   test('~ and ~/ only', () => {
     expect(expandHome('~/chars', '/opt/me')).toBe('/opt/me/chars');
@@ -173,12 +156,11 @@ describe('expandHome', () => {
     expect(resolveOptions({ saveRounds: '~/rounds' }).errors).toEqual(['option saveRounds ignored: "~/rounds" is not true or false']);
   });
 
-  test('logFile: a path, trimmed; empty turns the file off; a non-string is ignored by name', () => {
-    expect(resolveOptions({ logFile: ' ~/logs/b.log ' }).logFile).toBe('~/logs/b.log');
-    expect(resolveOptions({ logFile: '' }).logFile).toBe('');
-    const o = resolveOptions({ logFile: 7 });
-    expect(o.logFile).toBe('$CLAUDE_CONFIG_DIR/buddy/buddy.log');
-    expect(o.errors).toEqual(['option logFile ignored: not a string']);
+  test('logFile is gone: a config file naming it is told where buddy.log lives now, and nothing else changes', () => {
+    const o = resolveOptions({ logFile: '~/logs/b.log', effort: 'high' });
+    expect(o).not.toHaveProperty('logFile');
+    expect(o.effort).toBe('high');
+    expect(o.errors).toEqual(['option logFile ignored: removed; buddy.log is in $PLUGIN_LOG_DIR/buddy, else ~/.local/state/buddy/logs']);
   });
   test('ambiguousCharacterWidth: narrow or wide, any case; anything else is ignored by name', () => {
     expect(resolveOptions({ ambiguousCharacterWidth: ' WIDE ' }).ambiguousCharacterWidth).toBe('wide');
@@ -271,7 +253,7 @@ describe('resolveOptions from the config file', () => {
     expect(resolveOptions(six)).toEqual({ ...DEFAULTS, ...six, errors: [] });
   });
   test('every option key is accepted at a non-default value of its type', () => {
-    const file = { character: 'robot', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: false, model: 'haiku', effort: 'max', secondsBetweenComments: 30, suggestNextPrompt: false, promptToMainChat: false, promptWhenIdle: true, chatTurnsToRead: 7, logLevel: 'debug', logFile: '~/b.log', saveRounds: false, ambiguousCharacterWidth: 'wide' };
+    const file = { character: 'robot', customCharactersDir: '~/chars', walkOverPromptBar: false, commentAfterEachTurn: false, model: 'haiku', effort: 'max', secondsBetweenComments: 30, suggestNextPrompt: false, promptToMainChat: false, promptWhenIdle: true, chatTurnsToRead: 7, logLevel: 'debug', saveRounds: false, ambiguousCharacterWidth: 'wide' };
     expect(Object.keys(file).sort()).toEqual([...keys].sort());
     expect(resolveOptions(file)).toEqual({ ...file, errors: [] });
   });
@@ -279,14 +261,13 @@ describe('resolveOptions from the config file', () => {
     expect(resolveOptions({ effort: 'high', colour: 'red' })).toMatchObject({ effort: 'high', errors: ['option colour ignored: not a buddy option'] });
   });
   test('a wrong-typed value is named; its default applies and the others still apply', () => {
-    const o = resolveOptions({ character: 3, walkOverPromptBar: 'true', secondsBetweenComments: '5', logFile: false, effort: 'low', chatTurnsToRead: 11 });
-    expect(o).toMatchObject({ character: 'duck', walkOverPromptBar: true, secondsBetweenComments: 0, logFile: DEFAULTS.logFile, effort: 'low', chatTurnsToRead: 4 });
+    const o = resolveOptions({ character: 3, walkOverPromptBar: 'true', secondsBetweenComments: '5', effort: 'low', chatTurnsToRead: 11 });
+    expect(o).toMatchObject({ character: 'duck', walkOverPromptBar: true, secondsBetweenComments: 0, effort: 'low', chatTurnsToRead: 4 });
     expect(o.errors).toEqual([
       'option character ignored: not a string',
       'option walkOverPromptBar ignored: "true" is not true or false',
       'option secondsBetweenComments ignored: "5" is not a number of seconds',
       'option chatTurnsToRead ignored: 11 is not a whole number from 1 to 10; reading 4',
-      'option logFile ignored: not a string',
     ]);
   });
   test('file-level errors come first, then each key problem', () => {
@@ -296,8 +277,8 @@ describe('resolveOptions from the config file', () => {
 
 describe('leftoverOptionKeys', () => {
   test('the option keys of every buddy@ entry across the sources, each once; other plugins, empty and malformed entries add none', () => {
-    const user = { pluginConfigs: { 'buddy@buddy': { options: { promptToMainChat: false, effort: 'high' } }, 'other@x': { options: { colour: 'red' } }, 'buddyx@y': { options: { model: 'haiku' } } } };
-    const local = { pluginConfigs: { 'buddy@inline': { options: { effort: 'low', saveRounds: false } }, 'buddy@buddy-dev': { options: {} } } };
+    const user = { pluginConfigs: { 'buddy@professor': { options: { promptToMainChat: false, effort: 'high' } }, 'other@x': { options: { colour: 'red' } }, 'buddyx@y': { options: { model: 'haiku' } } } };
+    const local = { pluginConfigs: { 'buddy@inline': { options: { effort: 'low', saveRounds: false } }, 'buddy@elsewhere': { options: {} } } };
     const odd = { pluginConfigs: { 'buddy@a': null, 'buddy@b': { options: ['x'] }, 'buddy@c': 'text' } };
     expect(leftoverOptionKeys([user, {}, local, odd, { pluginConfigs: [] }])).toEqual(['promptToMainChat', 'effort', 'saveRounds']);
   });
