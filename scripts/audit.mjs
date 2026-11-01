@@ -16,7 +16,8 @@
 // dollars (its calls, tokens and turns still count). It is an estimate: the
 // account's own bill is the truth.
 //
-// Needs Node >= 23.6, where type stripping is on by default: it imports the
+// Needs Node >= 23.6, where type stripping is on by default (22.6+ with
+// --experimental-strip-types): it imports the
 // .ts module as it is.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
