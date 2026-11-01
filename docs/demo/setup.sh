@@ -21,7 +21,8 @@ live_isolate
 
 # Trust the demo folder up front: no trust dialog on screen.
 jq --arg w "$WORK" '.projects[$w] = { hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true }' \
-  "$LIVE_CONFIG/.claude.json" > "$RUN/claude.json" && mv "$RUN/claude.json" "$LIVE_CONFIG/.claude.json"
+  "$LIVE_CONFIG/.claude.json" > "$RUN/claude.json" && mv "$RUN/claude.json" "$LIVE_CONFIG/.claude.json" ||
+  { echo "ERROR could not trust $WORK in $LIVE_CONFIG/.claude.json, so the trust dialog would show" >&2; return 2; }
 
 live_buddy_config "$(jq -n '{ character: "terry", model: "sonnet", effort: "low" }')"
 

@@ -12,6 +12,11 @@ export function ends(text: string, head: number, tail: number): string {
   return text.length > head + tail + CUT.length + 2 ? `${text.slice(0, head)} ${CUT} ${text.slice(text.length - tail)}` : text;
 }
 
+/** `text` whole when it fits `max` characters, else its first `max - 1` and `…`. */
+export function cutTo(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 /** How much of an agent's report is kept from its start and from its end. */
 export const REPORT_HEAD = 600;
 export const REPORT_TAIL = 200;

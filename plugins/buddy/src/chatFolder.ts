@@ -41,6 +41,11 @@ export function transcriptPath(projects: string, slug: string, sessionId: string
   return `${projects}/${slug}/${sessionId}.jsonl`;
 }
 
+/** Where a file of the buddy folder at `path` that does not read is kept, whole, before the first write over it: beside it, stamped `at`. */
+export function asidePath(path: string, at: number): string {
+  return `${path}.unreadable-${at}`;
+}
+
 /** The buddy's folder in the chat's own folder, beside its transcript. */
 export function buddyFolder(projects: string, slug: string, sessionId: string): string {
   return `${projects}/${slug}/${sessionId}/${BUDDY_FOLDER}`;

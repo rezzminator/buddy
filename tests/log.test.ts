@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { LOG_LEVELS, Logger, THROTTLE_MS, errorFields, eventId, failureEvent, infoEvent, notice, pluginLogDetail, sumUsage, superseded, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
+import { LOG_LEVELS, Logger, RETRY_MAX, THROTTLE_MS, errorFields, eventId, failureEvent, infoEvent, notice, pluginLogDetail, sumUsage, superseded, usageFields, type LogIO } from '../plugins/buddy/src/log.ts';
 
 function disk(refuse = false) {
   const files: Record<string, string> = {};
@@ -86,7 +86,7 @@ describe('Logger', () => {
     L.log('info', 'fine');
     L.error('reading x', new Error('nope'));
     await expect(L.flush(io)).resolves.toBeUndefined();
-    expect(d.fallback[0]).toBe('the log /l/b.log lost 2 records to another writer at the same time');
+    expect(d.fallback[0]).toBe('the log /l/b.log lost a write of 2 records to another writer at the same time; they wait for the next');
     expect(d.fallback[1]).toMatch(/^\{.*"event":"reading x"/);
     expect(d.fallback).toHaveLength(2);
   });
@@ -112,12 +112,27 @@ describe('Logger', () => {
     expect(failures()).toEqual(['writing the log /l/b.log failed: EACCES: /l/b.log']);
     refuse = false;
     L.log('info', 'kept'); await L.flush(io);
+    // The records of the failed writes waited, and landed with the next.
+    expect(lines(d.files['/l/b.log']).map((x) => x.event)).toEqual(['lost 0', 'lost 1', 'lost 2', 'kept']);
     refuse = true;
     L.log('info', 'lost again'); await L.flush(io);
     expect(failures()).toHaveLength(2);
     expect(d.fallback.every((l) => l.startsWith('writing the log '))).toBe(true);
   });
 
+  test('a failing log keeps the newest RETRY_MAX records for its next write, the oldest past it gone', async () => {
+    const d = disk();
+    let refuse = true;
+    const io: LogIO = { ...d.io, write: async (p, t) => { if (refuse) throw new Error(`EACCES: ${p}`); await d.io.write(p, t); } };
+    const L = new Logger('info', '/l/b.log');
+    for (let i = 0; i <= RETRY_MAX; i++) L.log('info', `r${i}`);
+    await L.flush(io);
+    refuse = false;
+    L.log('info', 'next'); await L.flush(io);
+    const events = lines(d.files['/l/b.log']).map((x) => x.event);
+    expect(events).toHaveLength(RETRY_MAX + 1);
+    expect([events[0], events.at(-2), events.at(-1)]).toEqual(['r1', `r${RETRY_MAX}`, 'next']);
+  });
   test('a fallback that throws never kills the log: a later flush still writes, and flush never throws', async () => {
     const d = disk();
     let refuse = true;

@@ -43,7 +43,7 @@ describe('memory ops: parse, add and merge', () => {
   });
   test.each(['{oops', '[1]', '""', 'null', '1', 'true'])('broken or non-object JSON %s drops once', (raw) => {
     const memory = { ...empty(), items: { 'fact.x': item() } };
-    expect(applyMemory(memory, raw, ctx)).toEqual({ ...memory, ops: [op('*', 'drop', 'not a JSON object')] });
+    expect(applyMemory(memory, raw, ctx)).toEqual({ ...memory, ops: [op('*', 'drop', `not a JSON object: ${raw}`)] });
   });
   test('end saves the original item and removes the live key', () => {
     const old = Object.freeze(item('Fix the CLI.'));
@@ -54,6 +54,16 @@ describe('memory ops: parse, add and merge', () => {
     });
     expect(memory.items['open.fix-cli']).toBe(old);
   });
+  test('a late reply applies its ops on keys unchanged since its call read the memory; one on a key a newer save changed is dropped, the newer change kept', () => {
+    const then = { items: { 'fact.a': item('A.'), 'fact.b': item('B.'), 'open.c': item('C.') }, ended: {} };
+    const now = { items: { 'fact.a': item('A, newer.', 9, 900), 'fact.b': item('B.'), 'fact.e': item('E.', 9, 900) }, ended: { 'open.c': { item: item('C.'), reason: 'done: shipped', turn: 9, at: 900 } } };
+    const late = { ...ctx, since: then };
+    expect(applyMemory(now, JSON.stringify({ 'fact.a': { text: 'A, older.' }, 'fact.b': { text: 'B, late.' }, 'open.c': { text: 'C again.' }, 'fact.e': { text: 'E, late.' }, 'lesson.d': { text: 'D.' } }), late)).toEqual({
+      items: { 'fact.a': item('A, newer.', 9, 900), 'fact.b': { text: 'B, late.', from: 'shown', turn: 10, at: 1000 }, 'fact.e': item('E.', 9, 900), 'lesson.d': { text: 'D.', from: 'buddy', turn: 10, at: 1000 } },
+      ended: now.ended,
+      ops: [op('fact.a', 'drop', 'late reply: a newer memory save changed it first'), op('fact.b', 'set', 'text'), op('open.c', 'drop', 'late reply: a newer memory save changed it first'), op('fact.e', 'drop', "late reply: the call's prompt did not hold this item"), op('lesson.d', 'add', 'added')],
+    });
+  });
 });
 
 const rule = (words = 'keep main safe', covers = 'the repo'): Item => ({ words, covers, from: 'user', turn: 4, at: 400 });
@@ -62,25 +72,15 @@ describe('memory ops: checks in order, the rest still applied', () => {
   const bad: [string, string, unknown, string, Items?][] = [
     ...['Rule.X', 'note.x', 'fact.a-b-c-d-e', 'fact.', 'fact.a_b'].map((key): [string, string, unknown, string] => [key, key, { text: 'a' }, 'bad key']),
     ...['text', [], 1, null].map((value): [string, string, unknown, string] => [`value ${JSON.stringify(value)}`, 'fact.x', value, 'not an object']),
-    ['unknown field', 'fact.x', { text: 'a', kind: 'fact' }, 'unknown field kind'],
-    ...['text', 'words', 'covers', 'from', 'end'].flatMap((field) => [[], { a: 1 }, 1, null].map((value): [string, string, unknown, string] => [`${field} ${JSON.stringify(value)}`, 'fact.x', { [field]: value }, `not text: ${field}`])),
-    ...['text', 'words', 'covers', 'end'].map((field): [string, string, unknown, string] => [`long ${field}`, 'fact.x', { [field]: 'x'.repeat(301) }, `too long: ${field}`]),
-    ...['text', 'words', 'covers', 'from', 'end'].map((field): [string, string, unknown, string] => [`empty ${field}`, 'fact.x', { [field]: '  ' }, `empty: ${field}`]),
-    ['bad from', 'fact.x', { text: 'a', from: 'me' }, 'bad from'],
-    ['bad end', 'open.x', { end: 'finished' }, 'bad end', { 'open.x': item() }],
     ['end unknown', 'open.x', { end: 'done: shipped' }, 'end on unknown key'],
     ['new no text', 'fact.x', { from: 'shown' }, 'new item without text'],
-    ['new rule no covers', 'rule.x', { words: 'keep main safe' }, 'new rule without words or covers'],
-    ['new rule no words', 'rule.x', { covers: 'the repo' }, 'new rule without words or covers'],
+    ['new rule no words', 'rule.x', { covers: 'the repo' }, 'new rule without words'],
     ['untyped words', 'rule.x', { words: 'push freely', covers: 'the repo' }, 'words not typed by the user'],
     ['set untyped words', 'rule.x', { words: 'push freely' }, 'words not typed by the user', { 'rule.x': rule() }],
     ['no field', 'fact.x', {}, 'no field'],
+    ['only a blank field', 'fact.x', { text: ' ' }, 'no field; ignored empty: text'],
+    ['only bad fields, new', 'fact.x', { kind: 'fact', text: [] }, 'no field; ignored unknown field kind; ignored not text: text'],
     ['key before value', 'bad', null, 'bad key'],
-    ['unknown before value type', 'fact.x', { text: [], kind: 'fact' }, 'unknown field kind'],
-    ['type before blank', 'fact.x', { text: ' ', covers: null }, 'not text: covers'],
-    ['blank before length', 'fact.x', { text: 'x'.repeat(301), words: ' ' }, 'empty: words'],
-    ['length before from', 'fact.x', { text: 'x'.repeat(301), from: 'me' }, 'too long: text'],
-    ['from before end unknown', 'open.x', { end: 'finished', from: 'me' }, 'bad from'],
     ['unknown before end grammar', 'open.x', { end: 'finished' }, 'end on unknown key'],
   ];
   test.each(bad)('%s', (_label, key, value, why, items = {}) => {
@@ -89,6 +89,36 @@ describe('memory ops: checks in order, the rest still applied', () => {
     expect(r.ops).toEqual([op(key, 'drop', why), op('fact.valid', 'add', 'added')]);
     expect(r.items).toEqual({ ...before, 'fact.valid': { text: 'Applied.', from: 'buddy', turn: 10, at: 1000 } });
     expect(items).toEqual(before);
+  });
+  const long = 'x'.repeat(ITEM_MAX_CHARS + 1);
+  const kept: [string, string, unknown, Items, Item, string][] = [
+    ['unknown field', 'fact.x', { text: 'a', kind: 'fact' }, {}, { text: 'a', from: 'buddy', turn: 10, at: 1000 }, 'added; ignored unknown field kind'],
+    ...['words', 'covers', 'from'].map((field): [string, string, unknown, Items, Item, string] => [`not text ${field}`, 'fact.x', { text: 'a', [field]: [] }, {}, { text: 'a', from: 'buddy', turn: 10, at: 1000 }, `added; ignored not text: ${field}`]),
+    ...['words', 'covers', 'from'].map((field): [string, string, unknown, Items, Item, string] => [`empty ${field}`, 'fact.x', { text: 'a', [field]: '  ' }, {}, { text: 'a', from: 'buddy', turn: 10, at: 1000 }, `added; ignored empty: ${field}`]),
+    ['long text cut', 'fact.x', { text: long }, {}, { text: `${'x'.repeat(ITEM_MAX_CHARS - 1)}…`, from: 'buddy', turn: 10, at: 1000 }, 'added; cut too long: text'],
+    ['long covers cut on a set', 'rule.x', { covers: long }, { 'rule.x': rule() }, { ...rule(), covers: `${'x'.repeat(ITEM_MAX_CHARS - 1)}…`, turn: 10, at: 1000 }, 'covers; cut too long: covers'],
+    ['bad from reads unknown', 'fact.x', { text: 'a', from: 'me' }, {}, { text: 'a', from: 'unknown', turn: 10, at: 1000 }, 'added; bad from me: unknown'],
+    ['bad from on a set', 'fact.x', { from: 'me' }, { 'fact.x': item() }, { ...item(), from: 'unknown', turn: 10, at: 1000 }, 'from; bad from me: unknown'],
+    ['new rule without covers', 'rule.x', { words: 'keep main safe' }, {}, { words: 'keep main safe', from: 'user', turn: 10, at: 1000 }, 'added'],
+    ['new rule, bad from forced user', 'rule.x', { words: 'keep main safe', from: 'me' }, {}, { words: 'keep main safe', from: 'user', turn: 10, at: 1000 }, 'added; bad from me: unknown'],
+  ];
+  test.each(kept)('%s: the op applies with its good fields, the bad ones named', (_label, key, value, items, expected, why) => {
+    const r = apply({ [key]: value }, items);
+    expect(r.ops).toEqual([op(key, Object.keys(items).length ? 'set' : 'add', why)]);
+    expect(r.items[key]).toEqual(expected);
+  });
+  test('an end off its grammar ends the item with the reason unknown, its words kept', () => {
+    const old = item();
+    expect(apply({ 'open.x': { end: 'finished', kind: 'x' } }, { 'open.x': old })).toEqual({
+      items: {}, ended: { 'open.x': { item: old, reason: 'unknown: finished', turn: 10, at: 1000 } },
+      ops: [op('open.x', 'end', 'unknown: finished; ignored unknown field kind; bad end: reason unknown')],
+    });
+  });
+  test('rule words past the cap are cut at a word boundary and still quote what was typed', () => {
+    const typed = Array(30).fill('keep main safe').join(' ');
+    const r = apply({ 'rule.x': { words: typed, covers: 'the repo' } }, {}, {}, { ...ctx, typed: [typed] });
+    expect(r.ops).toEqual([op('rule.x', 'add', 'added; cut too long: words')]);
+    expect(r.items['rule.x']!.words).toBe(Array(20).fill('keep main safe').join(' '));
   });
   test('an ended key is still unknown to end', () => {
     const ended = { 'open.x': { item: item(), reason: 'done: before', turn: 4, at: 400 } };
@@ -225,7 +255,7 @@ describe('memory ops: ended items, expiry and caps', () => {
     expect(r.items).toEqual({ 'doubt.recent': recent });
     expect(r.ended).toEqual({ 'doubt.old': { item: stale, reason: 'stale: untouched 3 turns', turn: 10, at: 1000 } });
     expect(r.ops).toEqual([
-      ...(raw === null || raw === '{}' ? [] : [op('*', 'drop', 'not a JSON object')]),
+      ...(raw === null || raw === '{}' ? [] : [op('*', 'drop', `not a JSON object: ${raw}`)]),
       op('doubt.old', 'expire', 'stale: untouched 3 turns'),
     ]);
   });
@@ -452,10 +482,8 @@ describe('stored items loader', () => {
   test('keeps valid values and counts a malformed live item and ended record', () => {
     const live = item();
     const ended = { item: rule(), reason: 'lifted: done', turn: 9, at: 900 };
-    const r = itemsOf({ 'fact.x': live, 'fact.bad': { text: 'bad' } }, { 'rule.x': ended, 'open.bad': { item: item(), reason: 1, turn: 10, at: 1000 } });
+    const r = itemsOf({ 'fact.x': live, 'fact.bad': { text: 'bad' } }, { 'rule.x': ended, 'open.bad': { item: { from: 'shown', turn: 1, at: 1 }, reason: 'done', turn: 10, at: 1000 } });
     expect(r).toEqual({ items: { 'fact.x': live }, ended: { 'rule.x': ended }, dropped: 2 });
-    expect(r.items['fact.x']).toBe(live);
-    expect(r.ended['rule.x']).toBe(ended);
   });
   test('undefined is an empty store with no dropped entries', () => {
     expect(itemsOf(undefined, undefined)).toEqual({ items: {}, ended: {}, dropped: 0 });
@@ -468,29 +496,49 @@ describe('stored items loader', () => {
   const malformed: [string, string, unknown][] = [
     ['bad key', 'bad.x', item()],
     ...[null, [], 'text', 1].map((value): [string, string, unknown] => [`not object ${JSON.stringify(value)}`, 'fact.x', value]),
-    ['bad from', 'fact.x', { ...item(), from: 'me' }],
-    ['missing from', 'fact.x', { text: 'a', turn: 1, at: 1 }],
     ...['turn', 'at'].flatMap((field) => [undefined, NaN, Infinity, -Infinity, '1', null].map((value): [string, string, unknown] => [`${field} ${String(value)}`, 'fact.x', { ...item(), [field]: value }])),
-    ...['text', 'words', 'covers'].flatMap((field) => [null, [], {}, 1].map((value): [string, string, unknown] => [`${field} ${JSON.stringify(value)}`, 'fact.x', { ...item(), [field]: value }])),
+    ...[null, [], {}, 1].map((value): [string, string, unknown] => [`text ${JSON.stringify(value)}`, 'fact.x', { ...item(), text: value }]),
     ['missing text', 'fact.x', { from: 'shown', turn: 1, at: 1 }],
     ['rule missing words', 'rule.x', { covers: 'repo', from: 'user', turn: 1, at: 1 }],
-    ['rule missing covers', 'rule.x', { words: 'keep safe', from: 'user', turn: 1, at: 1 }],
   ];
   test.each(malformed)('%s rejected both live and inside an ended record', (_label, key, value) => {
     expect(itemsOf({ [key]: value }, { [key]: { item: value, reason: 'done', turn: 10, at: 1000 } })).toEqual({ items: {}, ended: {}, dropped: 2 });
   });
-  test.each([
-    null, [], 'text', 1,
-    { item: item(), reason: 1, turn: 10, at: 1000 },
-    { item: item(), turn: 10, at: 1000 },
-    ...['turn', 'at'].flatMap((field) => [undefined, NaN, Infinity, '1', null].map((value) => ({ item: item(), reason: 'done', turn: 10, at: 1000, [field]: value }))),
-  ])('malformed ended record %j counts once', (value) => {
+  const display: [string, string, unknown, Item][] = [
+    ['bad from reads unknown', 'fact.x', { ...item(), from: 'me' }, { ...item(), from: 'unknown' }],
+    ['missing from reads unknown', 'fact.x', { text: 'a', turn: 1, at: 1 }, { text: 'a', from: 'unknown', turn: 1, at: 1 }],
+    ...[null, [], {}, 1].flatMap((value) => ['words', 'covers'].map((field): [string, string, unknown, Item] => [`fact ${field} ${JSON.stringify(value)} left out`, 'fact.x', { ...item(), [field]: value }, item()])),
+    ...[null, [], {}, 1].map((value): [string, string, unknown, Item] => [`rule covers ${JSON.stringify(value)} left out`, 'rule.x', { ...rule(), covers: value }, { words: 'keep main safe', from: 'user', turn: 4, at: 400 }]),
+    ['rule missing covers', 'rule.x', { words: 'keep safe', from: 'user', turn: 1, at: 1 }, { words: 'keep safe', from: 'user', turn: 1, at: 1 }],
+    ['rule text not text left out', 'rule.x', { ...rule(), text: 3 }, rule()],
+    ...[false, 'yes', 1].map((value): [string, string, unknown, Item] => [`migrated ${JSON.stringify(value)} absent`, 'fact.x', { ...item(), migrated: value }, item()]),
+  ];
+  test.each(display)('%s: kept live and inside an ended record', (_label, key, value, expected) => {
+    expect(itemsOf({ [key]: value }, { [key]: { item: value, reason: 'done', turn: 10, at: 1000 } })).toEqual({ items: { [key]: expected }, ended: { [key]: { item: expected, reason: 'done', turn: 10, at: 1000 } }, dropped: 0 });
+  });
+  test.each([null, [], 'text', 1, { turn: 10, at: 1000, reason: 'done' }])('ended record %j without a readable item counts once', (value) => {
     expect(itemsOf(undefined, { 'fact.x': value })).toEqual({ items: {}, ended: {}, dropped: 1 });
+  });
+  test.each([
+    [{ reason: 1, turn: 10, at: 1000 }, { reason: 'unknown', turn: 10, at: 1000 }],
+    [{ turn: 10, at: 1000 }, { reason: 'unknown', turn: 10, at: 1000 }],
+    ...['turn', 'at'].flatMap((field) => [undefined, NaN, Infinity, '1', null].map((value): [object, object] => [{ reason: 'done', turn: 10, at: 1000, [field]: value }, field === 'turn' ? { reason: 'done', at: 1000 } : { reason: 'done', turn: 10 }])),
+  ])('an ended record %j keeps its item, what it lost read as unknown', (record, expected) => {
+    expect(itemsOf(undefined, { 'fact.x': { item: item(), ...record } })).toEqual({ items: {}, ended: { 'fact.x': { item: item(), ...expected } }, dropped: 0 });
   });
   test('a migrated marker is kept only when it is exactly true', () => {
     const good = { ...item(), migrated: true };
-    const r = itemsOf({ 'fact.a': good, 'fact.b': { ...item(), migrated: false }, 'fact.c': { ...item(), migrated: 'yes' } }, undefined);
-    expect(r).toEqual({ items: { 'fact.a': good }, ended: {}, dropped: 2 });
+    expect(itemsOf({ 'fact.a': good, 'fact.b': { ...item(), migrated: false } }, undefined)).toEqual({ items: { 'fact.a': good, 'fact.b': item() }, ended: {}, dropped: 0 });
+  });
+  test('an ended record without its turn and time renders turn unknown and sorts oldest; a rule without covers renders covers unknown', () => {
+    const ended = { 'fact.lost': { item: item('Lost.'), reason: 'unknown' }, 'fact.new': { item: item('New.'), reason: 'done', turn: 9, at: 900 } };
+    expect(itemsText({ 'rule.x': { words: 'keep main safe', from: 'user', turn: 10, at: 1000 } }, ended, 10)).toBe([
+      '## Items, by kind (age: turns since it last changed)', '',
+      '### rule', '- rule.x · "keep main safe" covers: unknown · from user · age 0', '',
+      '## Ended, newest first', '',
+      '- fact.new · done · turn 9 · New.',
+      '- fact.lost · unknown · turn unknown · Lost.',
+    ].join('\n'));
   });
   test('all four From values accepted; loading checks stored shape without reapplying op limits', () => {
     const items = Object.fromEntries(['user', 'claude', 'shown', 'buddy'].map((from, i) => [`fact.x${i}`, { text: 'x'.repeat(301), from, turn: 1, at: 1 }]));

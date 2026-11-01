@@ -24,16 +24,16 @@ function callOf(value: unknown): PendingCall | null {
   const v = value as Record<string, unknown>;
   if (typeof v.id !== 'string' || typeof v.kind !== 'string' || !KINDS.includes(v.kind)) return null;
   if (typeof v.at !== 'number' || !Number.isFinite(v.at)) return null;
-  if (v.turnId !== undefined && typeof v.turnId !== 'string') return null;
+  // turnId only labels the outcome: one that is not a string is left out, the call kept.
   const call: PendingCall = { id: v.id, kind: v.kind as PendingCallKind, at: v.at };
   return typeof v.turnId === 'string' ? { ...call, turnId: v.turnId } : call;
 }
 
-/** The kept record, or null when it is not one; a malformed call in it is dropped, the sound ones kept. */
+/** The kept record, whatever version wrote it, or null when it holds no calls list; a malformed call in it is dropped, the sound ones kept. */
 export function pendingCallsOf(value: unknown): PendingCalls | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (v.version !== 1 || !Array.isArray(v.calls)) return null;
+  if (!Array.isArray(v.calls)) return null;
   return { version: 1, calls: v.calls.map(callOf).filter((c): c is PendingCall => c !== null) };
 }
 

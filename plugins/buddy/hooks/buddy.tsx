@@ -9,14 +9,14 @@ import { frameAt, type Character, type Pose } from '../src/character.ts';
 import { DRAWER_KEYS, USAGE, parseCommand, type Action } from '../src/command.ts';
 import { allItems, buildMenu, currentKeyOf, findItem, paneRows, type Item, type Menu, type Originals } from '../src/menu.ts';
 import {
-  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, BUDDY_PROMPT, TAKEN_SUGGESTION, chatTurnsToReadOf, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, memoryText, render, storeKey, typedByUser,
+  CHAT_TURNS_TO_READ_RETRY_MS, CHAT_TURNS_TO_READ_WRITE_DEADLINE_MS, CHAT_TURNS_TO_READ_WRITE_TRIES, BUDDY_PROMPT, TAKEN_SUGGESTION, chatTurnsToReadOf, chatTurnsToReadOfText, addCompaction, addExchange, addTurn, cleanPrompt, memoryStats, memoryText, render, storeKey, typedByUser,
   type Block, type Exchange, type Stored,
 } from '../src/chatTurnsToRead.ts';
 import { applyMemory, migrateNotes, renderItems, type Items, type EndedItems } from '../src/memoryItems.ts';
 import { AWAY_EFFORT, AWAY_IDLE_MS, AWAY_MAX_TOKENS, AWAY_MODEL, AWAY_PUSHES_MAX, AWAY_SYSTEM, awayBody, awayDecision, awayRearmMs, awayRecordOf, awayWaitStale, type AwayRecord, type AwayWait } from '../src/away.ts';
 import { AGAIN_PREFIX, rulePrompt, rulesContext, ruleWarning, sameStrikes, strikeRule, type Strikes } from '../src/steering.ts';
 import { CALLS_FILE, NO_PENDING_CALLS, abandonedCalls, callEnded, callStarted, pendingCallsOf, type PendingCall, type PendingCallKind, type PendingCalls } from '../src/pendingCalls.ts';
-import { AWAY_FILE, MEMORY_FILE, MEMORY_TEXT_FILE, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
+import { AWAY_FILE, MEMORY_FILE, MEMORY_TEXT_FILE, asidePath, buddyFolder, isSessionId, projectSlug, projectsDir, transcriptPath } from '../src/chatFolder.ts';
 import { actionOf, briefedOf, callSize, denialReason, didOf, failureReason, returnedOf, type Action as Step, type Failure } from '../src/did.ts';
 import { answerSuggestions, feedOfMemory, knownEntries, lastMessageOf, markNumbers, markRead, pruneToMemory, pushEntry, type FeedEntry, type NewEntry, type TurnEnding } from '../src/feed.ts';
 import { drawDrawer, drawPicker, type DrawerView, type Elements, type MenuState } from './drawer.tsx';
@@ -29,7 +29,7 @@ import { within, type Sleep } from '../src/deadline.ts';
 import { chained, latestWrites, newChain, type Chain, type LatestWrites } from '../src/chain.ts';
 import { CONFIG_FILE_SUFFIX, INHERIT, SETTINGS_SOURCES, configFilePath, expandHome, leftoverOptionKeys, observeEffort, parseConfigFile, resolveEffort, resolveModel, resolveOptions, sessionOptions, type Effort, type ObservedEffort, type Options } from '../src/options.ts';
 import {
-  ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, EXTENDED_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostTurnOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
+  ASKED_PROMPT_MAX_CHARS, BUDDY_PROMPT_CONTEXT, isOwnPrompt, NO_PROMPTS, NO_WHY, PROMPT_TO_MAIN_CHAT_MAX_CHARS, SUGGEST_NEXT_PROMPT_MAX_CHARS, QUESTION_MAX_TOKENS, TAKEN_SUGGESTION_CONTEXT, EXTENDED_SUGGESTION_CONTEXT, TURN_DEADLINE_MS, TURN_MAX_TOKENS, deliverPrompts, endPromptTurn, lostTurnOf, startPromptTurn, endsConversation, isUserOrigin, oneLineSystem, originOf, parseAskReply, parseTurnReply, questionPrompt, requestTimeoutMs, retriesEmpty,
   sayInTurn, skipReason, stillThinking, submitPrompt, turnMay, turnPrompt, turnSystem, type PromptLedger, type Said, type Turn, type TurnGate, type TurnReply, type TurnSummary, type TurnWants, type Verdict,
 } from '../src/prompts.ts';
 import { dropsHarnessSuggestion, heldSuggestionRelease, repeatedSuggestion, suggestNextPromptOutcome, suggestionUse, type SuggestionUse } from '../src/suggestNextPrompt.ts';
@@ -120,8 +120,6 @@ type State = {
   hiddenSaves: number;
   /** Bumped at every main-loop turn's end, however it ended, and at /clear: a commentAfterEachTurn, verdict or suggestNextPrompt from an earlier turn's call is stale, never shown. */
   turnGen: number;
-  /** Bumped at every memory save a turn's reply asks for: a late reply whose call started before a newer save never overwrites it. */
-  memorySaves: number;
   /** The engine's own suggestion for this turn, held back while the buddy's end-of-turn call runs: shown if the buddy gives up. */
   harnessSuggestion: string | null;
   /** The buddy gave up on this turn's suggestNextPrompt: the engine's own suggestion passes. */
@@ -429,24 +427,30 @@ async function chatTurnsToReadFor(st: State, $: EngineInterface, live: () => boo
   const path = `${dir}/${MEMORY_FILE}`;
   const textPath = `${dir}/${MEMORY_TEXT_FILE}`;
   let value: unknown;
+  let text: string | undefined;
   let legacy = false;
-  let unreadable = '';
-  if (await $.fs.exists(path)) {
-    const text = (await $.fs.read(path)) as string;
-    try {
-      value = JSON.parse(text);
-    } catch (error) {
-      unreadable = `${path} is not JSON (${message(error)}); starting over`;
-    }
-  } else {
+  if (await $.fs.exists(path)) text = (await $.fs.read(path)) as string;
+  else {
     value = await $.store.get(storeKey(sessionId));
     legacy = value !== undefined;
   }
   const hasText = await $.fs.exists(textPath);
   if (!live()) return null;
-  const loaded = chatTurnsToReadOf(value);
-  if (unreadable || loaded.error) chatTurnsToReadFailed(st, $, 'reading the chatTurnsToRead', new Error(unreadable || loaded.error));
-  if (loaded.v1Notes !== undefined && value !== undefined) {
+  const loaded = text !== undefined ? chatTurnsToReadOfText(text) : chatTurnsToReadOf(value);
+  if (loaded.setAside && !loaded.untouched) {
+    // What does not read is kept whole before anything is written over it; kept nowhere, it is never written over.
+    const aside = asidePath(path, Date.now());
+    try {
+      if (text === undefined) throw new Error('it is in the store, not a file');
+      await $.fs.write(aside, text);
+      loaded.error = `${loaded.error}: kept whole as ${aside}`;
+    } catch (error) {
+      loaded.untouched = true;
+      loaded.error = `${loaded.error}: could not be kept aside (${message(error)}), so it is left untouched and this chat's memory is not saved`;
+    }
+  }
+  if (loaded.error) chatTurnsToReadFailed(st, $, 'reading the chatTurnsToRead', new Error(loaded.error));
+  if (loaded.v1Notes !== undefined && (value !== undefined || text !== undefined)) {
     const migrated = migrateNotes(loaded.v1Notes, st.b?.character.id ?? null, { turn: loaded.turnNo, at: Date.now(), typed: typedByUser(loaded.blocks) });
     loaded.items = migrated.items;
     loaded.ended = migrated.ended;
@@ -878,24 +882,18 @@ function rememberExchange(st: State, $: EngineInterface, characterId: string, x:
 
 /**
  * The edits of turn `turnId`'s reply applied to the chat's memory, each
- * accepted or refused op logged: stamped with that turn's number and proven
- * only against what the user had typed by then. Counted in memorySaves only
- * when it changed an item, and saved only when it changed anything. A late
- * reply passes `saves`, the count when its call began: a newer reply that
- * changed memory first, on the same chain, drops its edits.
+ * accepted or refused op logged: stamped with that turn's number, proven only
+ * against what the user had typed by then, and against `since`, the items its
+ * call read: an edit of an item another save changed meanwhile is dropped,
+ * the rest applied. Saved only when it changed anything.
  */
-function rememberItems(st: State, $: EngineInterface, raw: string | null, turnId: string, saves?: number): void {
+function rememberItems(st: State, $: EngineInterface, raw: string | null, turnId: string, since: Seen): void {
   changeChatTurnsToRead(st, $, 'remembering the memory', (m) => {
-    if (saves !== undefined && st.memorySaves !== saves) {
-      if (raw !== null) lg($, 'info', 'memory.op', { key: '*', op: 'drop', why: 'late reply: a newer memory save came first', turn: m.turnNo });
-      return null;
-    }
     const at = m.blocks.findIndex((b) => b.turnId === turnId);
     const seen = at < 0 ? m.blocks : m.blocks.slice(0, at + 1);
     const turn = at < 0 ? m.turnNo : (m.blocks[at]!.no ?? m.turnNo);
-    const changed = applyMemory({ items: m.items, ended: m.ended }, raw, { turn, at: Date.now(), typed: typedByUser(seen) });
+    const changed = applyMemory({ items: m.items, ended: m.ended }, raw, { turn, at: Date.now(), typed: typedByUser(seen), since });
     for (const op of changed.ops) lg($, 'info', 'memory.op', { key: op.key, op: op.op, why: op.why, turn: op.turn });
-    if (changed.ops.some((o) => o.op === 'add' || o.op === 'set' || o.op === 'end')) st.memorySaves++;
     // An ended rule's strikes go with it: a rule set again starts its ladder over.
     const strikes = strikeRule(m.strikes, null, changed.items).strikes;
     if (changed.ops.every((o) => o.op === 'drop') && sameStrikes(m.strikes, strikes)) return null;
@@ -949,10 +947,11 @@ function voice(c: Character): { who: string; color: string } {
 }
 
 /** What `c` remembers of this session, rendered for a prompt, after every write made before; '' when nothing, or not read within the caller's `ms`. */
-async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, ms: number): Promise<{ text: string; memory: MemoryStats; last?: string }> {
+async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, ms: number): Promise<{ text: string; memory: MemoryStats; last?: string; seen: Seen }> {
   let text = '';
   let memory: MemoryStats = { turns: 0, kept: 0, full: 0 };
   let last: string | undefined;
+  let seen: Seen = NOTHING_SEEN;
   const landed = await chainChatTurnsToRead(
     st,
     $,
@@ -964,12 +963,17 @@ async function readChatTurnsToRead(st: State, $: EngineInterface, c: Character, 
         text = render(m.blocks, c.id, st.options.chatTurnsToRead, renderItems(m.items, m.turnNo));
         memory = memoryStats(m.blocks, st.options.chatTurnsToRead);
         last = m.blocks.at(-1)?.turnId;
+        seen = { items: m.items, ended: m.ended };
       }
     },
     ms,
   );
-  return landed ? { text, memory, ...(last === undefined ? {} : { last }) } : { text: '', memory: { turns: 0, kept: 0, full: 0 } };
+  return landed ? { text, memory, ...(last === undefined ? {} : { last }), seen } : { text: '', memory: { turns: 0, kept: 0, full: 0 }, seen: NOTHING_SEEN };
 }
+
+/** The items a call's prompt held, so its reply's edits are proven against what it saw (applyMemory's `since`); none when its read never landed. */
+type Seen = { items: Items; ended: EndedItems };
+const NOTHING_SEEN: Seen = { items: {}, ended: {} };
 
 /**
  * The session's memory loaded now, and the drawer drawn back from it: at a
@@ -1386,7 +1390,7 @@ function onTurnStart(st: State, $: EngineInterface, e: TurnStartInput): void {
 }
 
 /** An ended main turn as onTurnEnd hands it on: the prompt that started it, its origin when not the user's, the prompts delivered into it, the suggestion that showed when the user sent it, its tally (null when its start was not seen); `lost` when the ledger held no entry for it, its prompt to be read back from the transcript (lostPrompt). */
-type Ended = { prompt: string; from?: string; added?: string[]; addedAfter?: number[]; said?: Said[]; suggested?: string; lost?: true; lostSteps?: Step[]; tally: { counts: Tally; before: Promise<UsageReading | null> } | null };
+type Ended = { prompt: string; from?: string; typed?: string; added?: string[]; addedAfter?: number[]; said?: Said[]; suggested?: string; lost?: true; lostSteps?: Step[]; tally: { counts: Tally; before: Promise<UsageReading | null> } | null };
 
 /**
  * A main turn ended, however, before any hook beneath runs (turn.complete):
@@ -1410,7 +1414,7 @@ function onTurnEnd(st: State, $: EngineInterface, e: TurnCompleteInput): Ended |
     const over = ended.from === undefined && st.overSuggestion?.prompt === ended.prompt ? st.overSuggestion : null;
     if (over !== null) st.overSuggestion = null;
     const from = over?.use === 'unedited' ? TAKEN_SUGGESTION : ended.from;
-    return { prompt: ended.prompt, ...(from === undefined ? {} : { from }), ...(ended.added ? { added: ended.added } : {}), ...(ended.addedAfter ? { addedAfter: ended.addedAfter } : {}), ...(ended.said ? { said: ended.said } : {}), ...(over === null ? {} : { suggested: over.suggested }), ...(lost ? { lost: true as const } : {}), tally };
+    return { prompt: ended.prompt, ...(from === undefined ? {} : { from }), ...(ended.typed === undefined ? {} : { typed: ended.typed }), ...(ended.added ? { added: ended.added } : {}), ...(ended.addedAfter ? { addedAfter: ended.addedAfter } : {}), ...(ended.said ? { said: ended.said } : {}), ...(over === null ? {} : { suggested: over.suggested }), ...(lost ? { lost: true as const } : {}), tally };
   } catch (error) {
     log($, 'the end of a turn', error);
     return null;
@@ -1451,7 +1455,7 @@ function onTurnComplete(st: State, $: EngineInterface, e: TurnCompleteInput, end
     const steps = ended.lostSteps?.length ? ended.lostSteps : st.b.turn.actions;
     const returned = returnedOf(steps);
     const briefed = briefedOf(steps);
-    const from = ended.from === undefined ? {} : { from: ended.from };
+    const from = ended.from === undefined ? {} : { from: ended.from, ...(ended.typed === undefined ? {} : { typed: ended.typed }) };
     // The prompts the user typed while it ran, delivered into it, with where: read with it, never as a turn of their own; what Claude wrote mid-turn too.
     const added = ended.added ? { added: ended.added, ...(ended.addedAfter?.length ? { addedAfter: ended.addedAfter } : {}) } : {};
     const sight = { ...(ended.said?.length ? { said: ended.said } : {}), ...(briefed.length > 0 ? { briefed } : {}) };
@@ -1668,8 +1672,9 @@ async function callSettings(st: State, $: EngineInterface, event: string): Promi
  * throws.
  */
 async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSummary, turnId: string, gen: number, wants: TurnWants, started: number): Promise<void> {
-  const saves = st.memorySaves;
   const conversation = st.conversation;
+  // The items the call's prompt held: its reply's edits are proven against them.
+  let since: Seen = NOTHING_SEEN;
   let reply: TurnReply | null = null;
   let reason = '';
   let usage: Record<string, number> = {};
@@ -1681,6 +1686,7 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
         const t0 = await $.clock.now();
         // The chatTurnsToRead, read after this turn was filed into it, and the settings do not wait on each other.
         const [remembered, settings] = await Promise.all([readChatTurnsToRead(st, $, c, TURN_DEADLINE_MS), callSettings(st, $, 'turn.settings')]);
+        since = remembered.seen;
         // Past the deadline already: no completion is sent that nobody waits for.
         if (late) return 'timeout' as const;
         // The memory holds the turn just ended, what Claude did and its numbers with it: the prompt points there.
@@ -1715,12 +1721,17 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
       lg($, 'info', 'suggestNextPrompt.outcome', { outcome: 'stale', ms });
     }
     // The buddy's prompt for a turn the chat moved past is never sent: remembered as written, unsent.
-    const unsent = wants.promptToMainChat ? (reply?.promptToMainChat ?? null) : null;
-    if (unsent !== null && st.conversation === conversation && promptOvertaken(st, $, c, turnId, unsent)) rememberExchange(st, $, c.id, { kind: 'endOfTurn', unsentPrompt: unsent }, turnId);
+    const unsent = wants.promptToMainChat ? (reply?.promptToMainChat ?? reply?.overCap.promptToMainChat ?? null) : null;
+    const unsentPrompt = unsent !== null && st.conversation === conversation && promptOvertaken(st, $, c, turnId, unsent) ? unsent : null;
+    // Its comment and verdict, never shown over the turn the chat moved to, still reach the drawer and the comment the memory, under their own turn.
+    const lateComment = wants.commentAfterEachTurn && st.conversation === conversation && !st.hidden ? (reply?.commentAfterEachTurn ?? null) : null;
+    if (lateComment !== null) feedAdd(st, $, { at: Date.now(), kind: 'comment', text: lateComment, ...voice(c), ms });
+    if ((wants.suggestNextPrompt || wants.promptToMainChat) && reply !== null && st.conversation === conversation && !st.hidden) feedVerdict(st, $, c, reply, {});
+    if (lateComment !== null || unsentPrompt !== null) rememberExchange(st, $, c.id, { kind: 'endOfTurn', ...(lateComment !== null ? { commentAfterEachTurn: lateComment } : {}), ...(unsentPrompt !== null ? { unsentPrompt } : {}) }, turnId);
     // A strike counts when the buddy names the broken rule, whether or not its prompt is dropped as stale; the turn moved on, so it neither sends nor warns.
     if (wants.promptToMainChat && reply !== null && reply.ruleBroken !== null && st.conversation === conversation) climbRuleLadder(st, $, reply);
     if (reply !== null) {
-      if (st.conversation === conversation) rememberItems(st, $, reply.memory, turnId, saves);
+      if (st.conversation === conversation) rememberItems(st, $, reply.memory, turnId, since);
       else if (reply.memory !== null) lg($, 'info', 'memory.op', { key: '*', op: 'drop', why: 'late reply: the conversation changed', turn: st.chatTurnsToRead?.turnNo ?? 0 });
     }
     return;
@@ -1730,21 +1741,28 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
   let verdict: { verdict: Verdict; why: string } | null = null;
   if (wants.suggestNextPrompt || wants.promptToMainChat) {
     if (reply?.desire) st.desire = reply.desire;
-    verdict = reply?.verdict && reply.why ? { verdict: reply.verdict, why: reply.why } : null;
-    warned = sayVerdict(st, $, c, gen, verdict, reason, verdictFields);
+    verdict = reply?.verdict ? { verdict: reply.verdict, why: reply.why ?? NO_WHY } : null;
+    warned = sayVerdict(st, $, c, gen, verdict, reply?.otherVerdict ?? null, reason, verdictFields);
   }
   // The rule ladder: a rule the buddy says this turn broke climbs from a prompt to Claude, to one said again, to a warning to the user.
   let promptToMainChat = wants.promptToMainChat ? (reply?.promptToMainChat ?? null) : null;
   if (wants.promptToMainChat && reply !== null) {
     const ladder = climbRuleLadder(st, $, reply);
     promptToMainChat = ladder.prompt;
-    if (ladder.warning !== null && warnOfRule(st, $, c, gen, ladder.warning)) warned = warned !== null ? `${warned} · ${ladder.warning}` : ladder.warning;
+    // Said in the bubble or not (another character drawn), the warning reaches the drawer and the memory; never while hidden.
+    if (ladder.warning !== null && !st.hidden) {
+      warnOfRule(st, $, c, gen, ladder.warning);
+      feedAdd(st, $, { at: Date.now(), kind: 'comment', text: ladder.warning, ...voice(c) });
+      warned = warned !== null ? `${warned} · ${ladder.warning}` : ladder.warning;
+    }
   }
   const commentAfterEachTurn = wants.commentAfterEachTurn ? sayCommentAfterEachTurn(st, $, c, t, gen, reply?.commentAfterEachTurn ?? null, reason || 'no commentAfterEachTurn in the reply', commentAfterEachTurnFields) : null;
   let suggestNextPrompt: string | null = null;
   if (wants.suggestNextPrompt) {
     try {
-      suggestNextPrompt = await showSuggestNextPrompt(st, $, gen, reply?.suggestNextPrompt ?? null, reason, { ms });
+      // A suggestion past its cap is never proposed: logged failed with why, never as none.
+      const overCap = reply?.overCap.suggestNextPrompt;
+      suggestNextPrompt = await showSuggestNextPrompt(st, $, gen, reply?.suggestNextPrompt ?? null, reason || (overCap === undefined ? '' : `its suggestion passed ${SUGGEST_NEXT_PROMPT_MAX_CHARS} characters`), { ms });
     } catch (error) {
       log($, 'a suggestNextPrompt', error);
       await giveUpSuggestNextPrompt(st, $, gen, ms).catch((e) => log($, "showing the engine's own suggestion", e));
@@ -1755,13 +1773,19 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
   const cost = tokens ? { ms, tokens } : {};
   if (commentAfterEachTurn !== null) feedAdd(st, $, { at: Date.now(), kind: 'comment', text: commentAfterEachTurn, ...voice(c), ...cost });
   else if (wants.commentAfterEachTurn && reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: reason, ...voice(c), ms });
-  if (verdict) feedAdd(st, $, { at: Date.now(), kind: 'verdict', text: verdict.why, verdict: verdict.verdict, ...(st.desire ? { desire: st.desire } : {}), ...voice(c), ...(commentAfterEachTurn === null ? cost : {}) });
+  if ((wants.suggestNextPrompt || wants.promptToMainChat) && reply !== null) feedVerdict(st, $, c, reply, commentAfterEachTurn === null ? cost : {});
   if (suggestNextPrompt !== null) feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: suggestNextPrompt, ...voice(c) });
   // Overtaken while this call ran: the buddy's prompt would answer a turn the chat moved past, so it is remembered unsent.
   let unsentPrompt: string | null = null;
   if (promptToMainChat !== null && promptOvertaken(st, $, c, turnId, promptToMainChat)) {
     unsentPrompt = promptToMainChat;
     promptToMainChat = null;
+  }
+  // A prompt to Claude past its cap is never sent: logged, and remembered whole as unsent.
+  const overPrompt = wants.promptToMainChat ? reply?.overCap.promptToMainChat : undefined;
+  if (overPrompt !== undefined) {
+    lg($, 'info', 'promptToMainChat.tooLong', { character: c.id, length: overPrompt.length, max: PROMPT_TO_MAIN_CHAT_MAX_CHARS });
+    unsentPrompt ??= overPrompt;
   }
   // What this turn showed, as one exchange: the comment, the warning, the prompt it sent Claude (or never sent), the suggestion.
   if (commentAfterEachTurn !== null || warned !== null || promptToMainChat !== null || unsentPrompt !== null || suggestNextPrompt !== null) {
@@ -1781,7 +1805,7 @@ async function turnCall(st: State, $: EngineInterface, c: Character, t: TurnSumm
     );
   }
   // Memory edits are independent of the comment, suggestion and P2M.
-  if (reply !== null) rememberItems(st, $, reply.memory, turnId);
+  if (reply !== null) rememberItems(st, $, reply.memory, turnId, since);
   if (promptToMainChat !== null) sendPromptToMainChat(st, $, c, promptToMainChat);
 }
 
@@ -1938,24 +1962,30 @@ function keepCall(st: State, $: EngineInterface, kind: PendingCallKind, turnId?:
   };
 }
 
-/** calls.json at `path`: 'none' when there is no file, 'unreadable' when it holds no record. */
-async function readCalls($: EngineInterface, path: string): Promise<PendingCalls | 'none' | 'unreadable'> {
+/** calls.json at `path`: 'none' when there is no file; its text as `unreadable` when it holds no record. */
+async function readCalls($: EngineInterface, path: string): Promise<PendingCalls | 'none' | { unreadable: string }> {
   if (!(await $.fs.exists(path))) return 'none';
+  const text = (await $.fs.read(path)) as string;
   try {
-    return pendingCallsOf(JSON.parse((await $.fs.read(path)) as string)) ?? 'unreadable';
+    return pendingCallsOf(JSON.parse(text)) ?? { unreadable: text };
   } catch {
-    return 'unreadable';
+    return { unreadable: text };
   }
 }
 
-/** One change to calls.json at `where` (null: none), read and written after every change before it; an unreadable file is written anew. Never throws. */
+/** One change to calls.json at `where` (null: none), read and written after every change before it; an unreadable file is kept aside whole first, said, then written anew (a failed keep writes nothing). Never throws. */
 function changeCalls(st: State, $: EngineInterface, where: () => Promise<string | null>, change: (r: PendingCalls) => PendingCalls): void {
   st.callsWrites = st.callsWrites
     .then(async () => {
       const path = await where();
       if (path === null) return;
       const kept = await readCalls($, path);
-      await $.fs.write(path, JSON.stringify(change(typeof kept === 'string' ? NO_PENDING_CALLS : kept)));
+      if (typeof kept === 'object' && 'unreadable' in kept) {
+        const aside = asidePath(path, Date.now());
+        await $.fs.write(aside, kept.unreadable);
+        diagnostic($, 'warning', 'calls-unreadable', `${path} held no calls it could read, so its calls in flight were never counted; kept whole as ${aside} before it was written anew`, { aside, length: kept.unreadable.length });
+      }
+      await $.fs.write(path, JSON.stringify(change(kept === 'none' || 'unreadable' in kept ? NO_PENDING_CALLS : kept)));
     })
     .catch((error: unknown) => log($, 'keeping the calls in flight', error));
 }
@@ -1973,7 +2003,7 @@ function abandonPendingCalls(st: State, $: EngineInterface): void {
       const path = `${await chatFolderFor(st, $, await $.session.id())}/${CALLS_FILE}`;
       const kept = await readCalls($, path);
       if (kept === 'none') return;
-      if (kept === 'unreadable') {
+      if ('unreadable' in kept) {
         lg($, 'info', 'call.outcome', { outcome: 'unreadable' });
         return;
       }
@@ -2115,16 +2145,17 @@ const VERDICT_BUBBLE: Record<Verdict, { tone: Tone; pose: Pose | null } | null> 
 /**
  * A SHORTCUT or WRONG verdict of `c` in the bubble, its tone's frame, marking
  * turn `gen` loud so its comment never covers it; a model bubble already
- * there keeps the bubble its 10 s first (answer). `reason`: why the call gave none. Returns the words when the
- * bubble said them, else null.
+ * there keeps the bubble its 10 s first (answer). `other`: a VERDICT word
+ * none of VERDICTS, never said. `reason`: why the call gave none. Returns the
+ * words when the bubble said them, else null.
  */
-function sayVerdict(st: State, $: EngineInterface, c: Character, gen: number, v: { verdict: Verdict; why: string } | null, reason: string, fields: Record<string, number>): string | null {
+function sayVerdict(st: State, $: EngineInterface, c: Character, gen: number, v: { verdict: Verdict; why: string } | null, other: string | null, reason: string, fields: Record<string, number>): string | null {
   const b = st.b;
   if (!b) return null;
   let said: string | null = null;
   try {
     if (!v) {
-      lg($, 'info', 'verdict.outcome', reason ? { outcome: 'failed', reason, ...fields } : { outcome: 'none', ...fields });
+      lg($, 'info', 'verdict.outcome', reason ? { outcome: 'failed', reason, ...fields } : other !== null ? { outcome: 'unknown', verdict: other, ...fields } : { outcome: 'none', ...fields });
       return null;
     }
     const loud = VERDICT_BUBBLE[v.verdict];
@@ -2146,13 +2177,19 @@ function sayVerdict(st: State, $: EngineInterface, c: Character, gen: number, v:
   return said;
 }
 
+/** The verdict of `reply` in the drawer with what it judged against; a VERDICT word none of VERDICTS as a plain note, `{word}: {why}`. `cost`: the call's, when no comment carries it. */
+function feedVerdict(st: State, $: EngineInterface, c: Character, reply: TurnReply, cost: { ms?: number; tokens?: number }): void {
+  const why = reply.why ?? NO_WHY;
+  if (reply.verdict !== null) feedAdd(st, $, { at: Date.now(), kind: 'verdict', text: why, verdict: reply.verdict, ...(st.desire ? { desire: st.desire } : {}), ...voice(c), ...cost });
+  else if (reply.otherVerdict !== null) feedAdd(st, $, { at: Date.now(), kind: 'comment', text: `${reply.otherVerdict}: ${why}`, ...voice(c), ...cost });
+}
+
 /**
  * The commentAfterEachTurn of `c` in the bubble, or the failure why there is none;
  * a model bubble already there keeps the bubble its 10 s first (answer).
  * Never said by another character drawn meanwhile, nor over this turn's
- * verdict (`outranked`: the drawer and the memory still keep it). `fields`: ms
- * and usage, logged on the outcome. Returns the text when the bubble showed
- * it or a verdict outranked it, else null.
+ * verdict (`outranked`): the drawer and the memory still keep it. `fields`: ms
+ * and usage, logged on the outcome. Returns the text unless hidden.
  */
 function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t: TurnSummary, gen: number, text: string | null, reason: string, fields: Record<string, number>): string | null {
   const b = st.b;
@@ -2164,7 +2201,7 @@ function sayCommentAfterEachTurn(st: State, $: EngineInterface, c: Character, t:
       // This turn's verdict, a warning or a scream, keeps the bubble: the comment goes to the drawer and the memory only.
       const outranked = !st.hidden && st.loudGen === gen;
       const shown = !st.hidden && !outranked && answer(b, text, t.failures > 0 ? 'oops' : 'yay', c.id, true);
-      if (shown || outranked) said = text;
+      if (!st.hidden) said = text;
       const outcome = shown ? 'answered' : outranked ? 'outranked' : st.hidden ? 'hidden' : 'dropped';
       lg($, 'info', 'commentAfterEachTurn.outcome', { outcome, ...(outcome === 'dropped' ? { asker: c.id, drawn: b.character.id } : {}), ...fields });
     } else {
@@ -2746,7 +2783,7 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
     const reply = r !== 'timeout' && r.isAnswered ? parseAskReply(r.text) : null;
     if (reply) asked = { prompt: reply.prompt, tooLong: reply.tooLong };
     // A reply that is the prompt alone still answers.
-    const text = reply ? reply.answer || (reply.prompt ? 'In your prompt box.' : '') : '';
+    const text = reply ? reply.answer || (reply.prompt ? (reply.tooLong ? 'In the drawer: ctrl+x u.' : 'In your prompt box.') : '') : '';
     if (conversation !== st.conversation) {
       // Asked about a conversation /clear or a resume ended: never shown as an answer about this one, never remembered in it.
       cleared = true;
@@ -2786,29 +2823,30 @@ async function ask(st: State, $: EngineInterface, question: string, c: Character
     return;
   }
   const hidden = !shown && st.hidden;
-  if (!shown && !hidden) diagnostic($, 'info', 'ask.dropped', `${c.name}'s answer was dropped: ${b.character.name} is drawn now`, { asker: c.id, drawn: b.character.id });
+  // Another character drawn meanwhile: the bubble is not the asker's, but the drawer and the memory keep its answer.
+  const kept = said !== '' && (shown || !hidden);
+  if (!shown && !hidden) diagnostic($, 'info', 'ask.dropped', `${c.name}'s answer was not drawn: ${b.character.name} is drawn now${said ? '; it waits in the drawer' : ''}`, { asker: c.id, drawn: b.character.id });
   lg($, 'info', 'ask.outcome', { outcome: hidden ? 'hidden' : !shown ? 'dropped' : said ? 'answered' : 'failed', ...(reason ? { reason } : {}), ms: Date.now() - started, ...usage });
   // The drawer: the answer, or why there is none.
   const tokens = tokensOf(usage);
-  if (said && shown) feedAdd(st, $, { at: Date.now(), kind: 'answer', text: said, ...voice(c), ms: Date.now() - started, ...(tokens ? { tokens } : {}) });
+  if (kept) feedAdd(st, $, { at: Date.now(), kind: 'answer', text: said, ...voice(c), ms: Date.now() - started, ...(tokens ? { tokens } : {}) });
   else if (reason) feedAdd(st, $, { at: Date.now(), kind: 'failed', text: reason, ...voice(c), ms: Date.now() - started });
-  if (said && shown) await putAskedPrompt(st, $, c, asked);
-  // One exchange: the question with its answer as shown, or the question alone.
-  rememberExchange(st, $, c.id, said && shown ? { kind: 'question', question, answer: said } : { kind: 'question', question }, after);
+  if (kept) await putAskedPrompt(st, $, c, asked);
+  // One exchange: the question with its answer as kept, or the question alone.
+  rememberExchange(st, $, c.id, kept ? { kind: 'question', question, answer: said } : { kind: 'question', question }, after);
   refresh(st, $);
 }
 
-/** The prompt a /buddy question asked for, into the prompt box and the drawer as a suggested prompt ctrl+x u uses; one too long to take is said, never dropped quietly. Never throws. */
+/** The prompt a /buddy question asked for, into the prompt box and the drawer as a suggested prompt ctrl+x u uses; one too long for the box waits whole in the drawer, said. Never throws. */
 async function putAskedPrompt(st: State, $: EngineInterface, c: Character, asked: { prompt: string | null; tooLong: boolean }): Promise<void> {
   try {
-    if (asked.tooLong) {
-      diagnostic($, 'error', 'ask-prompt-too-long', `${c.name}'s prompt was longer than ${ASKED_PROMPT_MAX_CHARS} characters, so it was not put in your prompt box`);
-      feedAdd(st, $, { at: Date.now(), kind: 'failed', text: `its prompt passed ${ASKED_PROMPT_MAX_CHARS} characters`, ...voice(c) });
-      lg($, 'info', 'ask.prompt.outcome', { outcome: 'too-long' });
-      return;
-    }
     if (asked.prompt === null) return;
     feedAdd(st, $, { at: Date.now(), kind: 'suggest', text: asked.prompt, ...voice(c) });
+    if (asked.tooLong) {
+      diagnostic($, 'error', 'ask-prompt-too-long', `${c.name}'s prompt was longer than ${ASKED_PROMPT_MAX_CHARS} characters, so it was not put in your prompt box; it waits whole in the drawer (ctrl+x u)`);
+      lg($, 'info', 'ask.prompt.outcome', { outcome: 'too-long', length: asked.prompt.length });
+      return;
+    }
     // A turn running now owns the prompt box: the suggested prompt waits in the drawer for ctrl+x u.
     if (st.mainTurn !== undefined) {
       lg($, 'info', 'ask.prompt.outcome', { outcome: 'turn-running', length: asked.prompt.length });
@@ -2958,7 +2996,6 @@ export const register: Register = (on: On, options: PluginOptions) => {
     hiddenGen: 0,
     hiddenSaves: 0,
     turnGen: 0,
-    memorySaves: 0,
     harnessSuggestion: null,
     suggestNextPromptGaveUp: false,
     mainChatPromptArmed: false,

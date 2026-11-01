@@ -88,6 +88,9 @@ describe('toolOutput and bashCommand', () => {
     expect(toolText({ result: { stdout: 'out', stderr: 'err', code: 1 } })).toBe('out\nerr');
     expect(toolText({ result: 'plain' })).toBe('plain');
     expect(toolText({})).toBe('');
+    // Nested text, as a content list holds it, is read too.
+    expect(toolText({ result: { content: [{ type: 'text', text: 'Tests  3 passed (3)' }], code: 0 } })).toBe('Tests  3 passed (3)');
+    expect(classifyToolCall({ tool: 'Bash', command: 'npx vitest run', isError: false, denied: false, output: toolOutput({ result: { content: [{ type: 'text', text: 'Tests  3 passed (3)' }] } }) })).toBe('testPass');
     const long = `START${'x'.repeat(30000)}END`;
     expect(toolText({ text: long })).toBe(long);
     expect(toolOutput({ text: long })).toBe(long.slice(-20000));

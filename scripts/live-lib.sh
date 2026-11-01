@@ -120,10 +120,12 @@ shows_any() { local p; p=$(pane); while IFS= read -r r; do [ -n "$r" ] && grep -
 has_any() { local l; while IFS= read -r l; do [ -n "$l" ] && grep -q -F -- "$l" <<<"$1" && return 0; done < "$2"; return 1; }
 bubble_has_any() { has_any "$(bubble)" "$1"; }
 send() { $T send-keys -t "$TGT" -l "$1"; sleep 1; $T send-keys -t "$TGT" Enter; log "<- $1"; }
-# Each /buddy reply as one line (a multi-line reply joined by " / ").
+# The buddy log's records from line $1 on, one per line; a line that is no JSON costs only itself.
+log_from() { tail -n +"$(($1 + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -c -R 'fromjson?'; }
+# Each /buddy reply as one line (a multi-line reply joined by " / "); a transcript line that is no JSON costs only itself.
 stdout_rows() {
   local f; f=$(transcript); [ -n "$f" ] || return 0
-  jq -r 'select(.type=="system" or .type=="user") | (.content // .message.content // "") | strings
+  jq -R -r 'fromjson? | select(.type=="system" or .type=="user") | (.content // .message.content // "") | strings
     | select(contains("<local-command-stdout>")) | capture("<local-command-stdout>(?<o>[\\s\\S]*?)</local-command-stdout>").o
     | gsub("\n"; " / ")' "$f"
 }

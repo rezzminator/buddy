@@ -5,13 +5,15 @@ import {
 import { ITEM_CAPS, ITEMS_HEAD } from '../plugins/buddy/src/memoryItems.ts';
 
 describe('prompts', () => {
-  test('a question asking for a prompt: the answer its untagged line, the prompt its SUGGEST_NEXT_PROMPT line, one too long said so', () => {
+  test('a question asking for a prompt: the answer its untagged lines, the prompt its SUGGEST_NEXT_PROMPT line, one too long kept whole and said so', () => {
     expect(parseAskReply('Quote the turn verbatim.\nSUGGEST_NEXT_PROMPT: "design the ledger extractive"')).toEqual({ answer: 'Quote the turn verbatim.', prompt: 'design the ledger extractive', tooLong: false });
     expect(parseAskReply('SUGGEST_NEXT_PROMPT: run it\nFine.')).toEqual({ answer: 'Fine.', prompt: 'run it', tooLong: false });
     expect(parseAskReply('Just an answer.')).toEqual({ answer: 'Just an answer.', prompt: null, tooLong: false });
     expect(parseAskReply('Nope.\nSUGGEST_NEXT_PROMPT: NONE')).toEqual({ answer: 'Nope.', prompt: null, tooLong: false });
     const long = 'x '.repeat(ASKED_PROMPT_MAX_CHARS).trim();
-    expect(parseAskReply(`Here.\nSUGGEST_NEXT_PROMPT: ${long}`)).toEqual({ answer: 'Here.', prompt: null, tooLong: true });
+    expect(parseAskReply(`Here.\nSUGGEST_NEXT_PROMPT: ${long}`)).toEqual({ answer: 'Here.', prompt: long, tooLong: true });
+    expect(parseAskReply(`Here.\nSUGGEST_NEXT_PROMPT: ${'y'.repeat(ASKED_PROMPT_MAX_CHARS)}`)).toEqual({ answer: 'Here.', prompt: 'y'.repeat(ASKED_PROMPT_MAX_CHARS), tooLong: false });
+    expect(parseAskReply('First, the plan.\n\nThen "the second step."\nSUGGEST_NEXT_PROMPT: NONE')).toEqual({ answer: 'First, the plan. Then "the second step.', prompt: null, tooLong: false });
   });
   test('the completion system and prompt', () => {
     expect(oneLineSystem('You are X.', 4)).toBe(`You are X.\n\n${CHARACTER_RULE}\n\n${memoryRule(4)}\n\n${ONE_LINE_RULE} ${ASKED_PROMPT_RULE}`);
@@ -24,8 +26,8 @@ describe('prompts', () => {
     expect(turnPrompt({ tools: ['Bash'], failures: 0, lastBash: long, actions: [] })).toContain(`Last shell command: ${long.slice(0, 240)} [cut] ${long.slice(-120)}.`);
     expect(turnPrompt({ tools: [], failures: 0, lastBash: '', actions: [] })).toBe('In the turn that just ended: Tools used: none. Failures: 0. Last shell command: none.');
   });
-  test('oneLine takes the first non-empty line, unquoted, capped', () => {
-    expect(oneLine('\n  "Hello there."  \nmore')).toBe('Hello there.');
+  test('oneLine keeps every non-empty line, each unquoted, as one line, never cut', () => {
+    expect(oneLine('\n  "Hello there."  \nmore')).toBe('Hello there. more');
     expect(oneLine('')).toBe('');
     expect(oneLine('y'.repeat(3000))).toHaveLength(3000);
   });
@@ -150,17 +152,21 @@ describe('the end-of-turn call: the character and the suggestion combined', () =
   });
   test('parseTurnReply: every line, in any order and case, bullets tolerated', () => {
     expect(parseTurnReply('DESIRE: a release nobody has to roll back\nVERDICT: SHORTCUT\nWHY: called it done without running the suite.\nCOMMENT_AFTER_EACH_TURN: "Tests are green?"\nSUGGEST_NEXT_PROMPT: run the full suite before we call it done')).toEqual({
-      commentAfterEachTurn: 'Tests are green?', desire: 'a release nobody has to roll back', verdict: 'SHORTCUT', why: 'called it done without running the suite.', suggestNextPrompt: 'run the full suite before we call it done', promptToMainChat: null, ruleBroken: null, memory: null,
+      commentAfterEachTurn: 'Tests are green?', desire: 'a release nobody has to roll back', verdict: 'SHORTCUT', otherVerdict: null, why: 'called it done without running the suite.', suggestNextPrompt: 'run the full suite before we call it done', promptToMainChat: null, ruleBroken: null, memory: null, overCap: {},
     });
     expect(parseTurnReply(' - why: DELETING MAIN?!\n * verdict: wrong.\nsuggest_next_prompt:  stop, restore  main\ndesire: keep main safe\n  - comment_after_each_turn: Nice.')).toEqual({
-      commentAfterEachTurn: 'Nice.', desire: 'keep main safe', verdict: 'WRONG', why: 'DELETING MAIN?!', suggestNextPrompt: 'stop, restore main', promptToMainChat: null, ruleBroken: null, memory: null,
+      commentAfterEachTurn: 'Nice.', desire: 'keep main safe', verdict: 'WRONG', otherVerdict: null, why: 'DELETING MAIN?!', suggestNextPrompt: 'stop, restore main', promptToMainChat: null, ruleBroken: null, memory: null, overCap: {},
     });
   });
-  test('parseTurnReply: an unknown verdict, an empty line, NONE, or a line past its cap is none; an untagged reply is the comment alone', () => {
-    const none = { commentAfterEachTurn: null, desire: null, verdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, ruleBroken: null, memory: null };
-    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN:\nVERDICT: MAYBE\nWHY:\nSUGGEST_NEXT_PROMPT: NONE')).toEqual(none);
-    expect(parseTurnReply(`DESIRE: ${'d'.repeat(DESIRE_MAX_CHARS + 1)}\nSUGGEST_NEXT_PROMPT: ${'y'.repeat(SUGGEST_NEXT_PROMPT_MAX_CHARS + 1)}`)).toEqual(none);
-    expect(parseTurnReply('\n  Quack, that went well.\nmore')).toEqual({ ...none, commentAfterEachTurn: 'Quack, that went well.' });
+  test('parseTurnReply: an empty line or NONE is none; an unknown verdict is kept as said, a verdict without WHY gets NO_WHY, a desire past its cap is cut, a prompt past its cap kept whole aside; an untagged reply is the comment alone', () => {
+    const none = { commentAfterEachTurn: null, desire: null, verdict: null, otherVerdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, ruleBroken: null, memory: null, overCap: {} };
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN:\nVERDICT: MAYBE\nWHY:\nSUGGEST_NEXT_PROMPT: NONE')).toEqual({ ...none, otherVerdict: 'MAYBE', why: 'no reason given' });
+    expect(parseTurnReply('VERDICT: maybe so\nWHY: half the suite ran')).toEqual({ ...none, otherVerdict: 'MAYBE', why: 'half the suite ran' });
+    expect(parseTurnReply('VERDICT: WRONG')).toEqual({ ...none, verdict: 'WRONG', why: 'no reason given' });
+    expect(parseTurnReply('COMMENT_AFTER_EACH_TURN:\nVERDICT:\nWHY:\nSUGGEST_NEXT_PROMPT: NONE')).toEqual(none);
+    expect(parseTurnReply(`DESIRE: ${'d'.repeat(DESIRE_MAX_CHARS)}`)).toEqual({ ...none, desire: 'd'.repeat(DESIRE_MAX_CHARS) });
+    expect(parseTurnReply(`DESIRE: ${'d'.repeat(DESIRE_MAX_CHARS + 1)}\nSUGGEST_NEXT_PROMPT: ${'y'.repeat(SUGGEST_NEXT_PROMPT_MAX_CHARS + 1)}`)).toEqual({ ...none, desire: `${'d'.repeat(DESIRE_MAX_CHARS - 1)}…`, overCap: { suggestNextPrompt: 'y'.repeat(SUGGEST_NEXT_PROMPT_MAX_CHARS + 1) } });
+    expect(parseTurnReply('\n  Quack, that went well.\nmore')).toEqual({ ...none, commentAfterEachTurn: 'Quack, that went well. more' });
     expect(parseTurnReply('')).toEqual(none);
     expect(VERDICTS).toEqual(['RIGHT', 'SHORTCUT', 'WRONG']);
   });
@@ -285,6 +291,28 @@ describe('the prompt ledger', () => {
     let peer = startPromptTurn(NO_PROMPTS, 't1', 'P1');
     peer = submitPrompt(peer, 'P1', 'peer');
     expect(endPromptTurn(peer, 't1').from).toBe('peer');
+  });
+  test('the user\'s slash command, which its turn begins expanded, keeps the typed words on the turn of unknown origin, whichever settles first', () => {
+    let l = startPromptTurn(NO_PROMPTS, 't1', 'the expanded skill body');
+    l = submitPrompt(l, '/skill keep main safe always', 'composer');
+    const { ledger: _a, ...idle } = endPromptTurn(l, 't1');
+    expect(idle).toEqual({ prompt: 'the expanded skill body', from: 'unknown', typed: '/skill keep main safe always' });
+    l = submitPrompt(NO_PROMPTS, 'P1', 'composer');
+    l = startPromptTurn(l, 't1', 'P1');
+    l = submitPrompt(l, '/skill keep main safe always', 'composer', 't1');
+    l = endPromptTurn(l, 't1').ledger;
+    l = startPromptTurn(l, 't2', 'the expanded skill body');
+    const { ledger: _b, ...queued } = endPromptTurn(l, 't2');
+    expect(queued).toEqual({ prompt: 'the expanded skill body', from: 'unknown', typed: '/skill keep main safe always' });
+    // Another origin's slash text, or a turn its own submission settled, gives no typed words.
+    let peer = startPromptTurn(NO_PROMPTS, 't3', 'the expanded skill body');
+    peer = submitPrompt(peer, '/skill x', 'peer');
+    const { ledger: _c, ...other } = endPromptTurn(peer, 't3');
+    expect(other).toEqual({ prompt: 'the expanded skill body', from: 'unknown' });
+    let seen = startPromptTurn(NO_PROMPTS, 't4', '/help me');
+    seen = submitPrompt(seen, '/help me', 'composer');
+    const { ledger: _d, ...own } = endPromptTurn(seen, 't4');
+    expect(own).toEqual({ prompt: '/help me' });
   });
   test('the user\'s own origins: the terminal, Remote Control, an SDK host, the owner\'s Slack ping, a continuation of the user\'s own action', () => {
     expect(['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'].every(isUserOrigin)).toBe(true);
@@ -498,6 +526,8 @@ describe('promptToMainChat: a prompt the buddy sends Claude itself', () => {
     expect(PROMPT_TO_MAIN_CHAT_MAX_CHARS).toBe(400);
     expect(parseTurnReply(`PROMPT_TO_MAIN_CHAT: ${'x'.repeat(400)}`).promptToMainChat).toBe('x'.repeat(400));
     expect(parseTurnReply(`PROMPT_TO_MAIN_CHAT: ${'x'.repeat(401)}`).promptToMainChat).toBeNull();
+    expect(parseTurnReply(`PROMPT_TO_MAIN_CHAT: ${'x'.repeat(401)}`).overCap).toEqual({ promptToMainChat: 'x'.repeat(401) });
+    expect(parseTurnReply(`PROMPT_TO_MAIN_CHAT: ${'x'.repeat(400)}`).overCap).toEqual({});
   });
   test("RULE_BROKEN: a rule's key, trimmed; NONE, another kind's key, a malformed key or none at all is null", () => {
     expect(parseTurnReply('PROMPT_TO_MAIN_CHAT: Keep main safe: you pushed.\nRULE_BROKEN:  rule.main-safe ').ruleBroken).toBe('rule.main-safe');

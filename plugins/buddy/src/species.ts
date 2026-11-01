@@ -82,7 +82,6 @@ export function validateSpecies(raw: unknown, fileSpecies?: string): SpeciesVali
     if (!isObject(raw)) fail('must be a JSON object');
     const unknown = Object.keys(raw).find((k) => !FIELDS.includes(k));
     if (unknown) fail(`${unknown}: unknown field (known: ${FIELDS.join(', ')})`);
-    if (raw.$schema !== undefined && typeof raw.$schema !== 'string') fail('$schema: must be a string');
     const species = raw.species;
     if (typeof species !== 'string' || !(SPECIES as readonly string[]).includes(species)) fail(`species: one of ${SPECIES.join(', ')}`);
     if (fileSpecies !== undefined && species !== fileSpecies) fail(`species: "${species}" must equal the file name (${fileSpecies}.json)`);

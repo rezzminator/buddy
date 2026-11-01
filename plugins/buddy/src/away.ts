@@ -92,12 +92,11 @@ export function awayBody(lastResponse: string): string {
   return `Claude has been idle for 30 minutes. Its last response, verbatim:\n<last_response>\n${lastResponse}\n</last_response>`;
 }
 
-/** The reply, trimmed whole: exactly `PAUSE`, or one line `PUSH: {text}` with a non-blank text (refused when it asks a forbidden step); anything else is malformed. */
+/** The reply, trimmed whole: `PAUSE` alone or as any one line (an ambiguous reply pauses), or else its first line `PUSH: {text}` with a non-blank text, whatever lines surround it (refused when it asks a forbidden step); anything else is malformed. */
 export function awayDecision(reply: string): AwayDecision {
   const r = reply.trim();
-  if (r === 'PAUSE') return { decision: 'pause' };
-  const m = /^PUSH: ([^\r\n]+)$/.exec(r);
-  const text = m?.[1]?.trim() ?? '';
+  if (r === 'PAUSE' || r.split('\n').some((l) => l.trim() === 'PAUSE')) return { decision: 'pause' };
+  const text = r.split('\n').map((l) => /^PUSH: ([^\r]*)$/.exec(l.replace(/\r$/, '').trim())?.[1]?.trim() ?? '').find((t) => t !== '') ?? '';
   if (!text) return { decision: 'malformed' };
   return AWAY_FORBIDDEN.test(text) ? { decision: 'refused', text } : { decision: 'push', text };
 }
@@ -110,15 +109,14 @@ export type AwayWait = { at: number; answer: string };
 /** What the adapter keeps per chat: the pending wait (null: none pending) and the away pushes since the user last prompted. */
 export type AwayRecord = { version: 1; wait: AwayWait | null; pushes: number };
 
-/** The kept record, validated; null for anything else (a wrong version, a wrong shape, a non-object). */
+/** The kept record, whatever version wrote it; null without a whole push count or for a non-object. A malformed wait reads as none, the push count kept. */
 export function awayRecordOf(value: unknown): AwayRecord | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
   const v = value as Record<string, unknown>;
-  if (v.version !== 1 || typeof v.pushes !== 'number' || !Number.isInteger(v.pushes) || v.pushes < 0) return null;
-  if (v.wait === null) return { version: 1, wait: null, pushes: v.pushes };
-  if (typeof v.wait !== 'object' || Array.isArray(v.wait)) return null;
-  const w = v.wait as Record<string, unknown>;
-  if (typeof w.at !== 'number' || !Number.isFinite(w.at) || typeof w.answer !== 'string') return null;
+  if (typeof v.pushes !== 'number' || !Number.isInteger(v.pushes) || v.pushes < 0) return null;
+  const w = typeof v.wait === 'object' && v.wait !== null && !Array.isArray(v.wait) ? (v.wait as Record<string, unknown>) : null;
+  // A wait arms on its turn's end and pushes on its answer: without either it cannot arm, so it is none.
+  if (w === null || typeof w.at !== 'number' || !Number.isFinite(w.at) || typeof w.answer !== 'string') return { version: 1, wait: null, pushes: v.pushes };
   return { version: 1, wait: { at: w.at, answer: w.answer }, pushes: v.pushes };
 }
 

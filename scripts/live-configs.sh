@@ -50,12 +50,12 @@ options_of() {
 }
 lines() { [ -f "$RUN/logs/buddy/buddy.log" ] && wc -l < "$RUN/logs/buddy/buddy.log" | tr -d ' ' || echo 0; }
 # How many records of event $1 the log holds from line $2 on.
-count() { tail -n +"$(($2 + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -c --arg e "$1" 'select(.event == $e)' 2>/dev/null | grep -c .; }
+count() { log_from "$2" | jq -c --arg e "$1" 'select(.event == $e)' | grep -c .; }
 check() { printf '%s\t%s\t%s\n' "$1" "$2" "${3//$'\t'/ }" >> "$RUN/checks.tsv"; [ "$1" = PASS ] || log "FAIL $2: $3"; }
 # The newest `question` exchange of this session's chatTurnsToRead in its memory.json, or the newest endOfTurn exchange's `commentAfterEachTurn` or `suggestNextPrompt`; nothing when none.
 stored() { local s; s=$(memory_file); [ -n "$s" ] && jq -r --arg f "$1" '[.blocks[]?.characters[]?[]? | if $f == "question" then select(.kind == "question") | "\(.question) -> \(.answer // "(no answer)")" else select(.kind == "endOfTurn") | .[$f] // empty end] | last // empty' "$s" 2>/dev/null; }
 # The transcript's reply holding $1: its timestamp, or nothing.
-reply_ts() { local f; f=$(transcript); [ -n "$f" ] && jq -r --arg m "$1" 'select(.type=="assistant") | select(any(.message.content[]?; .type=="text" and (.text|contains($m)))) | .timestamp' "$f" 2>/dev/null | tail -1; }
+reply_ts() { local f; f=$(transcript); [ -n "$f" ] && jq -R -r --arg m "$1" 'fromjson? | select(.type=="assistant") | select(any(.message.content[]?; .type=="text" and (.text|contains($m)))) | .timestamp' "$f" 2>/dev/null | tail -1; }
 squash() { tr -s ' \n' '  ' | sed 's/^ //; s/ $//'; }
 # A suggestion reporting S1T3's user-only step as done (the token made or saved), once its future and conditional clauses
 # ("I'll tell you when it's saved", "if my line ran") are cut: the user may send it unread, so it must only ask or instruct.
@@ -109,15 +109,15 @@ turn() {
   # The turn's own records: turn.call (then its outcomes) or turn.skipped, 45 s at most (the call's deadline is 30 s).
   t0=$SECONDS
   while [ $((SECONDS - t0)) -lt 45 ]; do
-    want_commentAfterEachTurn=$(tail -n +"$((from + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -r 'select(.event == "turn.call") | .commentAfterEachTurn' | tail -1)
-    want_suggestNextPrompt=$(tail -n +"$((from + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -r 'select(.event == "turn.call") | .suggestNextPrompt' | tail -1)
+    want_commentAfterEachTurn=$(log_from "$from" | jq -r 'select(.event == "turn.call") | .commentAfterEachTurn' | tail -1)
+    want_suggestNextPrompt=$(log_from "$from" | jq -r 'select(.event == "turn.call") | .suggestNextPrompt' | tail -1)
     if [ -n "$want_commentAfterEachTurn" ]; then
       { [ "$want_commentAfterEachTurn" != true ] || [ "$(count commentAfterEachTurn.outcome "$from")" -gt 0 ]; } && { [ "$want_suggestNextPrompt" != true ] || [ "$(count suggestNextPrompt.outcome "$from")" -gt 0 ]; } && break
     elif [ "$(count turn.skipped "$from")" -gt 0 ]; then break; fi
     sleep 0.5
   done
   commentAfterEachTurn_text=$(stored commentAfterEachTurn | squash); suggestNextPrompt_text=$(stored suggestNextPrompt | squash)
-  commentAfterEachTurn_outcome=$(tail -n +"$((from + 1))" "$RUN/logs/buddy/buddy.log" 2>/dev/null | jq -r 'select(.event == "commentAfterEachTurn.outcome") | .outcome' | tail -1)
+  commentAfterEachTurn_outcome=$(log_from "$from" | jq -r 'select(.event == "commentAfterEachTurn.outcome") | .outcome' | tail -1)
   if [ "$commentAfterEachTurn_outcome" = answered ] && [ -n "$commentAfterEachTurn_text" ]; then
     t0=$SECONDS
     while [ $((SECONDS - t0)) -lt 15 ]; do
@@ -296,33 +296,4 @@ for wave in "S1 S2 S3" "S4 S5"; do
   for S in $wave; do mkdir -p "$TOP/$S"; "$0" --session "$S" "$TOP/$S" > "$TOP/$S.out" 2> "$TOP/$S.err" & pids+=("$!:$S"); done
   for p in "${pids[@]}"; do wait "${p%%:*}"; echo $? > "$TOP/${p#*:}/exit"; done
 done
-node --input-type=module - "$TOP" $SESSIONS <<'JS'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-const [top, ...sessions] = process.argv.slice(2);
-const read = (f) => (existsSync(f) ? readFileSync(f, 'utf8') : '');
-const rows = [], turns = [];
-for (const s of sessions) {
-  const code = Number(read(`${top}/${s}/exit`).trim() || 2);
-  const checks = read(`${top}/${s}/checks.tsv`).split('\n').filter(Boolean).map((l) => { const [verdict, check, evidence] = l.split('\t'); return { verdict, check, evidence }; });
-  const err = read(`${top}/${s}.err`).trim();
-  const driven = code !== 2;
-  const verdict = !driven ? 'NOT DRIVEN' : checks.length && checks.every((c) => c.verdict === 'PASS') ? 'PASS' : 'FAIL';
-  rows.push({ session: s, verdict, exit: code, why: driven ? null : err || 'no error text', checks });
-  for (const l of read(`${top}/${s}/turns.jsonl`).split('\n').filter(Boolean)) turns.push(JSON.parse(l));
-}
-const cell = (v) => (v === null || v === undefined || v === '' ? 'unread' : String(v).replace(/\|/g, '\\|').replace(/\n/g, ' ').slice(0, 70));
-const md = [
-  `# buddy live configuration proof`, '', `Run folder: ${top}`, '',
-  '| session | verdict | check | evidence |', '| --- | --- | --- | --- |',
-  ...rows.flatMap((r) => (r.checks.length ? r.checks : [{ verdict: r.verdict, check: r.why ?? 'no check ran', evidence: '' }]).map((c, i) => `| ${i ? '' : `${r.session} ${r.verdict}`} | ${c.verdict} | ${cell(c.check)} | ${cell(c.evidence)} |`)),
-  '', '## Per turn', '',
-  '| session | turn | end→commentAfterEachTurn ms | call ms | suggestNextPrompt ms | inTok | outTok | cacheRead | cacheWrite | outcome | suggestNextPrompt | model calls | errors | pane |',
-  '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
-  ...turns.map((t) => `| ${t.session} | ${t.turn} | ${cell(t.endToCommentAfterEachTurnMs)} | ${cell(t.callMs)} | ${cell(t.suggestNextPromptMs)} | ${cell(t.inTok)} | ${cell(t.outTok)} | ${cell(t.cacheRead)} | ${cell(t.cacheWrite)} | ${cell(t.outcome)} | ${cell(t.suggestNextPrompt)} | ${t.modelCalls} | ${t.errors.length ? cell(t.errors.join('; ')) : '0'} | ${cell(t.paneMatch)}${t.suggestNextPromptOnScreen ? ` / suggestNextPrompt on screen: ${cell(t.suggestNextPromptOnScreen)}` : ''} |`),
-  '', '"unread" is a metric the run could not read (no record carried it), never a zero.', '',
-];
-writeFileSync(`${top}/report.md`, md.join('\n'));
-writeFileSync(`${top}/report.json`, JSON.stringify({ top, sessions: rows, turns }, null, 2));
-console.log(md.join('\n'));
-process.exitCode = rows.some((r) => r.verdict === 'NOT DRIVEN') ? 2 : rows.some((r) => r.verdict !== 'PASS') ? 1 : 0;
-JS
+node "$ROOT/scripts/live-configs-report.mjs" "$TOP" $SESSIONS

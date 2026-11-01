@@ -161,14 +161,17 @@ export function classifyToolCall(c: ToolCall): Outcome | null {
 
 const OUTPUT_CAP = 20000;
 
-/** The whole text a tool call produced: core's `text` when it is a string, else the string fields of `result` (stdout, stderr, ...). */
+/** Every string in `v`, in order, however deep in its lists and objects; a `type` tag names a block, it is not its text. */
+function stringsIn(v: unknown): string[] {
+  if (typeof v === 'string') return [v];
+  if (typeof v !== 'object' || v === null) return [];
+  return Object.entries(v).flatMap(([k, x]) => (k === 'type' && typeof x === 'string' ? [] : stringsIn(x)));
+}
+
+/** The whole text a tool call produced: core's `text` when it is a string, else every string in `result` (stdout, stderr, a content list's texts, ...). */
 export function toolText(r: { text?: unknown; result?: unknown }): string {
   if (typeof r.text === 'string') return r.text;
-  if (typeof r.result === 'string') return r.result;
-  if (typeof r.result === 'object' && r.result !== null) {
-    return Object.values(r.result as Record<string, unknown>).filter((v): v is string => typeof v === 'string').join('\n');
-  }
-  return '';
+  return stringsIn(r.result).join('\n');
 }
 
 /** The text a tool call produced (toolText), its tail kept to OUTPUT_CAP, where a test runner prints its summary. */
