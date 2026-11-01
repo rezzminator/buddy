@@ -1,0 +1,25 @@
+{
+  "name": "professor",
+  "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
+  "owner": {
+    "name": "rezzminator",
+    "url": "https://github.com/rezzminator/buddy"
+  },
+  "plugins": [
+    {
+      "name": "buddy",
+      "source": "./plugins/buddy",
+      "description": "Claude Code buddy plugin: Quack the ASCII duck waddles above your prompt and talks back — or bring back your /buddy",
+      "homepage": "https://github.com/rezzminator/buddy",
+      "license": "MIT",
+      "keywords": [
+        "claude-code",
+        "buddy",
+        "companion",
+        "ascii-art",
+        "terminal-pet",
+        "function-hooks"
+      ]
+    }
+  ]
+}

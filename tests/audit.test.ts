@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 const script = fileURLToPath(new URL('../scripts/audit.mjs', import.meta.url));
 const root = fileURLToPath(new URL('..', import.meta.url));
 const M = 1_000_000;
+// Node 22 strips the .ts import only behind this flag; 23.6+ does it by default
+const nodeArgs = process.features.typescript ? [] : ['--experimental-strip-types'];
 
 let dir = '';
 beforeEach(() => {
@@ -46,7 +48,7 @@ function cost(over: Record<string, unknown>): string {
 function audit(lines: string[]): { out: string; status: number | null } {
   const file = join(dir, 'buddy.log');
   writeFileSync(file, `${lines.join('\n')}\n`);
-  const run = spawnSync(process.execPath, [script, file], { cwd: root, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [...nodeArgs, script, file], { cwd: root, encoding: 'utf8' });
   return { out: run.stdout, status: run.status };
 }
 
@@ -73,7 +75,7 @@ describe('audit default logs', () => {
 
   it('reads every rotated archive and the live log under $PLUGIN_LOG_DIR/buddy', () => {
     const { config, home, env } = logs('logs/buddy');
-    const run = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8', env: { ...env, PLUGIN_LOG_DIR: join(dir, 'logs'), CLAUDE_CONFIG_DIR: config, HOME: home } });
+    const run = spawnSync(process.execPath, [...nodeArgs, script], { cwd: root, encoding: 'utf8', env: { ...env, PLUGIN_LOG_DIR: join(dir, 'logs'), CLAUDE_CONFIG_DIR: config, HOME: home } });
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('Buddy model calls from 3 log file(s)');
     expect(rowCells(run.stdout, 'total')[0]).toBe('3');
@@ -81,7 +83,7 @@ describe('audit default logs', () => {
 
   it('without PLUGIN_LOG_DIR, under ~/.local/state/buddy/logs', () => {
     const { config, home, env } = logs('home/.local/state/buddy/logs');
-    const run = spawnSync(process.execPath, [script], { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_CONFIG_DIR: config, HOME: home } });
+    const run = spawnSync(process.execPath, [...nodeArgs, script], { cwd: root, encoding: 'utf8', env: { ...env, CLAUDE_CONFIG_DIR: config, HOME: home } });
     expect(run.status).toBe(0);
     expect(run.stdout).toContain('Buddy model calls from 3 log file(s)');
     expect(rowCells(run.stdout, 'total')[0]).toBe('3');
@@ -169,7 +171,7 @@ describe('audit price table', () => {
     );
     const file = join(dir, 'buddy.log');
     writeFileSync(file, `${cost({ model: 'stand-in', inTok: M })}\n${cost({ model: 'opus', inTok: M })}\n`);
-    const run = spawnSync(process.execPath, [join(dir, 'scripts', 'audit.mjs'), file], { encoding: 'utf8' });
+    const run = spawnSync(process.execPath, [...nodeArgs, join(dir, 'scripts', 'audit.mjs'), file], { encoding: 'utf8' });
     expect(run.status).toBe(0);
     const total = rowCells(run.stdout, 'total');
     expect(total[4]).toBe('$42.000*');

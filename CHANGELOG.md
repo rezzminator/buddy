@@ -2,6 +2,15 @@
 
 Every release of buddy. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `buddy--v<version>`, with a GitHub release carrying the section below.
 
+## [4.0.1] — 2026-11-01
+
+### Changed
+- buddy's repository is a marketplace again, named `professor`: install with `claude plugin marketplace add rezzminator/buddy`, then `claude plugin install buddy@professor`.
+- The level-log module is buddy's own, edited in this repository; its rows, files and directory are unchanged.
+
+### Fixed
+- The audit script runs on Node 22.6 and later when started as `node --experimental-strip-types scripts/audit.mjs`; on Node 23.6 and later `npm run audit` needs no flag.
+
 ## [4.0.0] — 2026-10-30
 
 ### Changed

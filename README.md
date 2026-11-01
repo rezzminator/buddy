@@ -5,7 +5,7 @@
 **Claude Code buddy plugin: an ASCII companion above your prompt that remembers your rules and flags Claude's shortcuts**
 
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757)](https://docs.claude.com/en/docs/claude-code/plugins)
-[![Version](https://img.shields.io/badge/version-4.0.0-blue)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.1-blue)](./CHANGELOG.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 [![CI](https://github.com/rezzminator/buddy/actions/workflows/release.yml/badge.svg?branch=develop)](https://github.com/rezzminator/buddy/actions/workflows/release.yml)
 [![Built with Professor](https://img.shields.io/badge/built%20with-Professor-8A2BE2)](https://github.com/rezzminator/professor)
@@ -61,7 +61,7 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 2. Install:
 
    ```sh
-   claude plugin marketplace add rezzminator/professor
+   claude plugin marketplace add rezzminator/buddy
    claude plugin install buddy@professor
    ```
 
@@ -89,7 +89,7 @@ spend tokens, and each can be turned off (see the [FAQ](#-faq)).
 > buddy is built on Claude Code's function hooks, an early-access surface
 > that may change between releases. A plugin built on function hooks cannot
 > enter the official plugin directory, so buddy installs from
-> Professor's marketplace, as above. It is tested on Claude Code
+> its own marketplace, as above. It is tested on Claude Code
 > 2.1.286.
 
 > [!NOTE]
@@ -421,8 +421,8 @@ flowchart LR
   model's result shapes. It never holds your account id or anything from
   `~/.claude.json`. `/buddy log` shows the path and the last 20 lines, to
   paste into an issue.
-- **Level logs.** Beside `buddy.log`, the shared plugin-log library (vendored
-  as `plugins/buddy/src/plugin-log.ts`) appends `errors.jsonl`,
+- **Level logs.** Beside `buddy.log`, buddy's own logging module
+  (`plugins/buddy/src/plugin-log.ts`) appends `errors.jsonl`,
   `warnings.jsonl` and `info.jsonl`, independent of `logLevel`: errors,
   warnings and actionable state changes only; no debug records or
   prompt/tool bodies. Rows are at most 4096 UTF-8 bytes, explicitly marked
