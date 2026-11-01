@@ -19,6 +19,8 @@ describe('validateSpecies', () => {
   test('the fixture is valid, {E} counted as one column', () => {
     const v = validateSpecies(fixture(), 'blob');
     expect(v.ok).toBe(true);
+    // $schema is read nowhere: any value of it passes.
+    expect(validateSpecies({ ...fixture(), $schema: 7 }, 'blob')).toEqual(v);
     expect(rowWidth(' ({E}{E}) ')).toBe(6);
   });
 

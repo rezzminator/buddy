@@ -33,7 +33,16 @@ describe('awayDecision: PAUSE, or one line PUSH: {text}', () => {
     expect(awayDecision('PUSH: Run the remaining replay and report.')).toEqual({ decision: 'push', text: 'Run the remaining replay and report.' });
     expect(awayDecision('\nPUSH: Finish the migration.  \n')).toEqual({ decision: 'push', text: 'Finish the migration.' });
   });
-  test.each(['PAUSE because the request is finished', 'PUSH:', 'PUSH:   ', 'PUSH: a\nb', 'PUSH: a\rb', 'push: x', 'PUSH:x', 'Pause', ''])('anything else is malformed: %j', (reply) => {
+  test('the first PUSH line of a longer reply pushes its text, whatever lines surround it', () => {
+    expect(awayDecision('The tests still fail.\nPUSH: Fix the failing parser test.\nPUSH: then ship')).toEqual({ decision: 'push', text: 'Fix the failing parser test.' });
+    expect(awayDecision('PUSH: a\r\nb')).toEqual({ decision: 'push', text: 'a' });
+    expect(awayDecision('PUSH:\nPUSH: Rerun the suite.')).toEqual({ decision: 'push', text: 'Rerun the suite.' });
+  });
+  test('a reply holding a line that is exactly PAUSE pauses, even beside a PUSH line', () => {
+    expect(awayDecision('PUSH: finish the deploy\nIt may be done already.\n PAUSE \n')).toEqual({ decision: 'pause' });
+    expect(awayDecision('PAUSE\nPUSH: finish the deploy')).toEqual({ decision: 'pause' });
+  });
+  test.each(['PAUSE because the request is finished', 'PUSH:', 'PUSH:   ', 'PUSH:\n  ', 'PUSH: a\rb', 'push: x', 'PUSH:x', 'Pause', ''])('anything else is malformed: %j', (reply) => {
     expect(awayDecision(reply)).toEqual({ decision: 'malformed' });
   });
   test.each(['git push the branch', 'delete the old logs', 'publish the release', 'Push to origin.', 'rm the build folder', 'tag v2', 'merge develop', 'log in again', 'rotate the API key'])('a push asking a forbidden step is refused: %j', (text) => {
@@ -71,13 +80,18 @@ describe('awayRecordOf: the kept wait, read back', () => {
     expect(awayRecordOf({ version: 1, wait: null, pushes: 0 })).toEqual({ version: 1, wait: null, pushes: 0 });
   });
   test.each([
-    ['a wrong version', { version: 2, wait: null, pushes: 0 }],
+    ['another version', { version: 2, wait: { at: 5, answer: 'Done.' }, pushes: 1 }, { version: 1, wait: { at: 5, answer: 'Done.' }, pushes: 1 }],
+    ['no version', { wait: null, pushes: 2 }, { version: 1, wait: null, pushes: 2 }],
+    ['a missing wait', { version: 1, pushes: 3 }, { version: 1, wait: null, pushes: 3 }],
+    ['a non-string answer', { version: 1, wait: { at: 1, answer: 5 }, pushes: 1 }, { version: 1, wait: null, pushes: 1 }],
+    ['a non-finite at', { version: 1, wait: { at: Number.POSITIVE_INFINITY, answer: 'A' }, pushes: 1 }, { version: 1, wait: null, pushes: 1 }],
+    ['a string at', { version: 1, wait: { at: '1', answer: 'A' }, pushes: 1 }, { version: 1, wait: null, pushes: 1 }],
+  ])('%s keeps the push count, the wait when it can arm', (_name, value, kept) => {
+    expect(awayRecordOf(value)).toEqual(kept);
+  });
+  test.each([
     ['negative pushes', { version: 1, wait: null, pushes: -1 }],
     ['fractional pushes', { version: 1, wait: null, pushes: 1.5 }],
-    ['a missing wait', { version: 1, pushes: 0 }],
-    ['a non-string answer', { version: 1, wait: { at: 1, answer: 5 }, pushes: 0 }],
-    ['a non-finite at', { version: 1, wait: { at: Number.POSITIVE_INFINITY, answer: 'A' }, pushes: 0 }],
-    ['a string at', { version: 1, wait: { at: '1', answer: 'A' }, pushes: 0 }],
     ['a null', null],
     ['a string', 'away'],
     ['an array', []],

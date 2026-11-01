@@ -202,8 +202,9 @@ export function actionOf(call: { tool: string; [argument: string]: unknown }, fa
   // A test command whose tests passed before a later command failed is no failed step: its reason alone.
   const fail = failure ? (failure.kind === 'failed' && failure.reason.startsWith(TESTS_PASSED) ? failure.reason : failure.reason ? `${failure.kind}: ${failure.reason}` : failure.kind) : undefined;
   const sized = seen.size ? { size: seen.size } : {};
-  const text = (t: string): Action | null => (t ? (fail === undefined ? { text: t, ...sized } : { text: t, fail, ...sized }) : null);
-  const file = (verb: FileVerb, f: string): Action | null => (!f ? null : fail === undefined ? { verb, file: f, ...sized } : text(`${INFINITIVE[verb]} ${f}`));
+  // A failed call keeps its failure even with nothing to name it by: the tool's name stands in.
+  const text = (t: string): Action | null => (t ? (fail === undefined ? { text: t, ...sized } : { text: t, fail, ...sized }) : fail === undefined ? null : { text: call.tool, fail, ...sized });
+  const file = (verb: FileVerb, f: string): Action | null => (!f ? text('') : fail === undefined ? { verb, file: f, ...sized } : text(`${INFINITIVE[verb]} ${f}`));
   const background = call.run_in_background === true;
   switch (call.tool) {
     case 'Bash': {

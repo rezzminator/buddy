@@ -599,27 +599,38 @@ function counts(v: unknown, keys: readonly string[], optional = false): boolean 
   return keys.every((k) => (optional && o[k] === undefined) || isCount(o[k]));
 }
 
-/** Stored numbers, checked field by field; null when any field is malformed. */
-export function turnStatsOf(v: unknown): TurnStats | null {
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
+/**
+ * Stored numbers, checked group by group: a malformed group (one counter, or
+ * a group such as `files` or `tokens`) is left out and counted in `dropped`,
+ * the rest kept. `stats` is null only when the record is no object or its
+ * time, the one field every turn has, is malformed.
+ */
+export function turnStatsOf(v: unknown): { stats: TurnStats | null; dropped: number } {
+  if (typeof v !== 'object' || v === null || Array.isArray(v) || !isCount((v as { ms?: unknown }).ms)) return { stats: null, dropped: 1 };
   const s = v as Record<string, unknown>;
-  if (!isCount(s.ms)) return null;
-  const ok =
-    [s.gapMs, s.requests, s.failed, s.denied, s.reruns, s.web, s.usd].every((n) => n === undefined || isCount(n)) &&
-    (s.tools === undefined || (counts(s.tools, Object.keys(s.tools as object)) && Object.keys(s.tools as object).length > 0)) &&
-    (s.files === undefined || (counts(s.files, ['read', 'edited', 'wrote']) && counts(s.files, ['deleted'], true))) &&
-    (s.hot === undefined || (typeof (s.hot as { file?: unknown }).file === 'string' && counts(s.hot, ['edits']))) &&
-    (s.lines === undefined || (counts(s.lines, ['added', 'removed']) && counts(s.lines, ['unmeasured'], true))) &&
-    (s.tests === undefined || (counts(s.tests, ['passed', 'failed']) && ((s.tests as { seq?: unknown }).seq === undefined || /^[pf]+$/.test(String((s.tests as { seq?: unknown }).seq))))) &&
-    (s.git === undefined || counts(s.git, ['commits', 'pushes'])) &&
-    (s.stops === undefined || counts(s.stops, ['maxTokens', 'contextFull'])) &&
-    (s.tokens === undefined || counts(s.tokens, ['in', 'out', 'cacheRead', 'cacheWrite'])) &&
-    (s.model === undefined || typeof s.model === 'string') &&
-    (s.effort === undefined || typeof s.effort === 'string') &&
-    (s.context === undefined || counts(s.context, ['percent', 'window'])) &&
-    (s.limits === undefined || counts(s.limits, ['fiveHour', 'sevenDay'], true));
-  if (!ok) return null;
-  // Numbers stored before a subagent's work was left out may still carry it: never read.
-  const { agents: _subagents, ...own } = s;
-  return own as TurnStats;
+  const tests = s.tests as { seq?: unknown } | undefined;
+  const checks: Record<string, (x: unknown) => boolean> = {
+    gapMs: isCount, requests: isCount, failed: isCount, denied: isCount, reruns: isCount, web: isCount, usd: isCount,
+    tools: (x) => typeof x === 'object' && x !== null && counts(x, Object.keys(x)) && Object.keys(x).length > 0,
+    files: (x) => counts(x, ['read', 'edited', 'wrote']) && counts(x, ['deleted'], true),
+    hot: (x) => typeof (x as { file?: unknown } | null)?.file === 'string' && counts(x, ['edits']),
+    lines: (x) => counts(x, ['added', 'removed']) && counts(x, ['unmeasured'], true),
+    tests: (x) => counts(x, ['passed', 'failed']) && (tests?.seq === undefined || /^[pf]+$/.test(String(tests.seq))),
+    git: (x) => counts(x, ['commits', 'pushes']),
+    stops: (x) => counts(x, ['maxTokens', 'contextFull']),
+    tokens: (x) => counts(x, ['in', 'out', 'cacheRead', 'cacheWrite']),
+    model: (x) => typeof x === 'string',
+    effort: (x) => typeof x === 'string',
+    context: (x) => counts(x, ['percent', 'window']),
+    limits: (x) => counts(x, ['fiveHour', 'sevenDay'], true),
+  };
+  const kept: Record<string, unknown> = { ms: s.ms };
+  let dropped = 0;
+  for (const [key, ok] of Object.entries(checks)) {
+    if (s[key] === undefined) continue;
+    if (ok(s[key])) kept[key] = s[key];
+    else dropped++;
+  }
+  // Numbers stored before a subagent's work was left out may still carry it (`agents`): never read.
+  return { stats: kept as TurnStats, dropped };
 }

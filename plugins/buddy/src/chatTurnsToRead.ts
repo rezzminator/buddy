@@ -254,6 +254,7 @@ function cappedTurn(t: Turn): Turn {
   const returned = (t.returned ?? []).map((r) => ends(r.trim(), REPORT_LARGE_HEAD + 200, REPORT_LARGE_TAIL)).filter((r) => r).slice(-RETURNED_MAX);
   const briefed = (t.briefed ?? []).map((b) => b.trim()).filter((b) => b).slice(-RETURNED_MAX);
   const said = cappedSaid(t.said ?? [], answer);
+  const typed = from !== undefined && t.typed !== undefined ? ends(cleanPrompt(t.typed), USER_PROMPT_HEAD, USER_PROMPT_TAIL) : '';
   return {
     ...turn,
     ...(did.length > 0 ? { did } : {}),
@@ -267,6 +268,7 @@ function cappedTurn(t: Turn): Turn {
     ...(suggested ? { suggested } : {}),
     ...(said.length > 0 ? { said } : {}),
     ...(briefed.length > 0 ? { briefed } : {}),
+    ...(typed ? { typed } : {}),
   };
 }
 
@@ -297,9 +299,9 @@ export function numberBlocks(blocks: readonly Block[]): { blocks: Block[]; turnN
   return { blocks: blocks.map((b) => b.turn && b.no === undefined ? { ...b, no: ++turnNo } : b), turnNo };
 }
 
-/** What the user typed in a turn's prompt: none of a taken suggestion, only the words after one extended, the whole prompt otherwise. */
+/** What the user typed in a turn's prompt: none of a taken suggestion, only the words after one extended, the whole prompt otherwise; of a turn not the user's, only the slash command the user typed that it began expanded (`typed`). */
 function typedPrompt(t: Turn): string[] {
-  if (t.from !== undefined) return [];
+  if (t.from !== undefined) return t.typed === undefined ? [] : [t.typed];
   if (t.suggested === undefined) return [t.prompt];
   const use = suggestionUse(t.suggested, t.prompt);
   return use === 'extended' ? [afterSuggestion(t.suggested, t.prompt)] : use === 'unedited' ? [] : [t.prompt];
@@ -322,16 +324,18 @@ export function memoryStats(blocks: readonly Block[], n: number): { turns: numbe
  * The timeline with `x` filed for `characterId` under the turn `after` (the
  * newest remembered when the exchange began), or under the newest block when
  * `after` is undefined; with no block yet, under a first, turnless one. An
- * exchange whose turn is no longer remembered is older than the memory: dropped.
+ * exchange whose turn is no longer remembered (dropped from the window, or
+ * replaced by its resend under a new id) is filed under the newest block: it
+ * happened after that block's turn was filed, and is never lost.
  * A canned line already kept under that turn (a greeting after each reload) is
  * not kept twice.
  */
 export function addExchange(blocks: readonly Block[], characterId: string, x: Exchange, after?: string): Block[] {
   const c = capped(x);
   if (!c) return [...blocks];
-  if (blocks.length === 0) return after === undefined ? [{ characters: { [characterId]: [c] } }] : [];
-  const i = after === undefined ? blocks.length - 1 : blocks.findIndex((b) => b.turnId === after);
-  if (i < 0) return [...blocks];
+  if (blocks.length === 0) return [{ characters: { [characterId]: [c] } }];
+  const found = after === undefined ? -1 : blocks.findIndex((b) => b.turnId === after);
+  const i = found >= 0 ? found : blocks.length - 1;
   const b = blocks[i]!;
   const had = b.characters[characterId] ?? [];
   if (c.kind === 'line' && had.some((y) => y.kind === 'line' && y.text === c.text)) return [...blocks];
@@ -425,13 +429,16 @@ function turnLines(t: Turn, k: number, prev: TurnStats | undefined, older: boole
   const suggested = t.suggested ?? (t.from === TAKEN_SUGGESTION ? t.prompt : 'none');
   const notTaken = t.suggested !== undefined && suggestionUse(t.suggested, t.prompt) === null ? `${NOT_TAKEN_MARK} ` : '';
   const prompt = t.prompt || '(not seen)';
+  // The user's slash command a turn of unknown origin began expanded: their own words, then the expansion Claude was sent.
+  const typed = t.typed === undefined ? [] : [`The user typed: ${older ? ends(t.typed, STORY_USER_PROMPT_HEAD, STORY_USER_PROMPT_TAIL) : t.typed}`];
   const agents = [...(t.briefed ?? []).map((b) => `Claude briefed its agent ${b}`), ...(t.returned ?? []).map((r) => `Its agent ${r}`)];
-  if (!older) return [`Turn ${k}. ${asked}`, ...(users ? [`suggested: ${notTaken}${suggested}`, `sent: ${prompt}`] : [prompt]), ...midTurnLines(t, false), ...(t.did ? [didLine(t.did, null)] : []), ...agents, ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];
+  if (!older) return [`Turn ${k}. ${asked}`, ...typed, ...(users ? [`suggested: ${notTaken}${suggested}`, `sent: ${prompt}`] : [prompt]), ...midTurnLines(t, false), ...(t.did ? [didLine(t.did, null)] : []), ...agents, ...(t.stats ? [renderStats(t.stats, prev)] : []), answered, t.answer || '(no text)'];
   const failed = t.stats?.failed ?? 0;
   // The user's own words keep more than any other origin's, a taken suggestion's included.
   const sent = t.from === undefined ? ends(prompt, STORY_USER_PROMPT_HEAD, STORY_USER_PROMPT_TAIL) : ends(prompt, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL);
   return [
     `Turn ${k}. ${asked}`,
+    ...typed,
     ...(users ? [`suggested: ${notTaken}${ends(suggested, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL)}`, `sent: ${sent}`] : [sent]),
     ...midTurnLines(t, true),
     ...(t.did ? [didLine(t.did)] : []),
@@ -506,57 +513,104 @@ export function memoryText(name: string, blocks: readonly Block[], characterId: 
   return [`# What ${name} remembers`, `Rewritten ${stamp(at)}. ${name} reads its live items and the turns below before every reply; the ended items are kept here for you.`, itemsText(memory.items, memory.ended, memory.turnNo), render(blocks, characterId, n) || 'Nothing yet.'].join('\n\n') + '\n';
 }
 
-/** A stored exchange, checked field by field: its capped form, or null when malformed. */
-function exchangeOf(v: unknown): Exchange | null {
-  if (typeof v !== 'object' || v === null) return null;
+/**
+ * A stored exchange, checked field by field: its capped form, without a
+ * malformed field (`dropped` counts each), or null when it holds nothing
+ * that reads (no question, line or end-of-turn text).
+ */
+function exchangeOf(v: unknown): { x: Exchange | null; dropped: number } {
+  if (typeof v !== 'object' || v === null) return { x: null, dropped: 1 };
   const x = v as Record<string, unknown>;
-  if (x.kind === 'question') {
-    if (typeof x.question !== 'string' || (x.answer !== undefined && typeof x.answer !== 'string')) return null;
-    return capped({ kind: 'question', question: x.question, ...(typeof x.answer === 'string' ? { answer: x.answer } : {}) });
+  const text = (f: unknown) => (typeof f === 'string' ? f : undefined);
+  const bad = (...fs: unknown[]) => fs.filter((f) => f !== undefined && typeof f !== 'string').length;
+  let kept: Exchange | null = null;
+  let dropped = 0;
+  if (x.kind === 'question' && typeof x.question === 'string') {
+    dropped = bad(x.answer);
+    kept = capped({ kind: 'question', question: x.question, ...(typeof x.answer === 'string' ? { answer: x.answer } : {}) });
+  } else if (x.kind === 'line' && typeof x.text === 'string') kept = capped({ kind: 'line', text: x.text });
+  else if (x.kind === 'endOfTurn') {
+    const { commentAfterEachTurn: c, warned: w, promptToMainChat: p, unsentPrompt: u, suggestNextPrompt: n } = x;
+    dropped = bad(c, w, p, u, n);
+    kept = capped({ kind: 'endOfTurn', commentAfterEachTurn: text(c), warned: text(w), promptToMainChat: text(p), unsentPrompt: text(u), suggestNextPrompt: text(n) });
   }
-  if (x.kind === 'line' && typeof x.text === 'string') return capped({ kind: 'line', text: x.text });
-  if (x.kind === 'endOfTurn') {
-    const { commentAfterEachTurn: c, warned: v, promptToMainChat: p, unsentPrompt: u, suggestNextPrompt: s } = x;
-    if ([c, v, p, u, s].some((f) => f !== undefined && typeof f !== 'string')) return null;
-    return capped({ kind: 'endOfTurn', ...(typeof c === 'string' ? { commentAfterEachTurn: c } : {}), ...(typeof v === 'string' ? { warned: v } : {}), ...(typeof p === 'string' ? { promptToMainChat: p } : {}), ...(typeof u === 'string' ? { unsentPrompt: u } : {}), ...(typeof s === 'string' ? { suggestNextPrompt: s } : {}) });
-  }
-  return null;
+  return { x: kept, dropped: kept === null ? 1 : dropped };
 }
 
-/** A stored turn, checked field by field, or null when malformed. */
-function turnOf(v: unknown): Turn | null {
-  if (typeof v !== 'object' || v === null) return null;
+/**
+ * A stored turn, checked field by field: a malformed field is left out and
+ * counted in `dropped`, the turn kept with the rest (a prompt or answer that
+ * is not text reads as none, an origin that is not text as `unknown`, never
+ * as the user's); null only when it is no object.
+ */
+function turnOf(v: unknown): { turn: Turn | null; dropped: number } {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return { turn: null, dropped: 1 };
   const t = v as Record<string, unknown>;
-  if (typeof t.prompt !== 'string' || typeof t.answer !== 'string' || (t.from !== undefined && typeof t.from !== 'string')) return null;
-  if (t.did !== undefined && !(Array.isArray(t.did) && t.did.every((d) => typeof d === 'string'))) return null;
-  if (t.interrupted !== undefined && typeof t.interrupted !== 'boolean') return null;
-  if (t.ended !== undefined && t.ended !== 'error' && t.ended !== 'refusal') return null;
-  if (t.added !== undefined && !(Array.isArray(t.added) && t.added.every((a) => typeof a === 'string'))) return null;
-  if (t.returned !== undefined && !(Array.isArray(t.returned) && t.returned.every((r) => typeof r === 'string'))) return null;
-  if (t.suggested !== undefined && typeof t.suggested !== 'string') return null;
+  let dropped = 0;
+  const field = <T>(value: unknown, ok: (x: unknown) => boolean, kept: (x: unknown) => T): T | undefined => {
+    if (value === undefined) return undefined;
+    if (ok(value)) return kept(value);
+    dropped++;
+    return undefined;
+  };
+  const texts = (x: unknown) => Array.isArray(x) && x.every((d) => typeof d === 'string');
+  const isText = (x: unknown) => typeof x === 'string';
   const position = (n: unknown): boolean => typeof n === 'number' && Number.isInteger(n) && n >= 0;
-  if (t.said !== undefined && !(Array.isArray(t.said) && t.said.every((x) => typeof x === 'object' && x !== null && position((x as Said).after) && typeof (x as Said).text === 'string'))) return null;
-  if (t.briefed !== undefined && !(Array.isArray(t.briefed) && t.briefed.every((b) => typeof b === 'string'))) return null;
-  // Positions are a reading aid: bad ones are dropped, the turn kept.
+  const prompt = field(t.prompt, isText, (x) => x as string) ?? '';
+  const answer = field(t.answer, isText, (x) => x as string) ?? '';
+  if (t.prompt === undefined || t.answer === undefined) dropped++;
+  const from = t.from === undefined ? undefined : field(t.from, isText, (x) => x as string) ?? 'unknown';
+  const did = field(t.did, texts, (x) => x as string[]);
+  const interrupted = field(t.interrupted, (x) => typeof x === 'boolean', (x) => x as boolean);
+  const ended = field(t.ended, (x) => x === 'error' || x === 'refusal', (x) => x as 'error' | 'refusal');
+  const added = field(t.added, texts, (x) => x as string[]);
+  const returned = field(t.returned, texts, (x) => x as string[]);
+  const suggested = field(t.suggested, isText, (x) => x as string);
+  const typed = field(t.typed, isText, (x) => x as string);
+  const said = field(t.said, (x) => Array.isArray(x) && x.every((y) => typeof y === 'object' && y !== null && position((y as Said).after) && typeof (y as Said).text === 'string'), (x) => (x as Said[]).map((y) => ({ after: y.after, text: y.text })));
+  const briefed = field(t.briefed, texts, (x) => x as string[]);
+  // Positions are a reading aid: bad ones are dropped silently, the turn kept.
   const addedAfter = Array.isArray(t.addedAfter) && t.addedAfter.every(position) ? { addedAfter: t.addedAfter as number[] } : {};
-  const stats = t.stats === undefined ? undefined : turnStatsOf(t.stats);
-  if (stats === null) return null;
-  return cappedTurn({
-    prompt: t.prompt,
-    answer: t.answer,
-    ...(Array.isArray(t.did) ? { did: t.did as string[] } : {}),
-    ...(Array.isArray(t.returned) ? { returned: t.returned as string[] } : {}),
-    ...(typeof t.from === 'string' ? { from: t.from } : {}),
-    ...(stats ? { stats } : {}),
-    ...(t.interrupted === true ? { interrupted: true } : {}),
-    ...(t.ended === 'error' || t.ended === 'refusal' ? { ended: t.ended } : {}),
-    ...(Array.isArray(t.added) ? { added: t.added as string[] } : {}),
-    ...addedAfter,
-    ...(typeof t.suggested === 'string' ? { suggested: t.suggested } : {}),
-    ...(Array.isArray(t.said) ? { said: (t.said as Said[]).map((x) => ({ after: x.after, text: x.text })) } : {}),
-    ...(Array.isArray(t.briefed) ? { briefed: t.briefed as string[] } : {}),
-  });
+  const read = t.stats === undefined ? undefined : turnStatsOf(t.stats);
+  dropped += read?.dropped ?? 0;
+  return {
+    turn: cappedTurn({
+      prompt,
+      answer,
+      ...(did ? { did } : {}),
+      ...(returned ? { returned } : {}),
+      ...(from === undefined ? {} : { from }),
+      ...(read?.stats ? { stats: read.stats } : {}),
+      ...(interrupted === true ? { interrupted: true } : {}),
+      ...(ended ? { ended } : {}),
+      ...(added ? { added } : {}),
+      ...addedAfter,
+      ...(suggested === undefined ? {} : { suggested }),
+      ...(said ? { said } : {}),
+      ...(briefed ? { briefed } : {}),
+      ...(typed === undefined ? {} : { typed }),
+    }),
+    dropped,
+  };
 }
+
+/**
+ * memory.json's text read as chatTurnsToReadOf reads its value; text that is
+ * not JSON reads as empty with `setAside` and an error naming the parse
+ * failure, so the adapter keeps the file aside before its first write.
+ */
+export function chatTurnsToReadOfText(text: string): ReturnType<typeof chatTurnsToReadOf> {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    return { blocks: [], items: {}, ended: {}, strikes: {}, turnNo: 0, setAside: true, error: `the stored chatTurnsToRead is not JSON (${error instanceof Error ? error.message : String(error)})` };
+  }
+  return chatTurnsToReadOf(value);
+}
+
+/** The prefix of the turn id made up for a stored turn whose own was lost, by its block's place: it matches no real turn's. */
+export const UNKNOWN_TURN_ID = 'unknown-turn-';
 
 /** The newest memory.json version this release reads and writes. */
 export const STORED_VERSION = 2;
@@ -566,13 +620,16 @@ export const STORED_VERSION = 2;
  * for v1); v1 notes (no `version`, or `version` 1) remain raw for migration.
  * Any other `version`, a newer release's file or one this release cannot
  * place, reads as empty with `untouched` and an error: its file is never
- * rewritten.
+ * rewritten. A value that is no record, or a record without its list of
+ * blocks, is read for what it holds (its items, ended items, strikes) with
+ * `setAside` and an error: the adapter keeps the file aside before its first
+ * write, so nothing it held is overwritten.
  */
-export function chatTurnsToReadOf(value: unknown): { blocks: Block[]; items: Items; ended: EndedItems; strikes: Strikes; turnNo: number; v1Notes?: Record<string, string[]>; untouched?: true; error?: string } {
+export function chatTurnsToReadOf(value: unknown): { blocks: Block[]; items: Items; ended: EndedItems; strikes: Strikes; turnNo: number; v1Notes?: Record<string, string[]>; untouched?: true; setAside?: true; error?: string } {
   const empty = { blocks: [], items: {}, ended: {}, strikes: {}, turnNo: 0 };
   if (value === undefined) return empty;
-  if (typeof value !== 'object' || value === null || !Array.isArray((value as Stored).blocks)) {
-    return { ...empty, error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' };
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { ...empty, setAside: true, error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' };
   }
   const record = value as Record<string, unknown>;
   const version = record.version;
@@ -597,32 +654,43 @@ export function chatTurnsToReadOf(value: unknown): { blocks: Block[]; items: Ite
       else dropped++;
     }
   }
+  const hasBlocks = Array.isArray(record.blocks);
   const blocks: Block[] = [];
-  for (const raw of (value as Stored).blocks as unknown[]) {
+  for (const [index, raw] of (hasBlocks ? (record.blocks as unknown[]) : []).entries()) {
     const b = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : null;
-    const turn = b && b.turn !== undefined ? turnOf(b.turn) : undefined;
-    const characters = b && typeof b.characters === 'object' && b.characters !== null ? (b.characters as Record<string, unknown>) : null;
-    // A turn needs its id, a block its characters; only the first block may lack a turn.
-    if (!b || !characters || turn === null || (turn !== undefined && typeof b.turnId !== 'string') || (turn === undefined && blocks.length > 0)) {
-      dropped++;
+    const read = b && b.turn !== undefined ? turnOf(b.turn) : undefined;
+    const turn = read?.turn ?? undefined;
+    dropped += read?.dropped ?? 0;
+    const characters = b && typeof b.characters === 'object' && b.characters !== null ? (b.characters as Record<string, unknown>) : {};
+    if (b && b.characters !== undefined && characters !== b.characters) dropped++;
+    // Only the first block may lack a turn; one with nothing that reads is dropped.
+    if (!b || read?.turn === null || (turn === undefined && blocks.length > 0)) {
+      if (!b || read?.turn !== null) dropped++;
       continue;
     }
+    // The turn id is only a match key for exchanges filed later: one lost is made up, the turn kept.
+    if (turn !== undefined && typeof b.turnId !== 'string') dropped++;
+    const turnId = typeof b.turnId === 'string' ? b.turnId : `${UNKNOWN_TURN_ID}${index}`;
     const kept: Record<string, Exchange[]> = {};
     for (const [id, list] of Object.entries(characters)) {
       if (!Array.isArray(list)) {
         dropped++;
         continue;
       }
-      const xs = list.map(exchangeOf).filter((x): x is Exchange => x !== null);
-      dropped += list.length - xs.length;
-      kept[id] = xs;
+      const xs = list.map(exchangeOf);
+      dropped += xs.reduce((n, r) => n + r.dropped, 0);
+      kept[id] = xs.map((r) => r.x).filter((x): x is Exchange => x !== null);
     }
     const at = typeof b.at === 'number' && Number.isFinite(b.at) ? { at: b.at } : {};
     const full = typeof b.full === 'number' && Number.isFinite(b.full) ? { full: b.full } : {};
     const no = typeof b.no === 'number' && Number.isInteger(b.no) && b.no > 0 ? { no: b.no } : {};
-    blocks.push(turn ? { turnId: b.turnId as string, turn, ...no, ...at, ...full, characters: kept } : { characters: kept });
+    blocks.push(turn ? { turnId, turn, ...no, ...at, ...full, characters: kept } : { characters: kept });
   }
   const numbered = numberBlocks(blocks);
   const turnNo = v2 && typeof record.turnNo === 'number' && Number.isInteger(record.turnNo) && record.turnNo >= 0 ? Math.max(record.turnNo, numbered.turnNo) : numbered.turnNo;
-  return { blocks: numbered.blocks, items: stored.items, ended: stored.ended, strikes: v2 ? strikesOf(record.strikes) : {}, turnNo, ...(!v2 ? { v1Notes } : {}), ...(dropped > 0 ? { error: `the stored chatTurnsToRead had ${dropped} malformed entr${dropped === 1 ? 'y' : 'ies'}, dropped` } : {}) };
+  const errors = [
+    ...(hasBlocks ? [] : ['the stored chatTurnsToRead has no list of blocks']),
+    ...(dropped > 0 ? [`the stored chatTurnsToRead had ${dropped} malformed entr${dropped === 1 ? 'y' : 'ies'}, dropped`] : []),
+  ];
+  return { blocks: numbered.blocks, items: stored.items, ended: stored.ended, strikes: v2 ? strikesOf(record.strikes) : {}, turnNo, ...(!v2 ? { v1Notes } : {}), ...(hasBlocks ? {} : { setAside: true as const }), ...(errors.length > 0 ? { error: errors.join('; ') } : {}) };
 }

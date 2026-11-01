@@ -21,7 +21,7 @@ export const RULES_CONTEXT_HEAD =
 
 /** What a rule's `covers` is called wherever it reaches Claude: the model's gloss, never the user's words. */
 function buddyReading(item: Item): string {
-  return `the buddy's reading: covers ${item.covers ?? ''}`;
+  return `the buddy's reading: covers ${item.covers ?? 'unknown'}`;
 }
 /** What the second strike's prompt starts with. */
 export const AGAIN_PREFIX = 'Again: ';

@@ -17,7 +17,7 @@ Professor's marketplace installs `main` of this repo, and `main` reaches every u
 - live proof: a real Haiku session driven in tmux · `scripts/live-proof.sh`
 - live configuration proof: five sessions over option sets, buddy on opus low, each turn's time and tokens in a report · `scripts/live-configs.sh`, helpers shared in `scripts/live-lib.sh`
 - release check: the version agrees everywhere and the CHANGELOG section is dated · `scripts/release-check.sh`
-- CI: the gates on a pull request into `main`, and the GitHub release when it merges · `.github/workflows/release.yml`
+- CI: the gates on a pull request into `main`, and the GitHub release when it merges · `.github/workflows/ci.yml`, `.github/workflows/publish.yml`
 - repo agents: `gitter`, the only git writer · `.claude/agents/`
 
 ## Runtime
@@ -39,8 +39,8 @@ Professor's marketplace installs `main` of this repo, and `main` reaches every u
 
 ### CI
 
-- `.github/workflows/release.yml` is the only workflow; no CI runs on a push to any branch. On a pull request into `main`, its `check` job runs `make check` (the three gates) and its `release` job runs `make release`: the release check with the version moved past `main`'s, and non-empty CHANGELOG notes.
-- When that pull request merges, its `publish` job tags the merge commit `buddy--v{X.Y.Z}` and publishes the GitHub release from the CHANGELOG section; it fails when the tag already exists.
+- `.github/workflows/ci.yml` and `.github/workflows/publish.yml` are the only workflows; no CI runs on a push to any branch. On a pull request into `main`, `ci.yml`'s `check` job runs `make check` (the three gates) on Linux and macOS, its `release` job runs `make release` (the release check with the version moved past `main`'s, and non-empty CHANGELOG notes), and its `ci` job passes only when every one succeeded.
+- When that pull request merges, `publish.yml`'s `publish` job tags the merge commit `buddy--v{X.Y.Z}` and publishes the GitHub release from the CHANGELOG section; it fails when the tag already exists.
 
 ## Rules
 
@@ -68,9 +68,9 @@ Professor's marketplace installs `main` of this repo, and `main` reaches every u
 ### Branches and releases
 
 - `develop` is the default branch: every change lands there, by a commit or a pull request. It is protected by the ruleset `develop keeps its history`: never force-push or delete it.
-- `main` is protected by the ruleset `main is release-only`: it merges only after `check` and `release` pass, never by a direct push and never by an admin override.
+- `main` is protected by the ruleset `main is release-only`: it merges only after `ci` passes, never by a direct push and never by an admin override.
 - Every merge into `main` publishes: the version moves past `main`'s, and a pre-release version (`-alpha`) is bumped to the real release version in that pull request.
 - A version bump moves `plugins/buddy/.claude-plugin/plugin.json`, `package.json` and the README badge together, and turns `## [Unreleased]` in `CHANGELOG.md` into `## [X.Y.Z] — {date}`; installed copies update only on a new version.
 - Semantic versioning: a fix is a patch; a new option, behaviour or built-in character is a minor; a renamed or removed option, command or character field, or a moved option home, is a major, and its CHANGELOG entry says how to migrate.
-- A release is `gitter`'s RELEASE phase: bump the version and the dated CHANGELOG section on `develop`, `git fetch origin main` then `make release-check`, open the `develop → main` pull request, merge it once `check` and `release` are green; the merge is the release, `release.yml` tags and publishes it, and no tag is ever pushed by hand.
+- A release is `gitter`'s RELEASE phase: bump the version and the dated CHANGELOG section on `develop`, `git fetch origin main` then `make release-check`, open the `develop → main` pull request, merge it once `ci` is green; the merge is the release, `publish.yml` tags and publishes it, and no tag is ever pushed by hand.
 - Git writes go through `gitter`, `.claude/agents/gitter.md`.

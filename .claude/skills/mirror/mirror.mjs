@@ -76,16 +76,17 @@ export function tagged(reply) {
   return out;
 }
 
-/** A round file as its opening prompt and its end-of-turn calls: each call's header fields, system, prompt, reply and OUT status. */
+/** A round file as its opening prompt and its end-of-turn calls: each call's header fields (sent, model and effort null when the header has none: the buddy's default), system, prompt, reply and OUT status. */
 export function parseRound(text, file = 'round') {
   const lines = text.split('\n');
   const openAt = lines.findIndex((l) => l.startsWith('─── IN · the prompt the turn began with ───'));
   const opening = openAt < 0 ? '' : blockAfter(lines, openAt).join('\n').trim();
   const calls = [];
   for (let i = 0; i < lines.length; i++) {
-    const h = /^═══ BUDDY CALL (\d+) · ([^·]+?) · sent (\S+) · model (\S+) · effort (\S+)/.exec(lines[i]);
+    const h = /^═══ BUDDY CALL (\d+) · ([^·═]+?)\s*(?:·|═══|$)/.exec(lines[i]);
     if (!h) continue;
-    const call = { file, n: Number(h[1]), kind: h[2].trim(), sent: h[3], model: h[4], effort: h[5], system: '', prompt: '', reply: '', out: '' };
+    const field = (name) => new RegExp(` · ${name} (\\S+)`).exec(lines[i])?.[1] ?? null;
+    const call = { file, n: Number(h[1]), kind: h[2].trim(), sent: field('sent'), model: field('model'), effort: field('effort'), system: '', prompt: '', reply: '', out: '' };
     for (let j = i + 1; j < lines.length && !lines[j].startsWith('═══ '); j++) {
       if (lines[j] === '─── IN: system ───') call.system = blockAfter(lines, j).join('\n').trim();
       else if (lines[j] === '─── IN: prompt ───') call.prompt = blockAfter(lines, j).join('\n').trim();
@@ -151,12 +152,26 @@ function rounds(dir) {
   return readdirSync(dir).filter((f) => /^round-\d+\.txt$/.test(f)).sort((x, y) => parseInt(x.slice(6), 10) - parseInt(y.slice(6), 10)).map((f) => join(dir, f));
 }
 
+/** The round files that read, parsed; one that does not is named on stderr and skipped, the exit code 1. */
+function readRounds(files) {
+  const parsed = [];
+  for (const f of files) {
+    try {
+      parsed.push(parseRound(readFileSync(f, 'utf8'), basename(f, '.txt')));
+    } catch (error) {
+      console.error(`mirror: skipped ${f}: ${error.message}`);
+      process.exitCode = 1;
+    }
+  }
+  return parsed;
+}
+
 function live(o) {
   const dir = buddyDirOf(o._[0]);
   const files = rounds(dir);
   if (!files.length) fail(`${dir} has no round files: is saveRounds on?`);
   const last = Number(o.last ?? 3);
-  const parsed = files.map((f) => parseRound(readFileSync(f, 'utf8'), basename(f, '.txt')));
+  const parsed = readRounds(files);
   const calls = parsed.flatMap((r) => r.calls.filter((c) => c.kind === 'end-of-turn call'));
   // Each opening prompt, in order: a suggestion was taken when a later round opened with its exact text.
   const openings = parsed.map((r) => norm(r.opening.split('\n')[0] ?? ''));
@@ -167,7 +182,7 @@ function live(o) {
     const sug = t.SUGGEST_NEXT_PROMPT ?? '';
     const roundAt = parsed.findIndex((r) => r.file === c.file);
     const taken = sug && openings.slice(roundAt + 1).some((p) => p === norm(sug)) ? 'TAKEN' : '';
-    console.log(`\n── ${c.file} call ${c.n} · sent ${c.sent} · ${s.status} ${s.ms} ms · in ${s.inTok} · out ${s.outTok}`);
+    console.log(`\n── ${c.file} call ${c.n} · sent ${c.sent ?? 'unknown'} · ${s.status} ${s.ms} ms · in ${s.inTok} · out ${s.outTok}`);
     console.log(`  judged: ${judgedTurn(c.prompt).slice(0, 140)}`);
     if (t.VERDICT) console.log(`  VERDICT ${t.VERDICT}${t.WHY ? ` · WHY ${t.WHY}` : ''}`);
     if (t.COMMENT_AFTER_EACH_TURN) console.log(`  COMMENT ${t.COMMENT_AFTER_EACH_TURN}`);
@@ -180,12 +195,11 @@ function live(o) {
 
 function calls(o) {
   if (!o._.length) fail('calls needs a round file');
-  for (const f of o._) {
-    const r = parseRound(readFileSync(f, 'utf8'), basename(f, '.txt'));
+  for (const r of readRounds(o._)) {
     console.log(`${r.file}: opening ${JSON.stringify(r.opening.split('\n')[0]?.slice(0, 100))}`);
     for (const c of r.calls) {
       const t = tagged(c.reply);
-      console.log(`  call ${c.n} · ${c.kind} · sent ${c.sent} · system ${c.system.length} chars · prompt ${c.prompt.length} chars · ${c.out || 'no OUT'}`);
+      console.log(`  call ${c.n} · ${c.kind} · sent ${c.sent ?? 'unknown'} · system ${c.system.length} chars · prompt ${c.prompt.length} chars · ${c.out || 'no OUT'}`);
       console.log(`    SUGGEST ${t.SUGGEST_NEXT_PROMPT ?? '(none)'} ${reportFlag(t.SUGGEST_NEXT_PROMPT)}`);
     }
   }
@@ -224,13 +238,13 @@ async function systemFor(arm, captured, cache, want = []) {
   return turnSystem(captured.slice(0, cut), wants, desire);
 }
 
-// One replayed call: the buddy's model and effort, nothing loaded but the system prompt (no CLAUDE.md, plugins, hooks or MCP), no tools.
+// One replayed call: the buddy's model and effort (null: the default, as the captured call had; usd left out when neither claude nor the price table knows it), nothing loaded but the system prompt (no CLAUDE.md, plugins, hooks or MCP), no tools.
 function ask(system, prompt, model, effort) {
   return new Promise((done) => {
     const t0 = Date.now();
     const child = execFile(
       'claude',
-      ['-p', '--safe-mode', '--model', model, '--effort', effort, '--tools', '', '--no-session-persistence', '--output-format', 'json', '--system-prompt', system],
+      ['-p', '--safe-mode', ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), '--tools', '', '--no-session-persistence', '--output-format', 'json', '--system-prompt', system],
       { maxBuffer: 1 << 24, timeout: 180_000 },
       (error, stdout, stderr) => {
         const ms = Date.now() - t0;
@@ -243,7 +257,8 @@ function ask(system, prompt, model, effort) {
         }
         if (j.is_error) return done({ error: `claude -p answered an error: ${String(j.result).slice(0, 300)}`, ms });
         const u = j.usage ?? {};
-        done({ text: String(j.result ?? ''), ms: j.duration_ms ?? ms, inTok: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), outTok: u.output_tokens ?? 0, usd: j.total_cost_usd ?? priceCall(model, usageOfClaudeJson(u)) ?? 0 });
+        const usd = j.total_cost_usd ?? (model ? priceCall(model, usageOfClaudeJson(u)) : undefined);
+        done({ text: String(j.result ?? ''), ms: j.duration_ms ?? ms, inTok: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), outTok: u.output_tokens ?? 0, ...(usd === undefined ? {} : { usd }) });
       },
     );
     child.stdin.end(prompt);
@@ -310,7 +325,8 @@ async function replay(o) {
   }
   const usd = results.reduce((a, x) => a + (x.usd ?? 0), 0);
   const errors = results.filter((x) => x.error).length;
-  console.log(`  ${results.length} calls · ${errors} failed · $${usd.toFixed(3)} · ledger ${ledger}`);
+  const unpriced = results.filter((x) => !x.error && x.usd === undefined).length;
+  console.log(`  ${results.length} calls · ${errors} failed · $${usd.toFixed(3)}${unpriced ? ` (${unpriced} unpriced, left out)` : ''} · ledger ${ledger}`);
   if (errors) process.exitCode = 1;
 }
 

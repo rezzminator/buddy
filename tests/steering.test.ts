@@ -26,6 +26,11 @@ describe('rulesContext: the live rules every prompt carries', () => {
     expect(text).not.toContain('"every reply must be in French"');
     expect(rulePrompt(glossed['rule.main-safe']!)).toContain("(the buddy's reading: covers every reply must be in French)");
   });
+  test('a rule stored without covers reads as unknown', () => {
+    const bare: Items = { 'rule.main-safe': { words: 'keep main safe', from: 'user', turn: 2, at: 200 } };
+    expect(rulesContext(bare)).toBe(`${RULES_CONTEXT_HEAD}\n- "keep main safe" (the buddy's reading: covers unknown)`);
+    expect(rulePrompt(bare['rule.main-safe']!)).toBe('The user\'s rule, in their words: "keep main safe" (the buddy\'s reading: covers unknown). This turn did not follow it.');
+  });
   test('no live rule: null', () => {
     expect(rulesContext({})).toBeNull();
     expect(rulesContext({ 'fact.tests-green': items['fact.tests-green']! })).toBeNull();

@@ -9,13 +9,17 @@ describe('pendingCallsOf', () => {
     expect(pendingCallsOf({ version: 1, calls: [TURN, ASK] })).toEqual({ version: 1, calls: [TURN, ASK] });
   });
 
-  test('anything but a version 1 record with a calls list is null', () => {
-    for (const v of [null, 'x', [], {}, { version: 2, calls: [] }, { version: 1 }, { version: 1, calls: {} }]) expect(pendingCallsOf(v)).toBeNull();
+  test('a record without a calls list is null; one of any version with a list is read', () => {
+    for (const v of [null, 'x', [], {}, { version: 1 }, { version: 1, calls: {} }]) expect(pendingCallsOf(v)).toBeNull();
+    expect(pendingCallsOf({ version: 2, calls: [ASK] })).toEqual({ version: 1, calls: [ASK] });
+    expect(pendingCallsOf({ calls: [TURN] })).toEqual({ version: 1, calls: [TURN] });
   });
 
   test('a malformed call is dropped, the sound ones kept', () => {
-    const bad = [{ id: 'b', kind: 'away' }, { id: 3, kind: 'away', at: 1 }, { id: 'c', kind: 'other', at: 1 }, { id: 'd', kind: 'away', at: Number.NaN }, { id: 'e', kind: 'away', at: 1, turnId: 4 }];
+    const bad = [{ id: 'b', kind: 'away' }, { id: 3, kind: 'away', at: 1 }, { id: 'c', kind: 'other', at: 1 }, { id: 'd', kind: 'away', at: Number.NaN }];
     expect(pendingCallsOf({ version: 1, calls: [...bad, ASK] })).toEqual({ version: 1, calls: [ASK] });
+    // A turnId only labels the outcome: one not a string is left out, the call kept.
+    expect(pendingCallsOf({ version: 1, calls: [{ id: 'e', kind: 'endOfTurn', at: 1, turnId: 4 }] })).toEqual({ version: 1, calls: [{ id: 'e', kind: 'endOfTurn', at: 1 }] });
   });
 });
 

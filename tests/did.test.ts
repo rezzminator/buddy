@@ -42,6 +42,11 @@ describe('a step', () => {
     expect(returnedOf([bg!])).toEqual([]);
     // A failed agent says why as any failed step; nothing returned.
     expect(actionOf({ tool: 'Task', description: 'Audit' }, { kind: 'failed', reason: 'timed out' }, 'timed out')).toEqual({ text: 'agent: Audit', fail: 'failed: timed out' });
+    // A failed call with nothing to name it by keeps its failure under the tool's name; one that did its work stays unnamed.
+    expect(actionOf({ tool: 'Bash' }, { kind: 'failed', reason: 'exit 1' })).toEqual({ text: 'Bash', fail: 'failed: exit 1' });
+    expect(actionOf({ tool: 'Read' }, { kind: 'denied', reason: '' })).toEqual({ text: 'Read', fail: 'denied' });
+    expect(actionOf({ tool: 'Bash' }, null)).toBeNull();
+    expect(actionOf({ tool: 'Read' }, null)).toBeNull();
     expect(actionOf({ tool: 'Agent' }, null, 'Fixed.')).toEqual({ text: 'ran an agent', returned: '“an agent” returned (report 6 chars): Fixed.' });
     expect(actionOf({ tool: 'Agent', description: 'Audit' }, null, '  \n')).toEqual({ text: 'agent: Audit' });
   });

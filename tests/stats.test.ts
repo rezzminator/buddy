@@ -112,7 +112,7 @@ describe('the tally', () => {
     expect(renderStats(run('testPass', 'testPass'))).toContain('test runs 2 passed');
     // Past four stretches: the totals, then how it ended.
     expect(renderStats(run('testFail', 'testPass', 'testFail', 'testPass', 'testFail', 'testPass'))).toContain('test runs 3 passed, 3 failed, ending 1 failed, then 1 passed');
-    expect(turnStatsOf(JSON.parse(JSON.stringify(fixed)))).toEqual(fixed);
+    expect(turnStatsOf(JSON.parse(JSON.stringify(fixed)))).toEqual({ stats: fixed, dropped: 0 });
     // Numbers stored without an order read as totals.
     expect(renderStats({ ms: 0, tests: { passed: 2, failed: 1 } })).toBe('Numbers: 0s · test runs 2 passed, 1 failed');
   });
@@ -181,16 +181,22 @@ describe('stored numbers', () => {
     countToolCall(t, call('Edit', { file_path: '/a', old_string: 'a', new_string: 'b' }));
     countStep(t, 'end_turn');
     const s = closeTally(t, { ms: 9, usage: { ...usage(1, 2), model: 'm' }, effort: 'low' }, { cost: { usd: 0 } }, { cost: { usd: 0.5 }, context: { tokens: 1, window: 4 }, rateLimits: [{ kind: 'five_hour', percentUsed: 5 }] });
-    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual(s);
+    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual({ stats: s, dropped: 0 });
   });
 
-  test('any malformed field makes it unreadable', () => {
-    for (const bad of [null, [], 'x', {}, { ms: -1 }, { ms: 1, tools: {} }, { ms: 1, tools: { Bash: 'x' } }, { ms: 1, tests: { passed: 1, failed: 0, seq: 'x' } }, { ms: 1, hot: { edits: 3 } }, { ms: 1, model: 3 }, { ms: 1, effort: 3 }, { ms: 1, limits: { fiveHour: 'x' } }, { ms: 1, usd: Number.NaN }, { ms: 1, context: { percent: 3 } }]) {
-      expect(turnStatsOf(bad)).toBeNull();
-    }
-    expect(turnStatsOf({ ms: 1, limits: {} })).toEqual({ ms: 1, limits: {} });
-    // Numbers stored when a subagent's work still counted: read without it.
-    expect(turnStatsOf({ ms: 1, agents: { runs: 2, tools: 5, tokens: 9, tests: { passed: 0, failed: 1 } } })).toEqual({ ms: 1 });
+  test('no object, or no time, is unreadable', () => {
+    for (const bad of [null, [], 'x', {}, { ms: -1 }, { ms: '1' }]) expect(turnStatsOf(bad)).toEqual({ stats: null, dropped: 1 });
+  });
+  test.each([
+    { tools: {} }, { tools: null }, { tools: { Bash: 'x' } }, { tests: { passed: 1, failed: 0, seq: 'x' } }, { hot: { edits: 3 } }, { model: 3 }, { effort: 3 },
+    { limits: { fiveHour: 'x' } }, { usd: Number.NaN }, { context: { percent: 3 } }, { lines: { added: 1, removed: 0, unmeasured: -1 } },
+    { files: { read: 1, edited: 1, wrote: 0, deleted: 'two' } }, { tokens: { in: 1 } },
+  ])('a malformed group %j is left out, every other kept', (bad) => {
+    expect(turnStatsOf({ ms: 1, requests: 2, git: { commits: 1, pushes: 0 }, ...bad })).toEqual({ stats: { ms: 1, requests: 2, git: { commits: 1, pushes: 0 } }, dropped: 1 });
+  });
+  test('empty limits read back; numbers stored with a subagent group read without it', () => {
+    expect(turnStatsOf({ ms: 1, limits: {} })).toEqual({ stats: { ms: 1, limits: {} }, dropped: 0 });
+    expect(turnStatsOf({ ms: 1, agents: { runs: 2, tools: 5, tokens: 9, tests: { passed: 0, failed: 1 } } })).toEqual({ stats: { ms: 1 }, dropped: 0 });
   });
 });
 
@@ -265,11 +271,10 @@ describe("a shell command's own edits", () => {
     expect(s.files).toEqual({ read: 0, edited: 2, wrote: 0 });
     expect(s.lines).toEqual({ added: 1, removed: 1, unmeasured: 1 });
     expect(renderStats(s)).toContain('lines +1 −1, unmeasured in 1 file');
-    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual(s);
+    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual({ stats: s, dropped: 0 });
     const only = openTally('t2', 0);
     countShellChanges(only, [{ file: '/x.bin', made: false, added: 0, removed: 0, unmeasured: true }, { file: '/y.bin', made: false, added: 0, removed: 0, unmeasured: true }]);
     expect(renderStats(closeTally(only, { ms: 1000 }, null, null))).toContain('lines unmeasured in 2 files');
-    expect(turnStatsOf({ ms: 1, lines: { added: 1, removed: 0, unmeasured: -1 } })).toBeNull();
   });
 });
 
@@ -285,11 +290,10 @@ describe('a deleted file', () => {
     expect(s.files).toEqual({ read: 0, edited: 0, wrote: 0, deleted: 1 });
     expect(renderStats(s)).toContain('files 1 deleted');
     expect(renderStats(s)).not.toContain('edited');
-    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual(s);
+    expect(turnStatsOf(JSON.parse(JSON.stringify(s)))).toEqual({ stats: s, dropped: 0 });
   });
   test('the numbers read and render all three kinds with deletions; old numbers without deleted still read; a non-number is malformed', () => {
     expect(renderStats({ ms: 1000, files: { read: 3, edited: 1, wrote: 0, deleted: 2 } })).toContain('files 3 read, 1 edited, 2 deleted');
-    expect(turnStatsOf({ ms: 1, files: { read: 1, edited: 1, wrote: 0 } })).toEqual({ ms: 1, files: { read: 1, edited: 1, wrote: 0 } });
-    expect(turnStatsOf({ ms: 1, files: { read: 1, edited: 1, wrote: 0, deleted: 'two' } })).toBeNull();
+    expect(turnStatsOf({ ms: 1, files: { read: 1, edited: 1, wrote: 0 } })).toEqual({ stats: { ms: 1, files: { read: 1, edited: 1, wrote: 0 } }, dropped: 0 });
   });
 });

@@ -582,7 +582,7 @@ describe('/buddy', () => {
       expect(q.prompt).toContain(`Claude answered:\nreply number ${n}`);
     }
     expect(q.prompt.endsWith('The user asks you directly: what is up')).toBe(true);
-    expect(await shows(ui, /^Forty-two, friend\.$/)).toBe(true);
+    expect(await shows(ui, /^Forty-two, friend\. and more$/)).toBe(true);
     await ui.unmount();
   });
 
@@ -689,6 +689,23 @@ describe('/buddy', () => {
     await w.clock.settle();
     expect(await shows(ui, /^Quote every evicted turn verbatim\.$/)).toBe(true);
     expect(w.suggested).toEqual(['design the memory ledger extractive, quotes checked as substrings']);
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(await shows(ui, /^ctrl\+x u uses it$/)).toBe(true);
+    await ui.unmount();
+  });
+
+  test('a question asking for a prompt too long for the box: the answer in the bubble, the whole prompt in the drawer for ctrl+x u, the box left alone and that said', async ($, on) => {
+    const long = 'quote every evicted turn verbatim and check each quote as a substring of the transcript. '.repeat(8).trim();
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: `Here it is.\nSUGGEST_NEXT_PROMPT: ${long}` } });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.command.run(run('put the whole memory design in a prompt for me'));
+    await w.clock.settle();
+    expect(await shows(ui, /^Here it is\.$/)).toBe(true);
+    expect(w.suggested).toEqual([]);
+    expect(w.logs).toContain("buddy: Fixy's prompt was longer than 600 characters, so it was not put in your prompt box; it waits whole in the drawer (ctrl+x u)");
+    expect(records(w).find((r) => r.event === 'ask.prompt.outcome')).toMatchObject({ outcome: 'too-long', length: long.length });
     await $.command.run(run(''));
     await w.clock.settle();
     expect(await shows(ui, /^ctrl\+x u uses it$/)).toBe(true);
@@ -1216,7 +1233,7 @@ describe('core fixes', () => {
     await ui.unmount();
   });
 
-  test('an answer in flight is dropped, and the log says so, when another character was picked meanwhile', async ($, on) => {
+  test('an answer in flight is never drawn when another character was picked meanwhile: the log says so, the drawer and the memory keep it', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { completeDelayMs: 5000 }, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
@@ -1227,10 +1244,15 @@ describe('core fixes', () => {
     await w.clock.advance(5000);
     await w.clock.settle();
     expect(w.completes).toHaveLength(1);
-    expect(await shows(ui, /A completed answer\./)).toBe(false);
+    expect(await bubbleText(ui, /A completed answer\./)).toBeUndefined();
     // An info diagnostic: in the log, never on screen.
-    expect(w.logs).not.toContain("buddy: Fixy's answer was dropped: Duck Fixture is drawn now");
-    expect(records(w).find((r) => r.event === 'ask.dropped')).toMatchObject({ text: "Fixy's answer was dropped: Duck Fixture is drawn now" });
+    expect(w.logs).not.toContain("buddy: Fixy's answer was not drawn: Duck Fixture is drawn now; it waits in the drawer");
+    expect(records(w).find((r) => r.event === 'ask.dropped')).toMatchObject({ text: "Fixy's answer was not drawn: Duck Fixture is drawn now; it waits in the drawer" });
+    expect(ring(w, 'fixy')).toContainEqual({ kind: 'question', question: 'what is up', answer: 'A completed answer.' });
+    // The drawer's row, never the hover card's copy (cut at its end).
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(await bubbleText(ui, /A completed answer\./)).toBeDefined();
     await ui.unmount();
   });
 
@@ -2014,6 +2036,28 @@ describe('the second brain: one call, the character and the suggestion combined'
     await ui.unmount();
   });
 
+  test('a SHORTCUT with no WHY is still warned of, with a stock why; a VERDICT word none of the known is logged unknown and kept in the drawer as a note', async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { queue: [
+      { isAnswered: true, text: 'VERDICT: SHORTCUT\nCOMMENT_AFTER_EACH_TURN: Hm.\nSUGGEST_NEXT_PROMPT: run the suite' },
+      { isAnswered: true, text: 'VERDICT: MAYBE\nWHY: the logs are thin\nCOMMENT_AFTER_EACH_TURN: Hm again.\nSUGGEST_NEXT_PROMPT: read the logs' },
+    ] });
+    await $.session.start(START);
+    const ui = await band($);
+    await $.turn.complete({ reason: 'answer', answer: 'Done.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect((await ui.find({ type: 'Box', key: 'bubble' }))?.props.borderColor).toBe('yellow');
+    expect(await shows(ui, /no reason given/)).toBe(true);
+    await w.clock.advance(20_000);
+    await w.clock.settle();
+    await $.turn.complete({ reason: 'answer', answer: 'Maybe.', isAborted: false, turnId: 't2' } as never);
+    await w.clock.settle();
+    expect(records(w).filter((r) => r.event === 'verdict.outcome').map(({ outcome, verdict }) => ({ outcome, verdict }))).toEqual([{ outcome: 'said', verdict: 'SHORTCUT' }, { outcome: 'unknown', verdict: 'MAYBE' }]);
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(await shows(ui, /MAYBE: the logs are thin/)).toBe(true);
+    await ui.unmount();
+  });
+
   test('RIGHT says nothing over the comment: its suggestion is the go-ahead, the verdict logged quiet', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: judged('RIGHT', 'tests ran green before the claim', 'yes, go on and tag the release') });
     await $.session.start(START);
@@ -2108,7 +2152,7 @@ describe('the chat memory items', () => {
     await w.clock.settle();
     expect(await shows(ui, /Nice\./)).toBe(true);
     expect((memory(w) as any).items).toEqual({ 'fact.kept': item });
-    expect(records(w).filter((r) => r.event === 'memory.op').map(({ key, op, why, turn }) => ({ key, op, why, turn }))).toEqual([{ key: '*', op: 'drop', why: 'not a JSON object', turn: 1 }]);
+    expect(records(w).filter((r) => r.event === 'memory.op').map(({ key, op, why, turn }) => ({ key, op, why, turn }))).toEqual([{ key: '*', op: 'drop', why: 'not a JSON object: {oops', turn: 1 }]);
     await ui.unmount();
   });
   test('items belong to the chat across a personality switch and memory.md follows the drawn character', async ($, on) => {
@@ -2168,15 +2212,15 @@ describe('the chat memory items', () => {
     await $.turn.complete({ reason: 'aborted', answer: '', isAborted: true, turnId: 't2' } as never);
     await w.clock.advance(5_000);
     await w.clock.settle();
-    expect(await shows(ui, /Late line\./)).toBe(false);
+    expect(await bubbleText(ui, /Late line\./)).toBeUndefined();
     expect((memory(w) as any).items['fact.late']).toMatchObject({ text: 'Kept late.', from: 'shown' });
     expect(records(w).filter((r) => r.event === 'memory.op').map((r) => r.op)).toEqual(['add']);
     expect(records(w).filter((r) => r.event === 'commentAfterEachTurn.outcome').map((r) => r.outcome)).toEqual(['stale']);
     await ui.unmount();
   });
-  test('a late reply loses to a newer memory save', async ($, on) => {
+  test('a late reply loses only the edits of items a newer save changed: the rest apply, and its comment reaches the drawer and the memory under its own turn, never the bubble', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { queue: [
-      { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Late line.\nMEMORY: {"fact.late":{"text":"Kept late.","from":"shown"}}', delayMs: 5_000 },
+      { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Late line.\nMEMORY: {"fact.late":{"text":"Kept late.","from":"shown"},"fact.new":{"text":"Older.","from":"shown"}}', delayMs: 5_000 },
       { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: New line.\nMEMORY: {"fact.new":{"text":"Kept new.","from":"shown"}}' },
     ] });
     await $.session.start(START);
@@ -2192,9 +2236,19 @@ describe('the chat memory items', () => {
     expect(Object.keys(items)).toEqual(['fact.new']);
     await w.clock.advance(5_000);
     await w.clock.settle();
-    expect((memory(w) as any).items).toEqual(items);
-    expect(records(w).filter((r) => r.event === 'memory.op').map(({ key, op, why, turn }) => ({ key, op, why, turn }))).toContainEqual({ key: '*', op: 'drop', why: 'late reply: a newer memory save came first', turn: 2 });
-    expect(await shows(ui, /Late line\./)).toBe(false);
+    expect((memory(w) as any).items).toEqual({ ...items, 'fact.late': { text: 'Kept late.', from: 'shown', turn: 1, at: expect.any(Number) } });
+    expect(records(w).filter((r) => r.event === 'memory.op').map(({ key, op, why, turn }) => ({ key, op, why, turn }))).toEqual([
+      { key: 'fact.new', op: 'add', why: 'added', turn: 2 },
+      { key: 'fact.late', op: 'add', why: 'added', turn: 1 },
+      { key: 'fact.new', op: 'drop', why: "late reply: the call's prompt did not hold this item", turn: 1 },
+    ]);
+    expect(await bubbleText(ui, /Late line\./)).toBeUndefined();
+    const late = (memory(w) as any).blocks.find((b: { turnId?: string }) => b.turnId === 't1');
+    expect(late.characters.fixy).toEqual([{ kind: 'endOfTurn', commentAfterEachTurn: 'Late line.' }]);
+    // The drawer's row, never the hover card's copy (cut at its end).
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(await bubbleText(ui, /Late line\./)).toBeDefined();
     await ui.unmount();
   });
   test('a late reply keeps its edits when the newer reply saved nothing: stamped with its own turn, proven only by what was typed by then', async ($, on) => {
@@ -2281,6 +2335,31 @@ describe('the chat memory items', () => {
     expect(await shows(ui, /Nice\./)).toBe(true);
     await ui.unmount();
   });
+  test('a memory.json that is not JSON is kept whole aside first, its error said with where; the chat\'s memory then starts over', async ($, on) => {
+    const bad = 'not json at all';
+    const parseError = (() => {
+      try {
+        JSON.parse(bad);
+        return '';
+      } catch (error) {
+        return (error as Error).message;
+      }
+    })();
+    const path = `${chatDir()}/memory.json`;
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.\nMEMORY: {"fact.x":{"text":"X.","from":"shown"}}' } }, { files: { [path]: bad } });
+    await $.session.start(START);
+    const ui = await band($);
+    await prompt($, 'one', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'One.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    const aside = Object.keys(w.files).filter((k) => k.startsWith(`${path}.unreadable-`));
+    expect(aside).toHaveLength(1);
+    expect(w.files[aside[0]!]).toBe(bad);
+    expect(w.logs).toContain(`buddy: reading the chatTurnsToRead failed: the stored chatTurnsToRead is not JSON (${parseError}): kept whole as ${aside[0]}`);
+    expect((memory(w) as any).items).toEqual({ 'fact.x': { text: 'X.', from: 'shown', turn: 1, at: expect.any(Number) } });
+    expect(await shows(ui, /Nice\./)).toBe(true);
+    await ui.unmount();
+  });
   test('five turns with four remembered keep chat numbers 2 through 5 in the fifth call', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Nice.' } });
     await $.session.start(START);
@@ -2347,7 +2426,7 @@ describe('the end-of-turn call, turn by turn', () => {
     await ui.unmount();
   });
 
-  test('a character picked while the call runs never says the commentAfterEachTurn nor files it; suggestNextPrompt stays the asker\'s', async ($, on) => {
+  test('a character picked while the call runs never says the commentAfterEachTurn, filed in the asker\'s memory with its suggestNextPrompt', async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'COMMENT_AFTER_EACH_TURN: Fixy likes that.\nSUGGEST_NEXT_PROMPT: run the tests' }, completeDelayMs: 5_000 }, { files: { [CONFIG]: config() } });
     await $.session.start(START);
     const ui = await band($);
@@ -2358,9 +2437,9 @@ describe('the end-of-turn call, turn by turn', () => {
     await w.clock.advance(5_000);
     await w.clock.settle();
     expect(w.completes[0]?.system).toContain('You are Fixy, a test fixture.');
-    expect(await shows(ui, /Fixy likes that\./)).toBe(false);
+    expect(await bubbleText(ui, /Fixy likes that\./)).toBeUndefined();
     expect(JSON.stringify(ring(w, 'duck'))).not.toContain('Fixy likes that.');
-    expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', suggestNextPrompt: 'run the tests' });
+    expect(ring(w, 'fixy')).toContainEqual({ kind: 'endOfTurn', commentAfterEachTurn: 'Fixy likes that.', suggestNextPrompt: 'run the tests' });
     expect(records(w).find((r) => r.event === 'commentAfterEachTurn.outcome')).toMatchObject({ outcome: 'dropped', asker: 'fixy', drawn: 'duck' });
     await ui.unmount();
   });
@@ -2412,7 +2491,7 @@ describe('the end-of-turn call, turn by turn', () => {
     expect(await $.prompt.suggest({ text: 'engine step', origin: { kind: 'suggestion' } } as never)).toMatchObject({ isShown: true });
     await w.clock.advance(5_000);
     await w.clock.settle();
-    expect(await shows(ui, /Late line\./)).toBe(false);
+    expect(await bubbleText(ui, /Late line\./)).toBeUndefined();
     expect(w.suggested).toEqual(['engine step']);
     expect(records(w).filter((r) => r.event === 'commentAfterEachTurn.outcome' || r.event === 'suggestNextPrompt.outcome').map((r) => r.outcome)).toEqual(['stale', 'stale']);
     await ui.unmount();
@@ -2815,7 +2894,7 @@ describe('the round-3 audit fixes', () => {
     await ui.unmount();
   });
 
-  test('a turn.start whose text differs from its submission is filed with its own text, of unknown origin, never as not the user\'s', async ($, on) => {
+  test('a turn.start whose text differs from its submission is filed with its own text, of unknown origin, the words the user typed kept with it, never as not the user\'s', async ($, on) => {
     const w = world(on, { character: 'fixy' });
     await $.session.start(START);
     const ui = await band($);
@@ -2824,7 +2903,7 @@ describe('the round-3 audit fixes', () => {
     await $.turn.complete({ reason: 'answer', answer: 'Skilled.', isAborted: false, turnId: 't1' } as never);
     await w.clock.settle();
     const last = w.completes.at(-1)!.prompt;
-    expect(last).toContain("Claude was sent, by a sender you did not see (most often the user's own slash command or skill, or a prompt sent while you restarted):\nthe expanded skill text");
+    expect(last).toContain("Claude was sent, by a sender you did not see (most often the user's own slash command or skill, or a prompt sent while you restarted):\nThe user typed: /skill\nthe expanded skill text");
     expect(last).not.toContain('not by the user');
     await ui.unmount();
   });
@@ -3510,6 +3589,41 @@ describe('promptToMainChat', () => {
     expect(ring(w, 'fixy').at(-1)).toMatchObject({ kind: 'endOfTurn', warned: 'Claude broke your rule again: "keep main safe"' });
     await ui.unmount();
   });
+  test("the ladder's warning, never drawn while another character is: the asker's memory and the drawer keep it", { config: { promptToMainChat: true } }, async ($, on) => {
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: BROKE }, completeDelayMs: 5_000 }, { files: { ...ruled({ strikes: { 'rule.main-safe': 2 } }).files, [CONFIG]: config() } });
+    await $.session.start(START);
+    const ui = await band($);
+    await w.clock.settle();
+    await prompt($, 'push it', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Pushed.', isAborted: false, turnId: 't1' } as never);
+    await pick($, await personality($, w, ui), w, 'use:duck');
+    await w.clock.settle();
+    await fold(ui, w);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
+    expect(records(w).filter((r) => r.event === 'rule.strike').map((r) => [r.key, r.count, r.step])).toEqual([['rule.main-safe', 3, 'warn']]);
+    expect(await bubbleText(ui, /Claude broke your rule again/)).toBeUndefined();
+    expect(ring(w, 'fixy').at(-1)).toEqual({ kind: 'endOfTurn', commentAfterEachTurn: 'Pushed again?', warned: 'Claude broke your rule again: "keep main safe"' });
+    // The drawer's row: it wraps, so its first words.
+    await $.command.run(run(''));
+    await w.clock.settle();
+    expect(await bubbleText(ui, /Claude broke your rule again/)).toBeDefined();
+    await ui.unmount();
+  });
+  test('a SUGGEST_NEXT_PROMPT and a PROMPT_TO_MAIN_CHAT past their caps: the suggestion logged failed with why, the prompt never sent but logged and remembered whole as unsent', { config: { promptToMainChat: true } }, async ($, on) => {
+    const longSuggestion = 'run the tests again '.repeat(11).trim();
+    const longPrompt = 'keep main safe and run the full suite before any push '.repeat(8).trim();
+    const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: `COMMENT_AFTER_EACH_TURN: Hm.\nSUGGEST_NEXT_PROMPT: ${longSuggestion}\nPROMPT_TO_MAIN_CHAT: ${longPrompt}` } });
+    await $.session.start(START);
+    await w.clock.settle();
+    await prompt($, 'push it', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'Pushed.', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    expect(records(w).find((r) => r.event === 'suggestNextPrompt.outcome')).toMatchObject({ outcome: 'failed', reason: 'its suggestion passed 200 characters' });
+    expect(records(w).find((r) => r.event === 'promptToMainChat.tooLong')).toMatchObject({ character: 'fixy', length: longPrompt.length, max: 400 });
+    expect(steers(w, ['push it'])).toEqual([]);
+    expect(ring(w, 'fixy').at(-1)).toEqual({ kind: 'endOfTurn', unsentPrompt: longPrompt });
+  });
   test("the ladder's first strike with no prompt of the buddy's: the rule's own is sent", { config: { promptToMainChat: true } }, async ($, on) => {
     const w = world(on, { character: 'fixy' }, { complete: { isAnswered: true, text: 'PROMPT_TO_MAIN_CHAT: NONE\nRULE_BROKEN: rule.main-safe' } }, ruled());
     await $.session.start(START);
@@ -3941,6 +4055,23 @@ describe('a call a reload abandoned', () => {
     await $.session.start(START);
     await w.clock.settle();
     expect(outcomes(w)).toHaveLength(1);
+  });
+
+  test('a calls.json that holds no calls is kept whole aside, said, before the next call is written over it', async ($, on) => {
+    const w = world(on, {}, { completeDelayMs: 5_000 }, { files: { [callsFile()]: 'not json' } });
+    await $.session.start(START);
+    await w.clock.settle();
+    expect(outcomes(w)).toMatchObject([{ outcome: 'unreadable' }]);
+    await prompt($, 'fix it', 't1');
+    await $.turn.complete({ reason: 'answer', answer: 'A', isAborted: false, turnId: 't1' } as never);
+    await w.clock.settle();
+    const aside = Object.keys(w.files).filter((k) => k.startsWith(`${callsFile()}.unreadable-`));
+    expect(aside).toHaveLength(1);
+    expect(w.files[aside[0]!]).toBe('not json');
+    expect(records(w).find((r) => r.event === 'calls-unreadable')).toMatchObject({ text: `${callsFile()} held no calls it could read, so its calls in flight were never counted; kept whole as ${aside[0]} before it was written anew`, length: 8 });
+    expect(kept(w).calls).toMatchObject([{ kind: 'endOfTurn', turnId: 't1' }]);
+    await w.clock.advance(5_000);
+    await w.clock.settle();
   });
 
   test('an end-of-turn call is kept while it runs, never abandoned by a load meanwhile, and dropped when it ends', async ($, on) => {

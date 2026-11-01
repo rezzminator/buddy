@@ -76,6 +76,8 @@ if (files.length === 0) {
 const calls = [];
 let read = 0;
 let malformed = 0;
+// A line with no readable time: kept without --since (its day unknown), left out of a span and counted.
+let undated = 0;
 for (const file of files) {
   if (!existsSync(file)) continue;
   let text;
@@ -91,7 +93,10 @@ for (const file of files) {
     if (!line.includes('"call.cost"')) continue;
     try {
       const r = JSON.parse(line);
-      if (r.event === 'call.cost' && Date.parse(r.ts) >= since) calls.push(r);
+      if (r.event !== 'call.cost') continue;
+      const at = Date.parse(r.ts);
+      if (Number.isNaN(at) && since) undated++;
+      else if (Number.isNaN(at) || at >= since) calls.push(r);
     } catch {
       malformed++;
     }
@@ -102,7 +107,7 @@ if (read === 0) {
   process.exit(1);
 }
 if (calls.length === 0) {
-  console.log(`No call.cost lines in ${read} log file(s)${since ? ' in that span' : ''}: the plugin logs one per model call from 1.0.0.`);
+  console.log(`No call.cost lines in ${read} log file(s)${since ? ' in that span' : ''}${undated ? ` (${undated} had no readable time)` : ''}: the plugin logs one per model call from 1.0.0.`);
   process.exit(0);
 }
 
@@ -134,7 +139,7 @@ const unpriced = new Map();
 let logged = 0;
 let fromTable = 0;
 for (const r of calls) {
-  const day = String(r.ts).slice(0, 10);
+  const day = Number.isNaN(Date.parse(r.ts)) ? 'unknown day' : String(r.ts).slice(0, 10);
   const cost = costOf(r);
   if (!cost) unpriced.set(String(r.model), (unpriced.get(String(r.model)) ?? 0) + 1);
   else if (cost.logged) logged++;
@@ -164,3 +169,4 @@ console.log(row('total', total));
 console.log(`\npriced: ${logged} as logged, ${fromTable} from the price table`);
 if (unpriced.size > 0) console.log(`Not priced, left out of the cost: ${[...unpriced].map(([model, n]) => `${model} (${n} calls)`).join(', ')}`);
 if (malformed > 0) console.log(`\n${malformed} call.cost line(s) did not parse and were skipped.`);
+if (undated > 0) console.log(`\n${undated} call.cost line(s) had no readable time, so --since left them out.`);

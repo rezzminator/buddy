@@ -34,8 +34,10 @@ export const LOG_CAP = 1_000_000;
 /** A throttled debug event is written at most once per this many milliseconds. */
 export const THROTTLE_MS = 1000;
 export const TAIL_LINES = 20;
-/** How many times a flush writes its lines before it reports them lost to another writer. */
+/** How many times a flush writes its lines before it reports the write lost to another writer. */
 export const WRITE_ATTEMPTS = 3;
+/** The most records a failing log keeps for its next write, the newest: past it the oldest go. */
+export const RETRY_MAX = 1000;
 
 const RANK: Record<LogLevel, number> = { error: 0, info: 1, debug: 2 };
 
@@ -177,11 +179,13 @@ export class Logger {
           return;
         }
       }
-      this.failure(io, `the log ${file} lost ${lines.length} records to another writer at the same time`);
+      this.failure(io, `the log ${file} lost a write of ${lines.length} records to another writer at the same time; they wait for the next`);
     } catch (error) {
       this.failure(io, `writing the log ${file} failed: ${errorFields(error).message}`);
     }
     for (const l of lines) if (l.includes('"level":"error"')) this.fallback(io, l);
+    // Not written: every other record waits for the next flush, the newest RETRY_MAX kept; an error already reached the fallback.
+    this.pending = [...lines.filter((l) => !l.includes('"level":"error"')), ...this.pending].slice(-RETRY_MAX);
   }
 
   /** A failed write, said only at the start of its failing streak. */

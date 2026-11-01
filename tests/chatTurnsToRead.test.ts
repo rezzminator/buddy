@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import {
   CHAT_TURNS_TO_READ_DEFAULT, CHAT_TURNS_TO_READ_MAX, LINES_PER_TURN_MAX, TURN_ANSWER_HEAD, TURN_ANSWER_TAIL, TURN_PROMPT_HEAD, TURN_PROMPT_TAIL,
   USER_PROMPT_HEAD, USER_PROMPT_TAIL, STORY_USER_PROMPT_HEAD, STORY_USER_PROMPT_TAIL, SIGNED_ADDED, SIGNED_MESSAGE_ORIGIN, cleanAnswer, cleanPrompt,
-  BUDDY_PROMPT, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, didLine, ADDED_LABEL, memoryStats, memoryText, numberBlocks, render, storeKey, typedByUser, type Block, type Exchange,
+  BUDDY_PROMPT, TAKEN_SUGGESTION, addCompaction, addExchange, addTurn, chatTurnsToReadOf, chatTurnsToReadOfText, didLine, ADDED_LABEL, memoryStats, memoryText, numberBlocks, render, storeKey, typedByUser, type Block, type Exchange,
   STORY_ADDED_HEAD, STORY_ADDED_TAIL, STORY_ANSWER_HEAD, STORY_ANSWER_TAIL, STORY_COMPACTION_HEAD, STORY_COMPACTION_TAIL, STORY_DID_STEPS, STORY_PROMPT_HEAD, STORY_PROMPT_TAIL,
 } from '../plugins/buddy/src/chatTurnsToRead.ts';
 import { ITEMS_HEAD, itemsText, renderItems, type Items } from '../plugins/buddy/src/memoryItems.ts';
@@ -113,6 +113,15 @@ describe('prompts typed by the user', () => {
     ];
     expect(typedByUser(blocks)).toEqual(['please keep main safe', 'my own added line']);
   });
+  test('a turn of unknown origin that began with the user\'s slash command expanded: the command\'s words are typed, the expansion never; read back and shown', () => {
+    const b = addTurn([], 't1', { prompt: 'Skill body: never force-push to main.', answer: 'Done.', from: 'unknown', typed: '/careful keep main safe always' }, 4);
+    expect(b[0]!.turn).toEqual({ prompt: 'Skill body: never force-push to main.', answer: 'Done.', from: 'unknown', typed: '/careful keep main safe always' });
+    expect(typedByUser(b)).toEqual(['/careful keep main safe always']);
+    expect(chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks: b }))).blocks).toEqual(numberBlocks(b).blocks);
+    expect(render(b, 'cat', 4)).toContain("Turn 1. Claude was sent, by a sender you did not see (most often the user's own slash command or skill, or a prompt sent while you restarted):\nThe user typed: /careful keep main safe always\nSkill body: never force-push to main.");
+    // On the user's own turn there is nothing to tell apart: typed is not kept.
+    expect(addTurn([], 't1', { prompt: 'p', answer: 'a', typed: '/x' }, 4)[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
+  });
   test('no turns means no typed prompts', () => {
     expect(typedByUser([])).toEqual([]);
     expect(typedByUser([{ characters: { cat: [line('Hi.')] } }])).toEqual([]);
@@ -157,14 +166,14 @@ describe('the timeline', () => {
     expect(addTurn(cut(''), 't2', turn('fix the tests'), 4).map((x) => x.turnId)).toEqual(['t1', 't2']);
     expect(addTurn(cut(''), 't2', { prompt: 'fix the build', answer: 'Done.', from: 'task-notification' }, 4).map((x) => x.turnId)).toEqual(['t1', 't2']);
   });
-  test('an exchange is filed under the turn it came after; one whose turn is gone is dropped', () => {
+  test('an exchange is filed under the turn it came after; one whose turn is gone is filed under the newest block', () => {
     let b = addTurn([], 't1', turn('one'), 4);
     b = addTurn(b, 't2', turn('two'), 4);
     b = addExchange(b, 'cat', qa('asked during two', 'ok'), 't1');
     expect(b[0]!.characters.cat).toEqual([qa('asked during two', 'ok')]);
     expect(b[1]!.characters.cat).toBeUndefined();
-    expect(addExchange(b, 'cat', line('late'), 'gone')).toEqual(b);
-    expect(addExchange([], 'cat', line('late'), 'gone')).toEqual([]);
+    expect(addExchange(b, 'cat', line('late'), 'gone')[1]!.characters.cat).toEqual([line('late')]);
+    expect(addExchange([], 'cat', line('late'), 'gone')).toEqual([{ characters: { cat: [line('late')] } }]);
     // No anchor: the newest block.
     expect(addExchange(b, 'cat', line('now'))[1]!.characters.cat).toEqual([line('now')]);
   });
@@ -238,9 +247,9 @@ describe('the timeline', () => {
     const older = render(b, 'cat', 4).split('\n').find((l) => l.startsWith('Its agent “Audit” returned:'))!;
     expect(older.length).toBeLessThanOrEqual(`Its agent ${kept}`.length);
     expect(older.length).toBeLessThan(STORY_ADDED_HEAD + STORY_ADDED_TAIL + 60);
-    // Stored and read back whole; a returned that is not text makes the turn unreadable.
+    // Stored and read back whole; a returned that is not text is left out, the turn kept.
     expect(chatTurnsToReadOf({ at: 1, blocks: b }).blocks).toEqual(numberBlocks(b).blocks);
-    expect(chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'a', answer: 'b', returned: [3] }, exchanges: [] }] }).blocks).toEqual([]);
+    expect(chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'a', answer: 'b', returned: [3] }, exchanges: [] }] })).toMatchObject({ blocks: [{ no: 1, turnId: 't1', turn: { prompt: 'a', answer: 'b' }, characters: {} }], error: 'the stored chatTurnsToRead had 1 malformed entry, dropped' });
   });
   test('a failed step is kept whole, its reason past the step cap included; cut only past DID_LINE_CAP', () => {
     const failed = `${'z'.repeat(DID_TEXT_CAP - 6)} [cut] [call 999k · output 999k chars] (failed: ${'r'.repeat(FAIL_REASON_CAP)})`;
@@ -374,17 +383,32 @@ describe('the store', () => {
     b = addExchange(b, 'cat', endOfTurn('ha', 'go'), 't1');
     expect(chatTurnsToReadOf({ at: 1, blocks: b })).toEqual({ ...numberBlocks(b), items: {}, ended: {}, strikes: {}, v1Notes: {} });
   });
-  test("a turn's suggestion is read back from the store; a non-string one makes the turn malformed", () => {
+  test("a turn's suggestion is read back from the store; a non-string one is left out, the turn kept", () => {
     const b = addTurn([], 't1', { prompt: 'run the tests now', answer: 'Ran.', suggested: 'run the tests' }, 4, undefined, 0);
     expect(chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks: b }))).blocks[0]!.turn).toEqual({ prompt: 'run the tests now', answer: 'Ran.', suggested: 'run the tests' });
     const bad = chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'a', answer: 'b', suggested: 3 }, characters: {} }] });
-    expect(bad.blocks).toEqual([]);
+    expect(bad.blocks).toEqual([{ no: 1, turnId: 't1', turn: { prompt: 'a', answer: 'b' }, characters: {} }]);
     expect(bad.error).toBe('the stored chatTurnsToRead had 1 malformed entry, dropped');
   });
+  test('a value that is no record is set aside, said, and read as empty', () => {
+    for (const bad of ['nope', 3, null, []]) {
+      expect(chatTurnsToReadOf(bad)).toEqual({ blocks: [], items: {}, ended: {}, strikes: {}, turnNo: 0, setAside: true, error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' });
+    }
+  });
+  test('a record without its list of blocks keeps its items, ended items and strikes, and is set aside', () => {
+    const item = { text: 'Tests passed.', from: 'shown' as const, turn: 1, at: 0 };
+    const ended = { 'fact.old': { item, reason: 'wrong: outdated', turn: 1, at: 1 } };
+    expect(chatTurnsToReadOf({ version: 2, at: 0, turnNo: 7, items: { 'fact.x': item }, ended, strikes: { 'rule.a': 1 } })).toEqual({
+      blocks: [], items: { 'fact.x': item }, ended, strikes: { 'rule.a': 1 }, turnNo: 7, setAside: true, error: 'the stored chatTurnsToRead has no list of blocks',
+    });
+    // An older record's shape (`characters` at the top) is not this record: set aside, never written over.
+    expect(chatTurnsToReadOf({ at: 1, characters: { cat: [line('hi')] } })).toMatchObject({ blocks: [], setAside: true, error: 'the stored chatTurnsToRead has no list of blocks' });
+  });
+  test('memory.json text that is not JSON is set aside with the parse failure said; JSON text reads as its value', () => {
+    expect(chatTurnsToReadOfText('{"version": 2, "blo')).toEqual({ blocks: [], items: {}, ended: {}, strikes: {}, turnNo: 0, setAside: true, error: `the stored chatTurnsToRead is not JSON (${(() => { try { JSON.parse('{"version": 2, "blo'); } catch (e) { return (e as Error).message; } })()})` });
+    expect(chatTurnsToReadOfText(JSON.stringify({ version: 2, at: 0, turnNo: 0, blocks: [], items: {}, ended: {} }))).toEqual({ blocks: [], items: {}, ended: {}, strikes: {}, turnNo: 0 });
+  });
   test('a malformed record says so and keeps what reads, never an empty timeline in silence', () => {
-    expect(chatTurnsToReadOf('nope')).toEqual({ blocks: [], items: {}, ended: {}, strikes: {}, turnNo: 0, error: 'the stored chatTurnsToRead is not a chatTurnsToRead record' });
-    // An older record's shape (`characters` at the top) is not this record: said, never read.
-    expect(chatTurnsToReadOf({ at: 1, characters: { cat: [line('hi')] } }).error).toBe('the stored chatTurnsToRead is not a chatTurnsToRead record');
     const long = 'x'.repeat(500);
     expect(chatTurnsToReadOf({ at: 1, blocks: [
       { turnId: 't1', turn: { prompt: 'one', answer: 'Done.' }, characters: { cat: [endOfTurn(long), { kind: 'endOfTurn' }, { kind: 'suggestNextPrompt', text: 'old' }], duck: 'x' } },
@@ -392,11 +416,31 @@ describe('the store', () => {
       { turn: { prompt: 'no id', answer: '' }, characters: {} },
       { turnId: 't2', turn: { prompt: 3, answer: '' }, characters: {} },
       { turnId: 't3', turn: { prompt: 'x', answer: '', did: 'nope' }, characters: {} },
+      { turnId: 't4', turn: 'nope', characters: {} },
     ] })).toEqual({
-      blocks: [{ no: 1, turnId: 't1', turn: { prompt: 'one', answer: 'Done.' }, characters: { cat: [endOfTurn(long)] } }],
-      items: {}, ended: {}, strikes: {}, turnNo: 1, v1Notes: {},
-      error: 'the stored chatTurnsToRead had 7 malformed entries, dropped',
+      blocks: [
+        { no: 1, turnId: 't1', turn: { prompt: 'one', answer: 'Done.' }, characters: { cat: [endOfTurn(long)] } },
+        { no: 2, turnId: 'unknown-turn-2', turn: { prompt: 'no id', answer: '' }, characters: {} },
+        { no: 3, turnId: 't2', turn: { prompt: '', answer: '' }, characters: {} },
+        { no: 4, turnId: 't3', turn: { prompt: 'x', answer: '' }, characters: {} },
+      ],
+      items: {}, ended: {}, strikes: {}, turnNo: 4, v1Notes: {},
+      error: 'the stored chatTurnsToRead had 8 malformed entries, dropped',
     });
+  });
+  test('a stored exchange keeps every field that reads: a question without its malformed answer, an end of turn without its malformed field', () => {
+    const r = chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a' }, characters: { cat: [
+      { kind: 'question', question: 'Is it safe?', answer: 3 },
+      { kind: 'endOfTurn', commentAfterEachTurn: 'Nice.', warned: 4, suggestNextPrompt: 'commit it' },
+      { kind: 'endOfTurn', promptToMainChat: 7 },
+    ] } }] });
+    expect(r.blocks[0]!.characters.cat).toEqual([qa('Is it safe?'), { kind: 'endOfTurn', commentAfterEachTurn: 'Nice.', suggestNextPrompt: 'commit it' }]);
+    expect(r.error).toBe('the stored chatTurnsToRead had 3 malformed entries, dropped');
+  });
+  test('a stored origin that is not text reads as unknown, never as the user\'s', () => {
+    const r = chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'keep main safe always', answer: 'a', from: 3 }, characters: {} }] });
+    expect(r.blocks[0]!.turn).toEqual({ prompt: 'keep main safe always', answer: 'a', from: 'unknown' });
+    expect(typedByUser(r.blocks)).toEqual([]);
   });
   test('v1 notes stay uncleaned for migration and malformed characters are counted', () => {
     const b = addTurn([], 't1', turn('go'), 4);
@@ -479,11 +523,14 @@ describe("a turn's numbers", () => {
     expect(r).toContain('Turn 1. The user asked Claude:\nsuggested: none\nsent: one\nClaude did: ran ls\nClaude answered:\nOne.');
     expect(r).toContain('Turn 3. The user asked Claude:\nsuggested: none\nsent: three\nNumbers: 1s · 1 model request · on sonnet-5\nClaude answered:');
   });
-  test('a turn whose stored numbers are malformed is dropped, as one with malformed steps is; a turn kept before the numbers has none', () => {
-    const b = [{ turnId: 't1', turn: { prompt: 'p', answer: 'a', stats: { ms: 'slow' } }, characters: {} }, { turnId: 't2', turn: { prompt: 'q', answer: 'b' }, characters: {} }];
-    const back = chatTurnsToReadOf({ blocks: b }).blocks;
-    expect(back.map((x) => x.turnId)).toEqual(['t2']);
-    expect(render(back, 'cat', 4)).not.toContain('Numbers:');
+  test('a turn whose stored numbers are malformed keeps the groups that read, or none without its time; the turn and its exchanges are kept', () => {
+    const b = [
+      { turnId: 't1', turn: { prompt: 'p', answer: 'a', stats: { ms: 'slow' } }, characters: { cat: [line('Hi.')] } },
+      { turnId: 't2', turn: { prompt: 'q', answer: 'b', stats: { ms: 2000, requests: 2, git: 'x' } }, characters: {} },
+    ];
+    const r = chatTurnsToReadOf({ blocks: b });
+    expect(r.blocks.map((x) => [x.turnId, x.turn!.stats, x.characters])).toEqual([['t1', undefined, { cat: [line('Hi.')] }], ['t2', { ms: 2000, requests: 2 }, {}]]);
+    expect(r.error).toBe('the stored chatTurnsToRead had 2 malformed entries, dropped');
   });
 });
 
@@ -579,7 +626,7 @@ describe('an interrupted turn', () => {
     expect(r).not.toContain('Claude answered:');
     expect(render(addTurn([], 't2', { prompt: 'go', answer: '', interrupted: true }, 4), 'fixy', 4)).toContain('Claude answered, before the user interrupted the turn:\n(no text)');
   });
-  test('kept through the store; false is no interruption, a non-boolean malformed, an older record without it still reads', () => {
+  test('kept through the store; false is no interruption, a non-boolean left out, an older record without it still reads', () => {
     const blocks = addTurn([], 't1', { prompt: 'refactor it', answer: 'Starting', interrupted: true }, 4);
     const back = chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks })));
     expect(back.error).toBeUndefined();
@@ -589,8 +636,8 @@ describe('an interrupted turn', () => {
     expect(off.error).toBeUndefined();
     expect(off.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
     const bad = chatTurnsToReadOf(stored('yes'));
-    expect(bad.error).toMatch(/1 malformed entry/);
-    expect(bad.blocks).toEqual([]);
+    expect(bad.error).toBe('the stored chatTurnsToRead had 1 malformed entry, dropped');
+    expect(bad.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
     const old = chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a' }, characters: {} }] });
     expect(old.error).toBeUndefined();
     expect(old.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
@@ -614,7 +661,7 @@ describe('prompts the user added while Claude worked', () => {
     expect(turn.added).toEqual(['a2', 'a3', cut]);
     expect(addTurn([], 't1', { prompt: 'p', answer: 'a', added: [] }, 4)[0]!.turn).not.toHaveProperty('added');
   });
-  test('kept through the store; a non-list or a non-text entry is malformed; an older record without it still reads', () => {
+  test('kept through the store; a non-list or a non-text entry is left out, the turn kept; an older record without it still reads', () => {
     const blocks = addTurn([], 't1', { prompt: 'p', answer: 'a', added: ['also BANANA'] }, 4);
     const back = chatTurnsToReadOf(JSON.parse(JSON.stringify({ at: 1, blocks })));
     expect(back.error).toBeUndefined();
@@ -622,8 +669,8 @@ describe('prompts the user added while Claude worked', () => {
     const stored = (added: unknown) => ({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a', added }, characters: {} }] });
     for (const bad of ['also', ['ok', 3]]) {
       const r = chatTurnsToReadOf(stored(bad));
-      expect(r.error).toMatch(/1 malformed entry/);
-      expect(r.blocks).toEqual([]);
+      expect(r.error).toBe('the stored chatTurnsToRead had 1 malformed entry, dropped');
+      expect(r.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
     }
     expect(chatTurnsToReadOf({ at: 1, blocks: [{ turnId: 't1', turn: { prompt: 'p', answer: 'a' }, characters: {} }] }).blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
   });
@@ -807,11 +854,11 @@ describe('the stored sight fields', () => {
     const t = { prompt: 'p', answer: 'a', added: ['x'], addedAfter: [4], said: [{ after: 1, text: 'Looking.' }], briefed: ['“A”: go'] };
     expect(chatTurnsToReadOf(stored(t)).blocks[0]!.turn).toEqual(t);
   });
-  test('said or briefed not of its shape: the turn is malformed; a bad addedAfter is dropped silently', () => {
+  test('said or briefed not of its shape: left out, the turn kept; a bad addedAfter is dropped silently', () => {
     for (const bad of [{ said: 'x' }, { said: [{ after: -1, text: 'x' }] }, { said: [{ after: 1.5, text: 'x' }] }, { said: [{ after: 1 }] }, { briefed: [3] }, { briefed: 'x' }]) {
       const r = chatTurnsToReadOf(stored(bad));
-      expect(r.blocks).toEqual([]);
-      expect(r.error).toMatch(/1 malformed entry/);
+      expect(r.blocks[0]!.turn).toEqual({ prompt: 'p', answer: 'a' });
+      expect(r.error).toBe('the stored chatTurnsToRead had 1 malformed entry, dropped');
     }
     const r = chatTurnsToReadOf(stored({ added: ['x'], addedAfter: ['2'] }));
     expect(r.error).toBeUndefined();

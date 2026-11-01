@@ -1,4 +1,4 @@
-# The checks release.yml runs on a pull request into main, run the same way here.
+# The checks ci.yml runs on a pull request into main, run the same way here.
 RUN := $(if $(CI),,mise exec node@22 --)# CI=true on runners: setup-node gives 22
 MANIFEST := plugins/buddy/.claude-plugin/plugin.json
 

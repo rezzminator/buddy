@@ -44,11 +44,11 @@ function cost(over: Record<string, unknown>): string {
   });
 }
 
-/** Writes the lines to a log file in the temp dir and runs the audit on it. */
-function audit(lines: string[]): { out: string; status: number | null } {
+/** Writes the lines to a log file in the temp dir and runs the audit on it, `args` before the file. */
+function audit(lines: string[], args: string[] = []): { out: string; status: number | null } {
   const file = join(dir, 'buddy.log');
   writeFileSync(file, `${lines.join('\n')}\n`);
-  const run = spawnSync(process.execPath, [...nodeArgs, script, file], { cwd: root, encoding: 'utf8' });
+  const run = spawnSync(process.execPath, [...nodeArgs, script, ...args, file], { cwd: root, encoding: 'utf8' });
   return { out: run.stdout, status: run.status };
 }
 
@@ -156,6 +156,22 @@ describe('audit cost', () => {
     const { out } = audit([cost({ model: 'claude-haiku-4-5-2025', inTok: M })]);
     expect(out).toContain('Not priced, left out of the cost: claude-haiku-4-5-2025 (1 calls)');
     expect(rowCells(out, 'total').slice(4, 6)).toEqual(['-', '-']);
+  });
+});
+
+describe('audit time', () => {
+  it('keeps a line with no readable time under an unknown day; --since leaves it out of the span and says how many', () => {
+    const lines = [cost({ ts: new Date().toISOString(), inTok: M }), cost({ ts: undefined, inTok: M }), cost({ ts: 'yesterday', inTok: M })];
+    const all = audit(lines);
+    expect(all.status).toBe(0);
+    expect(rowCells(all.out, 'total')[0]).toBe('3');
+    expect(rowCells(all.out, 'unknown day')[0]).toBe('2');
+    expect(all.out).not.toContain('no readable time');
+
+    const span = audit(lines, ['--since', '1d']);
+    expect(span.status).toBe(0);
+    expect(rowCells(span.out, 'total')[0]).toBe('1');
+    expect(span.out).toContain('\n2 call.cost line(s) had no readable time, so --since left them out.\n');
   });
 });
 

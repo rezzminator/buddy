@@ -8,7 +8,7 @@
 import { actionOf, failureReason, type Action } from './did.ts';
 import type { TurnStats } from './stats.ts';
 import { BUDDY_PROMPT, cleanPrompt } from './chatTurnsToRead.ts';
-import { ends } from './cuts.ts';
+import { cutTo, ends } from './cuts.ts';
 import { ITEM_KEY } from './memoryItems.ts';
 
 export const ONE_LINE_RULE = 'Answer in ONE line, at most 25 words, in character. Do not use tools. Do not think out loud.';
@@ -226,12 +226,15 @@ export function turnSystem(persona: string, wants: TurnWants, desire: string | n
  * was delivered. `said`: what Claude wrote mid-turn, in order. `briefed`: the
  * brief of each agent it ran, `“{description}”: {brief}`.
  * `suggested`: the suggestion in the box when the user sent this prompt.
+ * `typed`: on a turn of unknown origin, the user's own slash command (a
+ * command or skill) whose submission's text the turn's expansion did not
+ * match: the words the user typed, read as theirs where the expansion is not.
  */
 /** How a turn that was not answered or interrupted ended (Claude Code's `turn.complete` reasons). */
 export type TurnCut = 'error' | 'refusal';
 /** What Claude wrote mid-turn: `after`, the main-loop tool calls made before it. */
 export type Said = { after: number; text: string };
-export type Turn = { prompt: string; answer: string; did?: string[]; returned?: string[]; from?: string; stats?: TurnStats; interrupted?: true; ended?: TurnCut; added?: string[]; suggested?: string; said?: Said[]; addedAfter?: number[]; briefed?: string[] };
+export type Turn = { prompt: string; answer: string; did?: string[]; returned?: string[]; from?: string; stats?: TurnStats; interrupted?: true; ended?: TurnCut; added?: string[]; suggested?: string; said?: Said[]; addedAfter?: number[]; briefed?: string[]; typed?: string };
 
 /** Prompt origins that are the user's own: Enter at the terminal, a Remote Control message, an SDK host's turn, the session owner's Slack ping, a follow-up to the user's own action. */
 const USER_ORIGINS: readonly string[] = ['composer', 'bridge', 'sdk', 'slack-ping', 'auto-continuation'];
@@ -252,9 +255,10 @@ const PROMPTS_KEPT = 10;
  * and whose it was (`seen` false until its submission settles; `queued` when
  * it took a waiting prompt; `added`, the prompts delivered into it, and
  * `addedAfter`, the main-loop tool calls made before each was; `said`, what
- * Claude wrote mid-turn).
+ * Claude wrote mid-turn; `typed`, the user's slash command whose expansion
+ * it began with, its text unmatched).
  */
-type Started = { turnId: string; text: string; from?: string; seen: boolean; queued?: boolean; added?: readonly string[]; addedAfter?: readonly number[]; said?: readonly Said[] };
+type Started = { turnId: string; text: string; from?: string; seen: boolean; queued?: boolean; added?: readonly string[]; addedAfter?: readonly number[]; said?: readonly Said[]; typed?: string };
 export type PromptLedger = {
   entered: readonly { text: string; from?: string; over?: string }[];
   started: readonly Started[];
@@ -272,6 +276,11 @@ function startedWith(turnText: string, text: string, from: string | undefined): 
   return turnText === text || (from !== undefined && PLUGIN_FRAME.exec(turnText)?.[1] === text);
 }
 
+/** Whether the submission `text` from `from` (undefined, the user's) is the user's own slash command, which its turn begins expanded (a command's or skill's body): its text never matches the turn's. */
+function isUserCommand(text: string, from: string | undefined): boolean {
+  return from === undefined && text.startsWith('/');
+}
+
 /**
  * A prompt that entered the session, `origin` its origin's kind. One typed
  * over the running turn `turnId` waits, recording that turn: delivered into
@@ -282,6 +291,9 @@ function startedWith(turnText: string, text: string, from: string | undefined): 
  * the user's) takes its origin; so does one that took a waiting
  * prompt of the same text when this one arrives idle, since an idle prompt's
  * turn starts inside its own submission: the waiting one started no turn.
+ * The user's own slash command arriving idle with no turn of its text gives
+ * the newest turn, unseen, its words as `typed`: that turn began with the
+ * command's expansion, and its origin stays unknown.
  */
 export function submitPrompt(l: PromptLedger, text: string, origin: string, turnId?: string): PromptLedger {
   const user = isUserOrigin(origin);
@@ -290,6 +302,10 @@ export function submitPrompt(l: PromptLedger, text: string, origin: string, turn
   const i = l.started.findIndex((s) => s.turnId !== turnId && !s.seen && startedWith(s.text, text, from));
   const j = i >= 0 || turnId !== undefined ? i : l.started.findLastIndex((s) => s.queued === true && startedWith(s.text, text, from));
   if (j >= 0) return { ...l, started: l.started.map((s, k) => (k === j ? { turnId: s.turnId, text: s.text, from, seen: true, ...(s.added ? { added: s.added } : {}), ...(s.addedAfter ? { addedAfter: s.addedAfter } : {}), ...(s.said ? { said: s.said } : {}) } : s)) };
+  const newest = l.started.length - 1;
+  if (turnId === undefined && isUserCommand(text, from) && newest >= 0 && !l.started[newest]!.seen && l.started[newest]!.typed === undefined) {
+    return { ...l, started: l.started.map((s, k) => (k === newest ? { ...s, typed: text } : s)) };
+  }
   return { ...l, entered: [...l.entered, { text, from, ...(turnId === undefined ? {} : { over: turnId }) }].slice(-PROMPTS_KEPT) };
 }
 
@@ -322,29 +338,34 @@ export function sayInTurn(l: PromptLedger, turnId: string, text: string, after: 
  * entered prompt of that text, or, for one not the user's, inside Claude Code's
  * plugin frame (startedWith), and its origin. Every prompt entered before
  * that one, or all when none matches, started no turn (delivered into an
- * earlier one unseen): dropped, never handed to a later turn.
+ * earlier one unseen): dropped, never handed to a later turn. With none of
+ * its text, the oldest waiting slash command of the user's began it
+ * expanded: the turn takes its words as `typed`, its origin unknown.
  */
 export function startPromptTurn(l: PromptLedger, turnId: string, text: string): PromptLedger {
   const i = l.entered.findIndex((p) => startedWith(text, p.text, p.from));
-  const turn = i >= 0 ? { turnId, text, from: l.entered[i]!.from, seen: true, queued: true } : { turnId, text, seen: false };
-  return { entered: i >= 0 ? l.entered.slice(i + 1) : [], started: [...l.started, turn].slice(-PROMPTS_KEPT) };
+  const c = i >= 0 ? -1 : l.entered.findIndex((p) => isUserCommand(p.text, p.from));
+  const turn: Started = i >= 0 ? { turnId, text, from: l.entered[i]!.from, seen: true, queued: true } : { turnId, text, seen: false, ...(c >= 0 ? { typed: l.entered[c]!.text } : {}) };
+  return { entered: i >= 0 ? l.entered.slice(i + 1) : c >= 0 ? l.entered.slice(c + 1) : [], started: [...l.started, turn].slice(-PROMPTS_KEPT) };
 }
 
 /**
  * The main turn `turnId` ended, in any way: the prompt it began with and,
  * when that was not the user's, its origin (`unknown` when its submission
  * was never seen), the prompts delivered into it (`added`, none left out,
- * with `addedAfter`), what Claude wrote mid-turn (`said`), and the ledger
+ * with `addedAfter`), what Claude wrote mid-turn (`said`), the user's slash
+ * command it began expanded (`typed`, on an unknown origin), and the ledger
  * without it.
  */
-export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string; from?: string; added?: string[]; addedAfter?: number[]; said?: Said[]; ledger: PromptLedger } {
+export function endPromptTurn(l: PromptLedger, turnId: string): { prompt: string; from?: string; added?: string[]; addedAfter?: number[]; said?: Said[]; typed?: string; ledger: PromptLedger } {
   const turn = l.started.find((s) => s.turnId === turnId);
   const ledger = { ...l, started: l.started.filter((s) => s.turnId !== turnId) };
   if (!turn) return { prompt: '', from: 'unknown', ledger };
   const from = turn.seen ? turn.from : 'unknown';
   const added = turn.added && turn.added.length > 0 ? { added: [...turn.added], ...(turn.addedAfter ? { addedAfter: [...turn.addedAfter] } : {}) } : {};
   const said = turn.said && turn.said.length > 0 ? { said: turn.said.map((x) => ({ ...x })) } : {};
-  return from === undefined ? { prompt: turn.text, ...added, ...said, ledger } : { prompt: turn.text, from, ...added, ...said, ledger };
+  const typed = !turn.seen && turn.typed !== undefined ? { typed: turn.typed } : {};
+  return from === undefined ? { prompt: turn.text, ...added, ...said, ledger } : { prompt: turn.text, from, ...added, ...said, ...typed, ledger };
 }
 
 /** A transcript row a turn is read back from: `$.session.messages()`'s rows, an assistant row's tool calls with their outcome. */
@@ -490,11 +511,19 @@ function ruleKeyOf(value: string): string | null {
   return ITEM_KEY.test(word) && word.startsWith('rule.') ? word : null;
 }
 
-/** The end-of-turn reply, each part or null: a VERDICT not one of VERDICTS, a DESIRE past DESIRE_MAX_CHARS, or an empty line is none; SUGGEST_NEXT_PROMPT as suggestNextPromptText reads it, PROMPT_TO_MAIN_CHAT too, up to PROMPT_TO_MAIN_CHAT_MAX_CHARS. */
+/**
+ * The end-of-turn reply, each part or null: an empty line is none; a VERDICT
+ * not one of VERDICTS is `otherVerdict`; a known one without a WHY gets NO_WHY;
+ * a DESIRE past DESIRE_MAX_CHARS is cut to it; SUGGEST_NEXT_PROMPT as
+ * suggestNextPromptText reads it, PROMPT_TO_MAIN_CHAT too, up to
+ * PROMPT_TO_MAIN_CHAT_MAX_CHARS, either past its cap kept whole in `overCap`.
+ */
 export type TurnReply = {
   commentAfterEachTurn: string | null;
   desire: string | null;
   verdict: Verdict | null;
+  /** The VERDICT line's word, upper-cased, when it is none of VERDICTS: never judged, kept as said. */
+  otherVerdict: string | null;
   why: string | null;
   suggestNextPrompt: string | null;
   /** The prompt the buddy sends the main chat itself. */
@@ -503,33 +532,47 @@ export type TurnReply = {
   ruleBroken: string | null;
   /** The MEMORY JSON object (memoryOf), parsed by applyMemory; the first MEMORY line's trimmed text when it holds none; null when absent. */
   memory: string | null;
+  /** A SUGGEST_NEXT_PROMPT or PROMPT_TO_MAIN_CHAT past its cap, one-spaced and whole: never proposed nor sent, said and kept instead. */
+  overCap: { suggestNextPrompt?: string; promptToMainChat?: string };
 };
+
+/** The WHY a known verdict keeps when its reply gave none. */
+export const NO_WHY = 'no reason given';
 
 /** The end-of-turn reply by its tagged lines, in any order and case, bullets tolerated; an untagged reply is the commentAfterEachTurn alone. */
 export function parseTurnReply(reply: string): TurnReply {
   const tags = taggedLines(reply);
-  if (tags.size === 0) return { commentAfterEachTurn: oneLine(reply) || null, desire: null, verdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, ruleBroken: null, memory: null };
+  if (tags.size === 0) return { commentAfterEachTurn: oneLine(reply) || null, desire: null, verdict: null, otherVerdict: null, why: null, suggestNextPrompt: null, promptToMainChat: null, ruleBroken: null, memory: null, overCap: {} };
   const line = (tag: string) => oneLine(tags.get(tag) ?? '') || null;
   const desire = line('desire');
   const word = /^[A-Za-z]+/.exec(line('verdict') ?? '')?.[0]?.toUpperCase();
+  const verdict = VERDICTS.find((v) => v === word) ?? null;
   const next = tags.get('suggest_next_prompt');
   const toMainChat = tags.get('prompt_to_main_chat');
+  const suggestNextPrompt = next === undefined ? null : suggestNextPromptText(next);
+  const promptToMainChat = toMainChat === undefined ? null : suggestNextPromptText(toMainChat, PROMPT_TO_MAIN_CHAT_MAX_CHARS);
+  // Past its cap: kept whole, never proposed nor sent.
+  const whole = (raw: string | undefined, kept: string | null) => (raw === undefined || kept !== null ? null : suggestNextPromptText(raw, Infinity));
+  const overSuggestion = whole(next, suggestNextPrompt);
+  const overPrompt = whole(toMainChat, promptToMainChat);
   return {
     commentAfterEachTurn: line('comment_after_each_turn'),
-    desire: desire !== null && desire.length <= DESIRE_MAX_CHARS ? desire : null,
-    verdict: VERDICTS.find((v) => v === word) ?? null,
-    why: line('why'),
-    suggestNextPrompt: next === undefined ? null : suggestNextPromptText(next),
-    promptToMainChat: toMainChat === undefined ? null : suggestNextPromptText(toMainChat, PROMPT_TO_MAIN_CHAT_MAX_CHARS),
+    desire: desire === null ? null : cutTo(desire, DESIRE_MAX_CHARS),
+    verdict,
+    otherVerdict: word !== undefined && verdict === null ? word : null,
+    why: line('why') ?? (word !== undefined ? NO_WHY : null),
+    suggestNextPrompt,
+    promptToMainChat,
     ruleBroken: ruleKeyOf(tags.get('rule_broken') ?? ''),
     memory: memoryOf(reply),
+    overCap: { ...(overSuggestion === null ? {} : { suggestNextPrompt: overSuggestion }), ...(overPrompt === null ? {} : { promptToMainChat: overPrompt }) },
   };
 }
 
 /** The longest prompt a question's answer puts in the prompt box: asked for, it may be longer than a guessed one. */
 export const ASKED_PROMPT_MAX_CHARS = 600;
 
-/** A question's reply as its answer and the prompt it was asked for: the untagged text the answer, one line; a SUGGEST_NEXT_PROMPT line the prompt, null when there is none and `tooLong` when it passed ASKED_PROMPT_MAX_CHARS. */
+/** A question's reply as its answer and the prompt it was asked for: the untagged text the answer, one line; a SUGGEST_NEXT_PROMPT line the prompt, null when there is none, whole and `tooLong` when it passed ASKED_PROMPT_MAX_CHARS. */
 export function parseAskReply(reply: string): { answer: string; prompt: string | null; tooLong: boolean } {
   const rest: string[] = [];
   let tagged: string | undefined;
@@ -538,14 +581,13 @@ export function parseAskReply(reply: string): { answer: string; prompt: string |
     if (m && m[1]!.toLowerCase() === 'suggest_next_prompt') tagged ??= m[2]!;
     else rest.push(raw);
   }
-  const prompt = tagged === undefined ? null : suggestNextPromptText(tagged, ASKED_PROMPT_MAX_CHARS);
-  return { answer: oneLine(rest.join('\n')), prompt, tooLong: tagged !== undefined && prompt === null && suggestNextPromptText(tagged, Infinity) !== null };
+  const prompt = tagged === undefined ? null : suggestNextPromptText(tagged, Infinity);
+  return { answer: oneLine(rest.join('\n')), prompt, tooLong: prompt !== null && prompt.length > ASKED_PROMPT_MAX_CHARS };
 }
 
-/** A reply as one bubble line: the first non-empty line, unquoted, whole: what the buddy says is never cut. */
+/** A reply as one bubble line: its non-empty lines, each unquoted, joined by a space, whole: what the buddy says is never cut. */
 export function oneLine(reply: string): string {
-  const line = reply.split('\n').map((l) => l.trim()).find((l) => l !== '') ?? '';
-  return line.replace(/^["'`]+|["'`]+$/g, '').trim();
+  return reply.split('\n').map((l) => l.trim().replace(/^["'`]+|["'`]+$/g, '').trim()).filter((l) => l !== '').join(' ');
 }
 
 /** The longest PROMPT_TO_MAIN_CHAT kept: past it, it is not a short note to Claude. */
