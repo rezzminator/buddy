@@ -2,6 +2,17 @@
 
 Every release of buddy. Versions follow [semantic versioning](https://semver.org); each release is the `main` commit tagged `buddy--v<version>`, with a GitHub release carrying the section below.
 
+## [4.0.2] — 2026-11-01
+
+### Fixed
+- One value buddy cannot read costs only itself, never the turn or the chat's memory. A stored turn keeps its other fields when one is malformed, and one whose stats do not read loses only that stats group; the stored memory says how many entries it dropped.
+- A chat's `memory.json` that is not JSON is kept whole beside it as `memory.json.unreadable-{ms}` before buddy writes over it, the error naming that path; when it cannot be set aside, the file is left untouched and that chat's memory is not saved.
+- A memory edit in the buddy's reply loses only its bad fields, not the whole op: an unknown or empty field is ignored, a field past 300 characters is cut, a bad `from` reads as `unknown`, an `end` with an unknown reason ends the item as `unknown: {its text}`, and each is named in the op's `why`. A rule written or stored without `covers` is kept and shows `covers: unknown`.
+- A reply arriving after a later turn ended still reaches the drawer: its comment and verdict are kept, and its memory edit applies to the items no newer save changed. A late memory read is logged as unread, not as a race.
+- In away mode, a reply holding `PAUSE` on a line of its own pauses, and a first line `PUSH: {text}` pushes whatever follows it.
+- A tool result made of content blocks shows its text, no longer the blocks' type tags.
+- Chat folders, pending calls, characters, cuts and `npm run audit` keep what they read and say what they skipped; `npm run audit` counts the `call.cost` lines with no readable time, which `--since` leaves out.
+
 ## [4.0.1] — 2026-11-01
 
 ### Changed
