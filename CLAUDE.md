@@ -47,7 +47,7 @@ Professor's marketplace installs `main` of this repo, and `main` reaches every u
 ### Publication
 
 - **NEVER a machine-absolute path** (under `/Users`, `/home` or `/private`), personal data or a private project name in a tracked file.
-- **NEVER push code or cut a release without the owner's ask**; a README or marketing commit on `develop` is pushed as soon as it is committed.
+- **NEVER push code or cut a release without the owner's ask.**
 - **`main` MUST move only by merging the `develop → main` pull request**, with a merge commit and never a squash, so both branches share one history.
 
 ### Engine
